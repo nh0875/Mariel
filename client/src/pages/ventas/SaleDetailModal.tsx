@@ -8,7 +8,7 @@ import { round2, safeDiv } from '@shared/calc'
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from '@shared/constants'
 import type { Payment, SaleDetail } from '@shared/types'
 import { ApiError, api } from '@/lib/api'
-import { dateLong, date as fmtDate, money, pct } from '@/lib/format'
+import { dateLong, date as fmtDate, int, money, pct } from '@/lib/format'
 import { useAccounts, useApi, useApiMutation, useSettings } from '@/lib/queries'
 import { Badge, Button, ErrorState, InfoTip, Loading, Modal, StatusBadge, useConfirm } from '@/components/ui'
 import { SettlementModal } from '@/components/forms/SettlementModal'
@@ -44,7 +44,13 @@ export function SaleDetailModal({
 
   const methodLabel = (m: string) => settings?.payment_methods.find((x) => x.key === m)?.label || PAYMENT_METHOD_LABELS[m as PaymentMethod] || m
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? 'Cuenta'
-  const defaultAccount = s ? (settings?.payment_methods.find((m) => m.key === s.payment_method)?.account_id ?? null) : null
+  // Cuenta sugerida para el cobro: la del medio de pago (si sigue activa) o la primera cuenta activa.
+  const defaultAccount = (() => {
+    if (!s) return null
+    const configured = settings?.payment_methods.find((m) => m.key === s.payment_method)?.account_id ?? null
+    if (configured && accounts.some((a) => a.id === configured && a.active)) return configured
+    return accounts.find((a) => a.active)?.id ?? null
+  })()
 
   const remove = useApiMutation(
     async (id: number) => {
@@ -167,15 +173,21 @@ export function SaleDetailModal({
             </div>
 
             {/* Números grandes */}
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {/* En el celu van uno abajo del otro (así entran los montos grandes); en pantallas anchas, tres tarjetas. */}
+            <div className="grid gap-1.5 sm:grid-cols-3 sm:gap-3">
               {[
                 { label: 'Total', value: money(s.total), tone: '' },
                 { label: 'Cobrado', value: money(s.paid), tone: '' },
-                { label: hasBalance ? 'Falta cobrar' : 'Falta cobrar', value: money(s.balance), tone: hasBalance ? 'text-warn' : 'text-good' },
+                { label: hasBalance ? 'Falta cobrar' : 'Falta cobrar', value: hasBalance ? money(s.balance) : 'Nada', tone: hasBalance ? 'text-warn' : 'text-good' },
               ].map((x) => (
-                <div key={x.label} className="rounded-2xl bg-cream-deep px-3 py-2.5 sm:px-4">
-                  <p className="text-[12.5px] font-bold text-ink-soft">{x.label}</p>
-                  <p className={clsx('vh-num truncate text-[1.15rem] font-extrabold text-ink sm:text-[1.35rem]', x.tone)}>{x.value}</p>
+                <div
+                  key={x.label}
+                  className="flex items-baseline justify-between gap-3 rounded-2xl bg-cream-deep px-3.5 py-2 sm:block sm:px-4 sm:py-2.5"
+                >
+                  <p className="text-[13px] font-bold text-ink-soft sm:text-[12.5px]">{x.label}</p>
+                  <p className={clsx('vh-num text-[1.15rem] font-extrabold whitespace-nowrap text-ink sm:truncate sm:text-[1.35rem]', x.tone)} title={x.value}>
+                    {x.value}
+                  </p>
                 </div>
               ))}
             </div>
@@ -199,8 +211,8 @@ export function SaleDetailModal({
                   <thead>
                     <tr className="border-b border-line bg-cream/70 text-[12px] font-extrabold tracking-wide text-ink-soft uppercase">
                       <th className="px-3 py-2 text-left">Vino / ítem</th>
-                      <th className="px-3 py-2 text-right">Cant.</th>
-                      <th className="px-3 py-2 text-right">Precio</th>
+                      <th className="hidden px-3 py-2 text-right sm:table-cell">Cant.</th>
+                      <th className="hidden px-3 py-2 text-right sm:table-cell">Precio</th>
                       <th className="hidden px-3 py-2 text-right sm:table-cell">Costo</th>
                       <th className="px-3 py-2 text-right">Subtotal</th>
                       <th className="hidden px-3 py-2 text-right sm:table-cell">Ganancia</th>
@@ -220,10 +232,26 @@ export function SaleDetailModal({
                             ) : (
                               <span className="font-semibold text-ink">{i.description}</span>
                             )}
-                            {!i.product_id && <span className="block text-[12px] text-muted">No es vino del stock</span>}
+                            {/* En el celu, cantidad, precio, costo y ganancia van debajo del nombre. */}
+                            <span className="block text-[12.5px] text-muted sm:hidden">
+                              <span className="whitespace-nowrap">
+                                {int(i.qty)} × {money(i.unit_price)}
+                              </span>
+                              {i.product_id ? (
+                                <>
+                                  {' · '}
+                                  <span className="whitespace-nowrap">costo {money(i.unit_cost, { decimals: 0 })} c/u</span>
+                                  {' · '}
+                                  <span className={clsx('whitespace-nowrap', profit < 0 ? 'font-semibold text-bad' : 'text-good')}>te deja {money(profit, { decimals: 0 })}</span>
+                                </>
+                              ) : (
+                                ' · no es vino del stock'
+                              )}
+                            </span>
+                            {!i.product_id && <span className="hidden text-[12px] text-muted sm:block">No es vino del stock</span>}
                           </td>
-                          <td className="vh-num px-3 py-2 text-right">{i.qty}</td>
-                          <td className="vh-num px-3 py-2 text-right whitespace-nowrap">{money(i.unit_price)}</td>
+                          <td className="vh-num hidden px-3 py-2 text-right sm:table-cell">{int(i.qty)}</td>
+                          <td className="vh-num hidden px-3 py-2 text-right whitespace-nowrap sm:table-cell">{money(i.unit_price)}</td>
                           <td className="vh-num hidden px-3 py-2 text-right whitespace-nowrap text-ink-soft sm:table-cell">{i.product_id ? money(i.unit_cost) : '—'}</td>
                           <td className="vh-num px-3 py-2 text-right font-bold whitespace-nowrap">{money(sub)}</td>
                           <td className={clsx('vh-num hidden px-3 py-2 text-right whitespace-nowrap sm:table-cell', profit < 0 ? 'text-bad' : 'text-good')}>{money(profit)}</td>

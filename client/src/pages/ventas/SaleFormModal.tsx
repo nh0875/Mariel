@@ -2,6 +2,7 @@
 // elegís el vino (el precio se completa solo), la cantidad con − / +, cómo te pagan y listo.
 // A la derecha se ve en vivo cuánto paga el cliente y cuánto te queda.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { AlertTriangle, Banknote, Clock, Minus, PackagePlus, Plus, StickyNote, Trash2, Wine } from 'lucide-react'
 import clsx from 'clsx'
 import { round2, safeDiv } from '@shared/calc'
@@ -20,7 +21,7 @@ import {
 import type { Product, SaleDetail } from '@shared/types'
 import { api } from '@/lib/api'
 import { bottles as fmtBottles, date as fmtDate, money, pct } from '@/lib/format'
-import { useApiMutation, useClients, useProducts, useSettings } from '@/lib/queries'
+import { useAccounts, useApiMutation, useClients, useProducts, useSettings } from '@/lib/queries'
 import {
   AccountSelect,
   Button,
@@ -83,7 +84,12 @@ const priceFor = (p: Product, list: PriceList) => (list === 'mayorista' ? p.pric
 const isEmptyRow = (r: Row) => (r.kind === 'wine' ? r.productId == null : !r.description.trim())
 const WHOLESALE_KINDS: ClientKind[] = ['restaurante', 'vinoteca', 'distribuidor']
 
-function buildInitial(sale: SaleDetail | null | undefined, presetEventId: number | null | undefined, feePctOf: (m: string) => number): FormState {
+function buildInitial(
+  sale: SaleDetail | null | undefined,
+  presetEventId: number | null | undefined,
+  presetClientId: number | null | undefined,
+  feePctOf: (m: string) => number,
+): FormState {
   if (sale) {
     const autoFee = round2((sale.total * feePctOf(sale.payment_method)) / 100)
     return {
@@ -120,7 +126,7 @@ function buildInitial(sale: SaleDetail | null | undefined, presetEventId: number
     rows: [newRow()],
     priceList: 'minorista',
     channel: presetEventId ? 'eventos' : 'local',
-    clientId: null,
+    clientId: presetClientId ?? null,
     eventId: presetEventId ?? null,
     discountMode: 'amount',
     discountValue: null,
@@ -210,6 +216,7 @@ export function SaleFormModal({
   open,
   sale,
   presetEventId,
+  presetClientId,
   onClose,
   onSaved,
 }: {
@@ -218,20 +225,30 @@ export function SaleFormModal({
   sale?: SaleDetail | null
   /** ?evento=ID: preselecciona el evento y el canal "Eventos". */
   presetEventId?: number | null
+  /** ?cliente=ID (desde la ficha del cliente): preselecciona el cliente. */
+  presetClientId?: number | null
   onClose: () => void
   onSaved?: (sale: SaleDetail) => void
 }) {
   const { data: settings } = useSettings()
-  const { data: products = [] } = useProducts()
+  const productsQ = useProducts()
+  const products = useMemo(() => productsQ.data ?? [], [productsQ.data])
+  const { data: accounts = [] } = useAccounts()
   const { data: clients = [] } = useClients()
   const confirm = useConfirm()
   const editing = !!sale
 
   const feePctOf = (m: string) => settings?.payment_methods.find((x) => x.key === m)?.fee_pct ?? 0
   const methodLabel = (m: string) => settings?.payment_methods.find((x) => x.key === m)?.label || PAYMENT_METHOD_LABELS[m as PaymentMethod] || m
-  const defaultAccountFor = (m: string) => settings?.payment_methods.find((x) => x.key === m)?.account_id ?? null
+  // Cuenta por defecto: la configurada para ese medio de pago (si sigue activa) o la primera cuenta activa,
+  // igual que hace el servidor si no le mandás ninguna.
+  const defaultAccountFor = (m: string) => {
+    const configured = settings?.payment_methods.find((x) => x.key === m)?.account_id ?? null
+    if (configured && accounts.some((a) => a.id === configured && a.active)) return configured
+    return accounts.find((a) => a.active)?.id ?? null
+  }
 
-  const [f, setF] = useState<FormState>(() => buildInitial(sale, presetEventId, feePctOf))
+  const [f, setF] = useState<FormState>(() => buildInitial(sale, presetEventId, presetClientId, feePctOf))
   const [submitted, setSubmitted] = useState(false)
   const [showNotes, setShowNotes] = useState(false)
   const [editFee, setEditFee] = useState(false)
@@ -243,9 +260,11 @@ export function SaleFormModal({
   const setRow = (key: number, patch: Partial<Row>) => setF((s) => ({ ...s, rows: s.rows.map((r) => (r.key === key ? { ...r, ...patch } : r)) }))
 
   // Al abrir: arrancar de cero (o con los datos de la venta a editar).
+  // Al editar esperamos la configuración: hace falta para saber si la comisión fue automática o a mano.
+  const waitSettings = editing && !settings
   useEffect(() => {
-    if (!open) return
-    const init = buildInitial(sale, presetEventId, feePctOf)
+    if (!open || waitSettings) return
+    const init = buildInitial(sale, presetEventId, presetClientId, feePctOf)
     setF(init)
     initialRef.current = JSON.stringify(init)
     setSubmitted(false)
@@ -253,7 +272,7 @@ export function SaleFormModal({
     setEditFee(init.feeOverride != null)
     setFocusRow(init.rows[0]?.key ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sale?.id])
+  }, [open, sale?.id, waitSettings])
 
   // Llevar el foco al renglón nuevo (así se puede seguir cargando con el teclado).
   useEffect(() => {
@@ -308,10 +327,15 @@ export function SaleFormModal({
     if (!filled.length) e.items = 'Elegí al menos un vino (o agregá un ítem que no sea vino).'
     for (const r of filled) {
       if (!r.qty || r.qty < 1) e[`qty-${r.key}`] = 'La cantidad tiene que ser 1 o más.'
+      else if (r.qty > 1_000_000) e[`qty-${r.key}`] = 'Esa cantidad es demasiado grande. Revisala.'
       if (r.price == null) e[`price-${r.key}`] = 'Poné el precio (puede ser $ 0 si va sin cargo).'
+      else if (r.price < 0) e[`price-${r.key}`] = 'El precio no puede ser negativo. Si es una devolución, borrá o editá la venta original.'
     }
-    if (f.discountMode === 'pct' && (f.discountValue ?? 0) > 100) e.discount = 'El descuento no puede pasar el 100 %.'
+    if ((f.discountValue ?? 0) < 0) e.discount = 'El descuento no puede ser negativo.'
+    else if (f.discountMode === 'pct' && (f.discountValue ?? 0) > 100) e.discount = 'El descuento no puede pasar el 100 %.'
     else if (calc.discount > calc.subtotal + calc.shipping + 0.001) e.discount = 'El descuento no puede ser mayor que la venta.'
+    if ((f.shipping ?? 0) < 0) e.shipping = 'El envío no puede ser negativo.'
+    if ((f.feeOverride ?? 0) < 0) e.fee = 'La comisión no puede ser negativa.'
     if (f.paid === 'si' && calc.total > 0 && !accountId) e.account = 'Elegí en qué cuenta entró la plata.'
     if (sale && sale.status === 'parcial' && f.paid === 'no' && calc.total < sale.paid - 0.01) {
       e.paid = `Ya cobraste ${money(sale.paid)} de esta venta: el total no puede quedar por debajo. Marcala como cobrada o borrá algún cobro desde el detalle.`
@@ -441,7 +465,16 @@ export function SaleFormModal({
     if (!sale) return null
     if (sale.status === 'pagado' && f.paid === 'no')
       return { tone: 'warn', text: `Esta venta figura cobrada. Si elegís «No», se borran sus cobros (${money(sale.paid)}) de la caja y vuelve a quedar por cobrar.` }
-    if (sale.status === 'pagado' && f.paid === 'si') return { tone: 'info', text: 'Sigue cobrada: si cambia el total, el cobro se actualiza solo al nuevo total.' }
+    if (sale.status === 'pagado' && f.paid === 'si') {
+      const totalChanged = Math.abs(calc.total - sale.total) > 0.01
+      const accountChanged = sale.payments.length > 0 && accountId !== sale.payments[0].account_id
+      if (totalChanged || accountChanged)
+        return {
+          tone: 'info',
+          text: `Sigue cobrada. Como cambiaste ${totalChanged ? 'el total' : 'la cuenta'}, los cobros anteriores se reemplazan por uno solo de ${money(calc.total)}, con la fecha de la venta y en la cuenta elegida.`,
+        }
+      return { tone: 'info', text: 'Sigue cobrada: los cobros quedan como estaban (mismas fechas y cuentas).' }
+    }
     if (sale.status === 'parcial' && f.paid === 'si')
       return { tone: 'info', text: `Tenía cobros parciales por ${money(sale.paid)}. Al marcarla cobrada se reemplazan por un único cobro por el total, en la cuenta que elijas.` }
     if (sale.status === 'parcial' && f.paid === 'no') return { tone: 'info', text: `Se mantienen los cobros que ya registraste (${money(sale.paid)}). El resto queda por cobrar.` }
@@ -511,6 +544,15 @@ export function SaleFormModal({
                 ¿Qué vendiste?
               </SectionTitle>
 
+              {productsQ.isSuccess && products.length === 0 && (
+                <div className="mb-3 rounded-xl border border-mustard/60 bg-mustard-soft/70 px-3.5 py-2.5 text-[14px] text-ink">
+                  Todavía no cargaste ningún vino. Cargalos en{' '}
+                  <Link to="/vinos?nuevo=1" className="font-bold text-sky-deep hover:underline">
+                    Vinos y stock
+                  </Link>{' '}
+                  para que cada venta descuente botellas y calcule su costo. Mientras tanto podés cargar un ítem que no sea vino.
+                </div>
+              )}
               {suggestWholesale && (
                 <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-sky/50 bg-sky-soft/70 px-3.5 py-2.5 text-[14px] text-ink">
                   <span className="min-w-0 flex-1">
@@ -640,7 +682,12 @@ export function SaleFormModal({
             <section>
               <SectionTitle n={2}>¿Cuándo, a quién y por dónde?</SectionTitle>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Fecha" required error={shownErrors.date} hint="Si la cargás tarde, poné el día que vendiste.">
+                <Field
+                  label="Fecha"
+                  required
+                  error={shownErrors.date}
+                  hint={f.date > today() ? 'Ojo: es una fecha futura. Si la venta ya se hizo, poné el día que vendiste.' : 'Si la cargás tarde, poné el día que vendiste.'}
+                >
                   <DateInput value={f.date} onChange={(v) => set({ date: v })} max="2100-12-31" />
                 </Field>
                 <Field label="Canal" hint="Por dónde vino la venta. Sirve para ver qué canal te conviene.">
@@ -671,8 +718,8 @@ export function SaleFormModal({
                   error={shownErrors.discount}
                   hint={
                     f.discountMode === 'pct' && calc.discount > 0
-                      ? `= ${money(calc.discount)} menos sobre ${money(calc.subtotal)}`
-                      : 'Opcional. En pesos o en % sobre los vinos.'
+                      ? `Son ${money(calc.discount)} de descuento sobre ${money(calc.subtotal)}.`
+                      : 'Opcional. En pesos o en % sobre lo que suman los vinos e ítems.'
                   }
                 >
                   <div className="flex items-center gap-2" data-error={!!shownErrors.discount}>
@@ -693,8 +740,8 @@ export function SaleFormModal({
                     )}
                   </div>
                 </Field>
-                <Field label="Envío cobrado" hint="Lo que le cobrás al cliente por el envío. Lo que te cobra el correo cargalo en Gastos.">
-                  <MoneyInput value={f.shipping} onChange={(v) => set({ shipping: v })} />
+                <Field label="Envío cobrado" error={shownErrors.shipping} hint="Lo que le cobrás al cliente por el envío. Lo que te cobra el correo cargalo en Gastos.">
+                  <MoneyInput value={f.shipping} onChange={(v) => set({ shipping: v })} aria-invalid={!!shownErrors.shipping || undefined} data-error={!!shownErrors.shipping} />
                 </Field>
               </div>
             </section>
@@ -718,6 +765,7 @@ export function SaleFormModal({
                           Comisión (a mano) <InfoTip term="comisiones" />
                         </span>
                       }
+                      error={shownErrors.fee}
                       hint={
                         <button
                           type="button"
@@ -731,14 +779,15 @@ export function SaleFormModal({
                         </button>
                       }
                     >
-                      <MoneyInput value={f.feeOverride} onChange={(v) => set({ feeOverride: v ?? 0 })} />
+                      <MoneyInput value={f.feeOverride} onChange={(v) => set({ feeOverride: v ?? 0 })} aria-invalid={!!shownErrors.fee || undefined} data-error={!!shownErrors.fee} />
                     </Field>
                   ) : (
                     <div className="rounded-xl bg-cream-deep px-3.5 py-2.5 text-[14px] text-ink">
                       <p>
                         {calc.feePct > 0 ? (
                           <>
-                            {methodLabel(f.method)} se queda ≈ <b className="vh-num">{money(calc.fee, { decimals: 0 })}</b> ({pct(calc.feePct / 100, 2)})
+                            {methodLabel(f.method)} se queda ≈ <b className="vh-num whitespace-nowrap">{money(calc.fee, { decimals: 0 })}</b>{' '}
+                            <span className="whitespace-nowrap">({pct(calc.feePct / 100, 2)})</span>
                           </>
                         ) : (
                           <>{methodLabel(f.method)} no cobra comisión.</>

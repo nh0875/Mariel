@@ -283,7 +283,9 @@ describe('ficha del vino y movimientos', () => {
     const a = await newWine({ name: 'A' })
     const b = await newWine({ name: 'B' })
     await s.post(`/products/${a.id}/adjust`, { date: today(), kind: 'rotura', qty: 1 })
-    await s.post(`/products/${b.id}/adjust`, { date: addDays(today(), -400), kind: 'regalo', qty: 1 })
+    // B tiene historia vieja (una compra de hace 400 días), así que se puede cargar un regalo de esa fecha.
+    createPurchase(purchaseInput.parse({ date: addDays(today(), -401), items: [{ product_id: b.id, qty: 6, unit_cost: 7000 }], paid: false }))
+    expect((await s.post(`/products/${b.id}/adjust`, { date: addDays(today(), -400), kind: 'regalo', qty: 1 })).status).toBe(200)
     const from = addDays(today(), -5)
     const r = await s.get(`/stock/movements?from=${from}&to=${today()}`)
     expect(r.body.map((m: { product_name: string; kind: string }) => `${m.product_name}:${m.kind}`).sort()).toEqual(['A:inicial', 'A:rotura', 'B:inicial'])
@@ -309,6 +311,16 @@ describe('aumento de precios masivo', () => {
     expect(done.body.updated).toBe(2)
     const list = (await s.get('/products')).body
     expect(list.map((p: { price_retail: number }) => p.price_retail)).toEqual([11000, 13600])
+  })
+
+  it('al BAJAR precios redondea para abajo (una baja nunca termina subiendo el precio)', async () => {
+    await newWine({ name: 'A', price_retail: 12350, price_wholesale: 950 })
+    const r = await s.post('/products/bulk-price?preview=1', { percent: -1, apply_to: 'both', round_to: 1000 })
+    // 12.350 × 0,99 = 12.226,50 → para abajo a $1.000 = 12.000 (antes: para arriba = 13.000, ¡más caro!).
+    // 950 × 0,99 = 940,50 → para abajo daría 0: en ese caso queda sin redondear.
+    expect(r.body.examples[0]).toMatchObject({ after_retail: 12000, after_wholesale: 940.5 })
+    const up = await s.post('/products/bulk-price?preview=1', { percent: 1, apply_to: 'retail', round_to: 1000 })
+    expect(up.body.examples[0].after_retail).toBe(13000)
   })
 
   it('filtra por bodega, tipo, ids y aplica solo a un precio', async () => {
@@ -457,5 +469,109 @@ describe('exportar a Excel', () => {
     const res = wb.getWorksheet('Resumen por vino')!
     // Vino, Bodega, inicio, entradas, vendidas, mermas, ajustes, final
     expect([3, 4, 5, 6, 7, 8].map((c) => res.getRow(5).getCell(c).value)).toEqual([0, 10, 0, 2, 0, 8])
+  })
+})
+
+describe('revisión: casos borde', () => {
+  it('los errores de validación usan palabras de la gente (nunca nombres de columnas)', async () => {
+    const r = await s.post('/products', { name: 'X', units_per_box: 100, min_stock: -1, winery: 'a'.repeat(130), size_ml: 10 })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toContain('Botellas por caja')
+    expect(r.body.error).toContain('Stock mínimo')
+    expect(r.body.error).toContain('Bodega')
+    expect(r.body.error).not.toMatch(/units_per_box|min_stock|winery|size_ml/)
+    const p = await newWine()
+    const adj = await s.post(`/products/${p.id}/adjust`, { date: today(), kind: 'rotura', qty: 1.5 })
+    expect(adj.body.error).toContain('número entero')
+    const bulk = await s.post('/products/bulk-price', { percent: 5, apply_to: 'x', round_to: -1 })
+    expect(bulk.body.error).toContain('Qué precios')
+    expect(bulk.body.error).toContain('Redondeo')
+  })
+
+  it('rechaza fechas que no existen en ajustes y cambios de costo', async () => {
+    const p = await newWine()
+    const a = await s.post(`/products/${p.id}/adjust`, { date: '2026-02-30', kind: 'rotura', qty: 1 })
+    expect(a.status).toBe(400)
+    expect(a.body.error).toContain('esa fecha no existe')
+    const c = await s.post(`/products/${p.id}/cost`, { date: '2026-13-01', unit_cost: 9000 })
+    expect(c.status).toBe(400)
+    expect((await s.get(`/products/${p.id}`)).body.movements).toHaveLength(1)
+  })
+
+  it('conteo con fecha pasada: la diferencia es contra lo que había ESE día (no pisa ventas posteriores)', async () => {
+    const p = await newWine({ initial_stock: 0, unit_cost: 1000 })
+    // El "inicial" es de hoy: para tener historia, la compra y la venta van con fechas pasadas.
+    createPurchase(purchaseInput.parse({ date: addDays(today(), -10), items: [{ product_id: p.id, qty: 20, unit_cost: 1000 }], paid: false }))
+    createSale(saleInput.parse({ date: addDays(today(), -2), items: [{ product_id: p.id, qty: 5, unit_price: 2000 }] }))
+    const countDay = addDays(today(), -5)
+    expect((await s.get(`/products/${p.id}/stock-at?date=${countDay}`)).body).toEqual({ date: countDay, stock: 20 })
+    expect((await s.get(`/products/${p.id}/stock-at`)).body.stock).toBe(15)
+    // Hace 5 días había 20 según el sistema y contaste 18 → faltaban 2. Hoy quedan 15 − 2 = 13.
+    const r = await s.post(`/products/${p.id}/adjust`, { date: countDay, kind: 'ajuste', qty: 18 - 15, counted: 18 })
+    expect(r.status).toBe(200)
+    expect(r.body.stock).toBe(13)
+    const m = get<{ qty: number; date: string }>("SELECT qty, date FROM stock_movements WHERE product_id = ? AND kind = 'ajuste'", [p.id])
+    expect(m).toEqual({ qty: -2, date: countDay })
+    // Si lo contado coincide con el sistema de ese día, no hay nada que ajustar.
+    const same = await s.post(`/products/${p.id}/adjust`, { date: countDay, kind: 'ajuste', counted: 18 })
+    expect(same.status).toBe(400)
+    expect(same.body.error).toContain('no hace falta ajustar')
+    // Un conteo que deja el stock de hoy en negativo (hubo ventas después) se rechaza con explicación.
+    const neg = await s.post(`/products/${p.id}/adjust`, { date: addDays(today(), -3), kind: 'ajuste', counted: 2 })
+    expect(neg.status).toBe(400)
+    expect(neg.body.error).toContain('después del')
+    expect((await s.post(`/products/${p.id}/adjust`, { date: today(), kind: 'ajuste', counted: -1 })).status).toBe(400)
+    expect((await s.get('/products/999/stock-at')).status).toBe(404)
+  })
+
+  it('no acepta ajustes ni cambios de costo con fecha anterior a que el vino exista en el sistema', async () => {
+    const p = await newWine({ initial_stock: 12 })
+    const before = addDays(today(), -3)
+    const conteo = await s.post(`/products/${p.id}/adjust`, { date: before, kind: 'ajuste', counted: 10 })
+    expect(conteo.status).toBe(400)
+    expect(conteo.body.error).toContain('todavía no estaba en el sistema')
+    expect((await s.post(`/products/${p.id}/adjust`, { date: before, kind: 'rotura', qty: 1 })).status).toBe(400)
+    expect((await s.post(`/products/${p.id}/cost`, { date: before, unit_cost: 9000 })).status).toBe(400)
+    // El mismo día del alta sí: contaste 10 y había 12 → quedan 10.
+    const ok = await s.post(`/products/${p.id}/adjust`, { date: today(), kind: 'ajuste', counted: 10 })
+    expect(ok.body.stock).toBe(10)
+    expect((await s.get(`/products/${p.id}`)).body.stats.first_movement_date).toBe(today())
+  })
+
+  it('editar mandando solo algunos campos no resetea el resto ni reactiva el vino', async () => {
+    const p = await newWine({ min_stock: 18, units_per_box: 12, size_ml: 1500, active: false, sku: 'MG-1', notes: 'Magnum' })
+    const r = await s.put(`/products/${p.id}`, { price_retail: 15000 })
+    expect(r.status).toBe(200)
+    expect(r.body).toMatchObject({ price_retail: 15000, price_wholesale: 10300, min_stock: 18, units_per_box: 12, size_ml: 1500, active: false, sku: 'MG-1', notes: 'Magnum', stock: 24 })
+    // null explícito sí borra un dato opcional.
+    expect((await s.put(`/products/${p.id}`, { notes: null })).body.notes).toBeNull()
+  })
+
+  it('la ficha muestra «Consumidor final» en ventas sin cliente', async () => {
+    const p = await newWine()
+    const saleId = createSale(saleInput.parse({ date: today(), items: [{ product_id: p.id, qty: 1, unit_price: 12500 }] }))
+    const d = (await s.get(`/products/${p.id}`)).body
+    expect(d.movements[0].reference).toBe(`Venta #${saleId} · Consumidor final`)
+  })
+
+  it('importar: los errores dicen la fila REAL del Excel aunque haya filas vacías en el medio', async () => {
+    const buf = await xlsxBuffer([['Nombre', 'Precio minorista'], ['Uno', 1000], [], [], ['Dos', 'caro'], [], [null, 500]])
+    const r = await upload(buf)
+    expect(r.status).toBe(200)
+    expect(r.body.created).toBe(1)
+    expect(r.body.errors).toEqual([
+      { row: 5, message: expect.stringContaining('«caro» no es un número') },
+      { row: 7, message: 'Falta el nombre del vino.' },
+    ])
+  })
+
+  it('Excel de un solo vino sin fechas: trae toda su historia', async () => {
+    const p = await newWine({ initial_stock: 0, unit_cost: 1000 })
+    createPurchase(purchaseInput.parse({ date: '2025-03-15', items: [{ product_id: p.id, qty: 12, unit_cost: 1000 }], paid: false }))
+    const wb = await readXlsx(`/stock/export?product_id=${p.id}`)
+    const ws = wb.getWorksheet('Movimientos')!
+    expect(ws.getCell(2, 1).text).toContain('Período: 15/03/2025 al')
+    expect(ws.getRow(5).getCell(4).text).toBe('Compra')
+    expect(ws.getRow(6).getCell(4).text).toBe('Stock inicial')
   })
 })

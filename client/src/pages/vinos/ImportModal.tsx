@@ -32,18 +32,24 @@ export function ImportModal({ open, onClose }: { open: boolean; onClose: () => v
       setFile(null)
       setResult(null)
       setDragging(false)
+      setUploadError(null)
     }
   }, [open])
 
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const upload = useApiMutation((f: File) => api.upload<ImportResult>('/products/import', f), {
     success: (r) => `Importación lista: ${r.created} ${r.created === 1 ? 'vino nuevo' : 'vinos nuevos'} y ${r.updated} ${r.updated === 1 ? 'actualizado' : 'actualizados'}`,
     onSuccess: (r) => setResult(r),
+    // El error también queda escrito acá abajo (el aviso de arriba se va solo).
+    onError: (err) => setUploadError(err.message || 'No pudimos importar el archivo.'),
   })
 
   const pick = (f: File | undefined | null) => {
+    if (input.current) input.current.value = '' // así se puede volver a elegir el mismo archivo
     if (!f) return
     setFile(f)
     setResult(null)
+    setUploadError(null)
   }
   const onDrop = (e: DragEvent) => {
     e.preventDefault()
@@ -62,7 +68,7 @@ export function ImportModal({ open, onClose }: { open: boolean; onClose: () => v
       footer={
         result ? (
           <>
-            <Button variant="ghost" onClick={() => (setResult(null), setFile(null))}>
+            <Button variant="ghost" onClick={() => (setResult(null), setFile(null), setUploadError(null))}>
               Subir otro archivo
             </Button>
             <Button variant="primary" onClick={onClose}>
@@ -164,6 +170,14 @@ export function ImportModal({ open, onClose }: { open: boolean; onClose: () => v
               <input ref={input} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
             </label>
             {wrongType && <p className="mt-2 text-[13px] font-semibold text-bad">Ese archivo no es un .xlsx. Abrilo en Excel y usá «Guardar como» → «Libro de Excel (.xlsx)».</p>}
+            {uploadError && !wrongType && (
+              <p role="alert" className="mt-2 flex items-start gap-2 rounded-xl border border-bad/25 bg-bad-soft/50 px-3 py-2 text-[13.5px] text-ink">
+                <TriangleAlert size={16} className="mt-0.5 shrink-0 text-bad" aria-hidden />
+                <span>
+                  <b>No se pudo importar:</b> {uploadError}
+                </span>
+              </p>
+            )}
           </Step>
         </ol>
       )}

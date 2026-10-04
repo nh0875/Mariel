@@ -129,17 +129,45 @@ export default function VinoDetailPage() {
   const gain = p.price_retail - p.unit_cost
   const soldInYear = monthly.reduce((s, m) => s + m.bottles, 0)
 
+  // Si ya tiene historia (ventas, compras, ajustes…) no se puede borrar: en vez de dejar que falle,
+  // lo explicamos y ofrecemos desactivarlo, que es lo que el usuario realmente necesita.
+  const hasHistory = movements.length >= 300 || movements.some((m) => m.kind !== 'inicial' && m.kind !== 'revaluo')
   const onDelete = async () => {
+    if (hasHistory) {
+      const ok = await confirm({
+        title: `«${p.name}» no se puede borrar`,
+        confirmText: p.active ? 'Desactivarlo' : 'Entendido',
+        cancelText: p.active ? 'Dejarlo como está' : 'Cerrar',
+        message: (
+          <>
+            <p>Ya tiene ventas, compras o movimientos de stock. Si lo borráramos se perdería esa historia y tus reportes dejarían de cerrar.</p>
+            <p className="mt-2">
+              {p.active ? (
+                <>
+                  Lo que podés hacer es <b className="text-ink">desactivarlo</b>: deja de aparecer al cargar ventas y compras y en la lista de precios, pero todo queda guardado (y lo podés
+                  volver a activar).
+                </>
+              ) : (
+                'Ya está desactivado: no aparece al cargar ventas ni compras, y su historia queda guardada.'
+              )}
+            </p>
+          </>
+        ),
+      })
+      if (ok && p.active) setActive.mutate(false)
+      return
+    }
     const ok = await confirm({
       title: `¿Borrar «${p.name}»?`,
       danger: true,
       confirmText: 'Sí, borrar',
       message: (
         <>
-          <p>Solo se puede borrar un vino que no tiene ventas, compras ni ajustes.</p>
-          <p className="mt-2">
-            Si ya tiene historia, mejor <b className="text-ink">desactivalo</b>: deja de aparecer al cargar ventas, pero no se pierde nada.
+          <p>
+            Se borra del catálogo{p.stock > 0 ? ` junto con sus ${p.stock === 1 ? 'una botella' : `${p.stock} botellas`} de stock inicial` : ''}. No tiene ventas, compras ni ajustes, así que no se
+            pierde ninguna historia.
           </p>
+          <p className="mt-2">Esto no se puede deshacer.</p>
         </>
       ),
     })
@@ -153,7 +181,9 @@ export default function VinoDetailPage() {
     const ok = await confirm({
       title: `¿Desactivar «${p.name}»?`,
       confirmText: 'Sí, desactivar',
-      message: 'No va a aparecer al cargar ventas ni compras, ni en la lista de precios. Su historia queda guardada y lo podés volver a activar cuando quieras.',
+      message: `No va a aparecer al cargar ventas ni compras, ni en la lista de precios. Su historia queda guardada y lo podés volver a activar cuando quieras.${
+        p.stock > 0 ? ` Ojo: todavía tenés ${p.stock === 1 ? '1 botella' : `${p.stock} botellas`}; siguen contando en el valor de tu stock hasta que las vendas o las ajustes.` : ''
+      }`,
     })
     if (ok) setActive.mutate(false)
   }
@@ -446,7 +476,7 @@ export default function VinoDetailPage() {
         flush
         title="Historial de botellas"
         subtitle="Cada entrada (+) y salida (−), de la más nueva a la más vieja. El saldo es cuántas quedaban después de cada movimiento."
-        actions={<ExportButton path="/stock/export" params={{ from: '2000-01-01', to: today(), product_id: p.id }} label="Excel" size="sm" />}
+        actions={<ExportButton path="/stock/export" params={{ product_id: p.id }} label="Excel" size="sm" title="Toda la historia de este vino en Excel" />}
       >
         <div className="px-5 pb-5">
           <DataTable
@@ -471,8 +501,8 @@ export default function VinoDetailPage() {
       </Card>
 
       <ProductFormModal open={editOpen} onClose={() => setEditOpen(false)} product={p} />
-      <AdjustStockModal open={adjustOpen} onClose={() => setAdjustOpen(false)} product={p} />
-      <CostChangeModal open={costOpen} onClose={() => setCostOpen(false)} product={p} />
+      <AdjustStockModal open={adjustOpen} onClose={() => setAdjustOpen(false)} product={p} minDate={stats.first_movement_date} />
+      <CostChangeModal open={costOpen} onClose={() => setCostOpen(false)} product={p} minDate={stats.first_movement_date} />
     </>
   )
 }

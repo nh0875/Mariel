@@ -312,6 +312,58 @@ describe('editar y borrar', () => {
     expect(keep.body).toMatchObject({ total: 6000, paid: 3000, balance: 3000, status: 'parcial' })
   })
 
+  it('editar una venta cobrada sin cambiar el total ni la cuenta no toca sus cobros (fechas, cuentas y cuotas quedan igual)', async () => {
+    const p = wine('Malbec', 20)
+    const caja = account('Caja').id
+    const banco = account('Banco').id
+    const sale = (await t.post('/sales', { date: '2026-02-01', paid: false, payment_method: 'credito', items: [{ product_id: p, qty: 2, unit_price: 5000 }] })).body
+    await t.post(`/sales/${sale.id}/payments`, { date: '2026-02-10', amount: 4000, account_id: caja })
+    await t.post(`/sales/${sale.id}/payments`, { date: '2026-02-20', amount: 6000, account_id: banco })
+    const feeBefore = feePayments(sale.id)
+
+    // corregir la nota y el cliente: la caja no se mueve
+    const r = await t.put(`/sales/${sale.id}`, {
+      date: '2026-02-01',
+      payment_method: 'credito',
+      notes: 'Pidió factura A',
+      paid: true,
+      account_id: caja,
+      items: [{ product_id: p, qty: 2, unit_price: 5000 }],
+    })
+    expect(r.status).toBe(200)
+    expect(r.body.notes).toBe('Pidió factura A')
+    expect(r.body.payments.map((x: any) => [x.date, x.amount, x.account_id])).toEqual([
+      ['2026-02-10', 4000, caja],
+      ['2026-02-20', 6000, banco],
+    ])
+    expect(feePayments(sale.id)).toBeCloseTo(feeBefore, 2)
+
+    // sin mandar cuenta también se respetan
+    const r2 = await t.put(`/sales/${sale.id}`, { date: '2026-02-01', payment_method: 'credito', paid: true, items: [{ product_id: p, qty: 2, unit_price: 5000 }] })
+    expect(r2.body.payments).toHaveLength(2)
+
+    // si cambia el total, queda un único cobro por el total nuevo
+    const r3 = await t.put(`/sales/${sale.id}`, { date: '2026-02-01', payment_method: 'credito', paid: true, account_id: caja, items: [{ product_id: p, qty: 3, unit_price: 5000 }] })
+    expect(r3.body).toMatchObject({ total: 15000, paid: 15000, status: 'pagado' })
+    expect(r3.body.payments.map((x: any) => [x.date, x.amount, x.account_id])).toEqual([['2026-02-01', 15000, caja]])
+    expect(stockOf(p)).toBe(17)
+  })
+
+  it('si cambiás la fecha de una venta cobrada en el momento, el cobro acompaña la nueva fecha', async () => {
+    const p = wine('Malbec', 20)
+    const sale = (await t.post('/sales', { date: '2026-02-01', payment_method: 'mercadopago', items: [{ product_id: p, qty: 1, unit_price: 10000 }] })).body
+    const mpAntes = account('Mercado Pago').balance
+    const r = await t.put(`/sales/${sale.id}`, { date: '2026-02-03', payment_method: 'mercadopago', paid: true, items: [{ product_id: p, qty: 1, unit_price: 10000 }] })
+    expect(r.body.payments.map((x: any) => x.date)).toEqual(['2026-02-03'])
+    expect(get<{ date: string }>("SELECT date FROM payments WHERE ref_type = 'sale_fee' AND ref_id = ?", [sale.id])!.date).toBe('2026-02-03')
+    expect(account('Mercado Pago').balance).toBeCloseTo(mpAntes, 2)
+
+    // elegir otra cuenta sí reemplaza el cobro
+    const banco = account('Banco').id
+    const r2 = await t.put(`/sales/${sale.id}`, { date: '2026-02-03', payment_method: 'mercadopago', paid: true, account_id: banco, items: [{ product_id: p, qty: 1, unit_price: 10000 }] })
+    expect(r2.body.payments.map((x: any) => x.account_id)).toEqual([banco])
+  })
+
   it('borrar devuelve las botellas al stock y saca la plata de la caja', async () => {
     const p = wine('Malbec', 20)
     const cajaAntes = account('Caja').balance
@@ -353,7 +405,8 @@ describe('Excel y comprobante', () => {
     const res = await t.raw('/sales/export?from=2026-02-01&to=2026-02-28')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('spreadsheetml')
-    expect(res.headers.get('content-disposition')).toMatch(/vinoh-ventas-.*\.xlsx/)
+    // el nombre del archivo dice qué mes es (así dos descargas no se pisan)
+    expect(res.headers.get('content-disposition')).toContain('vinoh-ventas-2026-02.xlsx')
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(await res.arrayBuffer())
     const ventas = wb.getWorksheet('Ventas')!
@@ -374,6 +427,18 @@ describe('Excel y comprobante', () => {
     await wb2.xlsx.load(await pending.arrayBuffer())
     expect(wb2.getWorksheet('Ventas')!.getRow(6).getCell(1).value).toBe('TOTAL')
     expect(String(wb2.getWorksheet('Ventas')!.getRow(2).getCell(1).value)).toContain('Filtro: solo por cobrar')
+
+    // "Desde siempre": el título dice desde cuándo hay ventas, no "01/01/2000"
+    const all = await t.raw('/sales/export?from=2000-01-01&to=2026-12-31')
+    expect(all.headers.get('content-disposition')).toContain('vinoh-ventas-hasta-2026-12-31.xlsx')
+    const wb3 = new ExcelJS.Workbook()
+    await wb3.xlsx.load(await all.arrayBuffer())
+    const sub = String(wb3.getWorksheet('Ventas')!.getRow(2).getCell(1).value)
+    expect(sub).toContain('Todas las ventas (desde el 01/02/2026')
+    expect(sub).not.toContain('2000')
+
+    const custom = await t.raw('/sales/export?from=2026-02-01&to=2026-02-15')
+    expect(custom.headers.get('content-disposition')).toContain('vinoh-ventas-2026-02-01-al-2026-02-15.xlsx')
   })
 
   it('arma un comprobante imprimible con los datos del negocio (y escapa lo que escribe el usuario)', async () => {
@@ -395,5 +460,12 @@ describe('Excel y comprobante', () => {
     expect(html).not.toContain('<script>alert(1)</script>')
     expect(html).not.toContain('window.print() }, 250)')
     expect(await (await t.raw(`/sales/${sale.id}/receipt?print=1`)).text()).toContain('window.print() }, 250)')
+
+    // con un cobro parcial, el comprobante muestra lo pagado a cuenta y el saldo
+    const fiada = (await t.post('/sales', { date: '2026-02-01', paid: false, items: [{ product_id: p, qty: 1, unit_price: 10000 }] })).body
+    await t.post(`/sales/${fiada.id}/payments`, { date: '2026-02-02', amount: 4000, account_id: account('Caja').id })
+    const partial = await (await t.raw(`/sales/${fiada.id}/receipt`)).text()
+    expect(partial).toContain('Pagado a cuenta: $ 4.000')
+    expect(partial).toContain('Saldo pendiente: $ 6.000')
   })
 })

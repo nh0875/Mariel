@@ -142,7 +142,21 @@ export function ProductFormModal({
 
   const cost = editing ? (product?.unit_cost ?? 0) : f.unit_cost
   const nameError = tried && !f.name.trim() ? 'Poné el nombre del vino (es lo único obligatorio).' : undefined
+  // Dos vinos con el mismo nombre se confunden al cargar ventas (y al importar desde Excel).
+  const normName = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const twin = f.name.trim() ? allProducts.find((p) => p.id !== product?.id && normName(p.name) === normName(f.name)) : undefined
+  const nameWarn = twin
+    ? `Ya tenés un vino que se llama «${twin.name}»${twin.winery ? ` (${twin.winery}${twin.vintage ? ` ${twin.vintage}` : ''})` : ''}${twin.active ? '' : ', desactivado'}. Si es otra cosecha, sumale el año al nombre para no confundirlos.`
+    : undefined
   const wholesaleWarn = f.price_wholesale && f.price_retail && f.price_wholesale > f.price_retail ? 'El precio mayorista suele ser MÁS BAJO que el minorista. ¿Están al revés?' : undefined
+  const negative = (v: number | null) => v != null && v < 0
+  const costError = negative(f.unit_cost) ? 'El costo no puede ser negativo.' : undefined
+  const retailError = negative(f.price_retail) ? 'El precio no puede ser negativo.' : undefined
+  const wholesaleError = negative(f.price_wholesale) ? 'El precio no puede ser negativo.' : undefined
+  const initialError = negative(f.initial_stock) ? 'No puede ser negativo: si no tenés, dejá 0.' : undefined
+  const minError = negative(f.min_stock) ? 'No puede ser negativo (0 = sin aviso).' : undefined
+  const boxError = f.units_per_box != null && (f.units_per_box < 1 || f.units_per_box > 48) ? 'Entre 1 y 48 botellas por caja.' : undefined
+  const numbersOk = !costError && !retailError && !wholesaleError && !initialError && !minError && !boxError
 
   const suggest = () => {
     if (!cost) return
@@ -163,8 +177,9 @@ export function ProductFormModal({
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
+    if (save.isPending) return
     setTried(true)
-    if (!f.name.trim() || (f.vintage != null && (f.vintage < 1900 || f.vintage > 2100))) return
+    if (!f.name.trim() || (f.vintage != null && (f.vintage < 1900 || f.vintage > 2100)) || !numbersOk) return
     save.mutate({
       name: f.name.trim(),
       winery: f.winery || null,
@@ -203,7 +218,7 @@ export function ProductFormModal({
           <Button variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="primary" type="submit" form="vino-form" loading={save.isPending} disabled={!!vintageError}>
+          <Button variant="primary" type="submit" form="vino-form" loading={save.isPending} disabled={!!vintageError || !numbersOk}>
             {editing ? 'Guardar cambios' : 'Agregar vino'}
           </Button>
         </>
@@ -212,7 +227,14 @@ export function ProductFormModal({
       <form id="vino-form" onSubmit={submit} className="space-y-5" noValidate>
         <Section title="El vino">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Nombre" required error={nameError} hint="Así lo vas a ver al cargar ventas. Ej: Malbec Reserva." className="sm:col-span-2" htmlFor="vino-name">
+            <Field
+              label="Nombre"
+              required
+              error={nameError}
+              hint={nameWarn ? <span className="font-semibold text-warn">{nameWarn}</span> : 'Así lo vas a ver al cargar ventas. Ej: Malbec Reserva.'}
+              className="sm:col-span-2"
+              htmlFor="vino-name"
+            >
               <TextInput id="vino-name" value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Ej: Malbec Reserva" aria-invalid={!!nameError} autoComplete="off" />
             </Field>
             <Field label="Bodega" htmlFor="vino-winery" hint="Elegí una que ya tengas o escribí una nueva.">
@@ -285,15 +307,16 @@ export function ProductFormModal({
                 info="costo_promedio"
                 htmlFor="vino-cost"
                 hint="Lo que te cuesta cada botella puesta en tu depósito (con flete). Después se actualiza solo con cada compra."
+                error={costError}
                 className="sm:col-span-2"
               >
                 <MoneyInput id="vino-cost" value={f.unit_cost} onChange={(v) => set('unit_cost', v)} className="sm:max-w-[calc(50%-0.5rem)]" />
               </Field>
             )}
-            <Field label="Precio minorista" info="margen_vs_markup" htmlFor="vino-retail" hint={<PriceInsight price={f.price_retail} cost={cost} />}>
+            <Field label="Precio minorista" info="margen_vs_markup" htmlFor="vino-retail" error={retailError} hint={<PriceInsight price={f.price_retail} cost={cost} />}>
               <MoneyInput id="vino-retail" value={f.price_retail} onChange={(v) => set('price_retail', v)} />
             </Field>
-            <Field label="Precio mayorista" htmlFor="vino-wholesale" error={wholesaleWarn} hint={<PriceInsight price={f.price_wholesale} cost={cost} />}>
+            <Field label="Precio mayorista" htmlFor="vino-wholesale" error={wholesaleError ?? wholesaleWarn} hint={<PriceInsight price={f.price_wholesale} cost={cost} />}>
               <MoneyInput id="vino-wholesale" value={f.price_wholesale} onChange={(v) => set('price_wholesale', v)} />
             </Field>
           </div>
@@ -321,14 +344,14 @@ export function ProductFormModal({
         <Section title="Stock" description={editing ? 'Las botellas se mueven solas con ventas y compras. Para roturas, regalos o un conteo, usá «Ajustar stock» en la ficha.' : undefined}>
           <div className="grid gap-4 sm:grid-cols-3">
             {!editing && (
-              <Field label="Botellas que tenés hoy" htmlFor="vino-initial" hint="Si todavía no tenés, dejá 0: entran con la primera compra.">
+              <Field label="Botellas que tenés hoy" htmlFor="vino-initial" error={initialError} hint="Si todavía no tenés, dejá 0: entran con la primera compra.">
                 <IntInput id="vino-initial" value={f.initial_stock} onChange={(v) => set('initial_stock', v)} />
               </Field>
             )}
-            <Field label="Stock mínimo" info="stock_minimo" htmlFor="vino-min" hint="Con esta cantidad o menos te avisamos que hay que reponer.">
+            <Field label="Stock mínimo" info="stock_minimo" htmlFor="vino-min" error={minError} hint="Con esta cantidad o menos te avisamos que hay que reponer.">
               <IntInput id="vino-min" value={f.min_stock} onChange={(v) => set('min_stock', v)} />
             </Field>
-            <Field label="Botellas por caja" htmlFor="vino-box" hint="Para mostrarte el stock en cajas y sugerir compras por caja cerrada.">
+            <Field label="Botellas por caja" htmlFor="vino-box" error={boxError} hint="Para mostrarte el stock en cajas y sugerir compras por caja cerrada.">
               <IntInput id="vino-box" value={f.units_per_box} onChange={(v) => set('units_per_box', v)} />
             </Field>
           </div>

@@ -14,11 +14,12 @@ import {
 } from '../../shared/constants'
 import { round2, safeDiv } from '../../shared/calc'
 import type { SaleWithStatus } from '../../shared/types'
-import { all, get, scalar } from '../db'
+import { all, get, scalar, tx } from '../db'
 import { badRequest, notFound, parseId, parsePeriod, qn, qs, validate } from '../lib/http'
-import { excelFilename, fmtDate, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
+import { fmtDate, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
+import { endOfMonth, startOfMonth } from '../../shared/dates'
 import { createSale, deleteSale, getSaleDetail, listSales, updateSale, type SalesFilter } from '../services/sales'
-import { addSettlement, paidFor } from '../services/payments'
+import { addPayment, addSettlement, deletePaymentsByRef, paidFor, paymentsFor, syncSaleFees } from '../services/payments'
 import { periodSummary, receivables, salesByChannel } from '../services/finance'
 import { getSettings } from '../services/settings'
 
@@ -197,6 +198,19 @@ router.get('/sales/summary', (req, res) => {
 
 // ───────────────────────── Excel ─────────────────────────
 
+/**
+ * Nombre del archivo según el período, así dos descargas distintas no se pisan:
+ * "vinoh-ventas-2026-09.xlsx" (un mes), "vinoh-ventas-2026.xlsx" (un año) o "vinoh-ventas-2026-09-01-al-2026-09-15.xlsx".
+ */
+function exportFilename(from: string, to: string, allTime: boolean): string {
+  let slug: string
+  if (allTime) slug = `hasta-${to}`
+  else if (from === startOfMonth(from) && to === endOfMonth(from)) slug = from.slice(0, 7)
+  else if (from.endsWith('-01-01') && to === `${from.slice(0, 4)}-12-31`) slug = from.slice(0, 4)
+  else slug = `${from}-al-${to}`
+  return `vinoh-ventas-${slug}.xlsx`
+}
+
 router.get('/sales/export', async (req, res) => {
   const period = parsePeriod(req)
   const f = readFilters(req, period)
@@ -280,8 +294,12 @@ router.get('/sales/export', async (req, res) => {
     f.base.event_id ? `evento ${get<{ name: string }>('SELECT name FROM events WHERE id = ?', [f.base.event_id])?.name ?? '—'}` : '',
     f.base.product_id ? `vino ${get<{ name: string }>('SELECT name FROM products WHERE id = ?', [f.base.product_id])?.name ?? '—'}` : '',
   ].filter(Boolean)
-  const subtitle = periodSubtitle(period.from, period.to) + (filterParts.length ? ` · Filtro: ${filterParts.join(', ')}` : '')
-  await sendWorkbook(res, excelFilename('ventas'), [
+  // "Desde siempre" pide desde el año 2000: en el título se aclara desde cuándo hay ventas cargadas.
+  const firstSale = scalar<string | null>('SELECT MIN(date) FROM sales') ?? null
+  const allTime = !!firstSale && period.from < firstSale && period.from <= '2000-01-01'
+  const periodText = allTime ? `Todas las ventas (desde el ${fmtDate(firstSale!)} hasta el ${fmtDate(period.to)})` : periodSubtitle(period.from, period.to)
+  const subtitle = periodText + (filterParts.length ? ` · Filtro: ${filterParts.join(', ')}` : '')
+  await sendWorkbook(res, exportFilename(period.from, period.to, allTime), [
     {
       name: 'Ventas',
       title: 'Ventas',
@@ -328,22 +346,47 @@ router.post('/sales', (req, res) => {
 router.put('/sales/:id', (req, res) => {
   const id = parseId(req.params.id, 'esa venta')
   const data = validate(saleInput, req.body)
-  const prev = get<{ total: number }>('SELECT total FROM sales WHERE id = ?', [id])
+  const prev = get<{ total: number; date: string }>('SELECT total, date FROM sales WHERE id = ?', [id])
   if (!prev) throw notFound('esa venta')
+  // Mismo cálculo que services/sales.ts (computeTotals).
+  const newTotal = round2(round2(data.items.reduce((s, i) => s + i.qty * i.unit_price, 0)) - round2(data.discount ?? 0) + round2(data.shipping ?? 0))
+  const prevPayments = paymentsFor('sale', id)
+  const paid = paidFor('sale', id)
+  const wasFullyPaid = prevPayments.length > 0 && paid >= prev.total - 0.01
   // Si queda "sin cobrar" y ya tenía cobros parciales, esos cobros se mantienen:
   // no puede quedar cobrado más de lo que vale la venta.
-  if (!data.paid) {
-    const newTotal = round2(data.items.reduce((s, i) => s + i.qty * i.unit_price, 0) - (data.discount ?? 0) + (data.shipping ?? 0))
-    const paid = paidFor('sale', id)
-    const wasFullyPaid = paid >= prev.total - 0.01
-    if (!wasFullyPaid && paid > newTotal + 0.01) {
-      throw badRequest(
-        `Ya cobraste $${paid.toLocaleString('es-AR')} de esta venta y el nuevo total sería $${newTotal.toLocaleString('es-AR')}. ` +
-          'Marcala como cobrada, o borrá algún cobro desde el detalle de la venta antes de bajar el total.',
-      )
-    }
+  if (!data.paid && !wasFullyPaid && paid > newTotal + 0.01) {
+    throw badRequest(
+      `Ya cobraste $${paid.toLocaleString('es-AR')} de esta venta y el nuevo total sería $${newTotal.toLocaleString('es-AR')}. ` +
+        'Marcala como cobrada, o borrá algún cobro desde el detalle de la venta antes de bajar el total.',
+    )
   }
-  updateSale(id, data)
+  // Si estaba cobrada, sigue cobrada, el total no cambió y no elegiste otra cuenta, los cobros quedan como estaban
+  // (con sus fechas y cuentas reales). Así corregir una nota o el cliente no "mueve" plata en la Caja.
+  // Los cobros que eran del mismo día de la venta acompañan el cambio de fecha.
+  const keepPayments =
+    data.paid &&
+    wasFullyPaid &&
+    Math.abs(newTotal - prev.total) <= 0.01 &&
+    (data.account_id == null || data.account_id === prevPayments[0].account_id)
+  tx(() => {
+    updateSale(id, data)
+    if (keepPayments) {
+      deletePaymentsByRef('sale', id)
+      for (const p of prevPayments) {
+        addPayment({
+          date: p.date === prev.date ? data.date : p.date,
+          account_id: p.account_id,
+          direction: p.direction,
+          amount: p.amount,
+          ref_type: 'sale',
+          ref_id: id,
+          description: p.description,
+        })
+      }
+      syncSaleFees(id)
+    }
+  })
   res.json(getSaleDetail(id))
 })
 
@@ -410,7 +453,7 @@ router.get('/sales/:id/receipt', (req, res) => {
     .map(
       (i) => `<tr>
         <td>${esc(i.product_name || i.description || 'Ítem')}</td>
-        <td class="num">${i.qty}</td>
+        <td class="num">${i.qty.toLocaleString('es-AR')}</td>
         <td class="num">${esc(ars(i.unit_price))}</td>
         <td class="num">${esc(ars(round2(i.qty * i.unit_price)))}</td>
       </tr>`,
@@ -425,7 +468,7 @@ router.get('/sales/:id/receipt', (req, res) => {
   const payState =
     sale.status === 'pagado'
       ? 'Pagado'
-      : `Saldo pendiente: ${ars(sale.balance)}${sale.due_date ? ` · vence el ${fmtDate(sale.due_date)}` : ''}`
+      : `${sale.paid > 0.009 ? `Pagado a cuenta: ${ars(sale.paid)} · ` : ''}Saldo pendiente: ${ars(sale.balance)}${sale.due_date ? ` · vence el ${fmtDate(sale.due_date)}` : ''}`
 
   const html = `<!doctype html>
 <html lang="es">

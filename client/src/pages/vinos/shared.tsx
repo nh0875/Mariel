@@ -42,6 +42,7 @@ export function daysOfStockText(days: number | null, stock: number): string {
   if (stock <= 0) return 'reponé'
   if (days == null) return 'sin ventas en 90 días'
   if (days > 365) return 'más de un año'
+  if (days < 1) return 'menos de 1 día'
   return `≈ ${int(days)} ${days === 1 ? 'día' : 'días'}`
 }
 
@@ -58,7 +59,7 @@ export function daysOfStockVerdict(days: number | null, stock: number): { text: 
 /** Color del margen: verde si llega al objetivo, amarillo entre 25 % y el objetivo, rojo debajo de 25 %. */
 export function marginTone(margin: number, target: number): Tone {
   if (margin >= target - 0.005) return 'good'
-  if (margin >= 0.25) return 'warn'
+  if (margin >= Math.min(0.25, target)) return 'warn'
   return 'bad'
 }
 

@@ -42,6 +42,8 @@ export interface ProductStats {
   shrinkage_bottles: number
   shrinkage_cost: number
   reorder_suggestion: number
+  /** Fecha del primer movimiento: no se aceptan ajustes ni cambios de costo anteriores. */
+  first_movement_date: string | null
 }
 
 export interface ProductDetail {

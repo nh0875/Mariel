@@ -1,12 +1,13 @@
 // Ventas: la pantalla más usada. Cargar una venta tiene que ser rápido y entender
 // cuánto vendiste, cuánto te quedó y cuánto te deben, de un vistazo.
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { FilterX, Plus, Store } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import clsx from 'clsx'
+import { FilterX, History, Plus, Search, SearchX, Store, X } from 'lucide-react'
 import { CHART_COLORS, SALE_CHANNEL_LABELS, SALE_CHANNELS } from '@shared/constants'
 import { addDays, daysBetween, monthLabel, monthsBetween, previousPeriod, today } from '@shared/dates'
 import type { SaleDetail } from '@shared/types'
-import { bottles as fmtBottles, boxes, dateShort, int, money, moneyCompact, pct } from '@/lib/format'
+import { bottles as fmtBottles, boxes, date as fmtDate, dateShort, int, money, moneyCompact, pct } from '@/lib/format'
 import { useNewParam } from '@/lib/hooks'
 import { usePeriod } from '@/lib/period'
 import { useApi, useClients } from '@/lib/queries'
@@ -28,6 +29,7 @@ import {
   StatusBadge,
   type Column,
 } from '@/components/ui'
+import { normalize } from '@/components/ui/Combobox'
 import { ChartCard, ColumnChart, DonutChart } from '@/components/charts'
 import { SaleFormModal } from './SaleFormModal'
 import { SaleDetailModal } from './SaleDetailModal'
@@ -36,37 +38,49 @@ import { STATUS_FILTER_OPTIONS, channelShort, itemsSummary, type SaleListRow, ty
 
 const minDate = (a: string, b: string) => (a < b ? a : b)
 
+/** Estado de cobro en palabras (para buscar y ordenar la columna). */
+const statusText = (r: SaleListRow) => (r.status === 'pagado' ? 'Cobrada' : r.overdue ? 'Vencida' : r.status === 'parcial' ? 'Cobro parcial' : 'Por cobrar')
+
+/** Monto que no se corta entre el "$" y el número cuando el texto baja de renglón. */
+const M = ({ n }: { n: number }) => <span className="whitespace-nowrap">{money(n, { decimals: 0 })}</span>
+
 /** Plata para las tarjetas: completa hasta $ 10 M, abreviada arriba de eso (el valor exacto queda en el tooltip). */
 const tileMoney = (n: number) => (Math.abs(n) >= 10_000_000 ? moneyCompact(n) : money(n, { decimals: 0 }))
 
 export default function VentasPage() {
-  const { period, preset, label: periodLabel } = usePeriod()
+  const { period, preset, label: periodLabel, setPreset } = usePeriod()
   const [params, setParams] = useSearchParams()
   const [newOpen, openNew, closeNew] = useNewParam()
   const [presetEvent, setPresetEvent] = useState<number | null>(null)
+  const [presetClient, setPresetClient] = useState<number | null>(null)
   const [editing, setEditing] = useState<SaleDetail | null>(null)
 
   // Filtros de la tabla
   const [channel, setChannel] = useState('')
   const [status, setStatus] = useState<StatusFilter>('')
   const [clientId, setClientId] = useState<number | null>(null)
+  const [query, setQuery] = useState('')
   const filtersOn = !!(channel || status || clientId)
   const clearFilters = () => {
     setChannel('')
     setStatus('')
     setClientId(null)
+    setQuery('')
   }
 
-  // ?evento=ID → abre "Nueva venta" con ese evento y el canal "Eventos".
+  // ?evento=ID → abre "Nueva venta" con ese evento y el canal "Eventos" (desde la ficha del evento).
+  // ?cliente=ID → abre "Nueva venta" con ese cliente elegido (desde la ficha del cliente).
   useEffect(() => {
     const ev = Number(params.get('evento'))
-    if (ev > 0) {
-      setPresetEvent(ev)
-      openNew()
-      const next = new URLSearchParams(params)
-      next.delete('evento')
-      setParams(next, { replace: true })
-    }
+    const cl = Number(params.get('cliente'))
+    if (!params.has('evento') && !params.has('cliente')) return
+    if (ev > 0) setPresetEvent(ev)
+    if (cl > 0) setPresetClient(cl)
+    if (ev > 0 || cl > 0) openNew()
+    const next = new URLSearchParams(params)
+    next.delete('evento')
+    next.delete('cliente')
+    setParams(next, { replace: true })
   }, [params, setParams, openNew])
 
   // ?ver=ID → abre el detalle de esa venta (links desde otras pantallas).
@@ -139,11 +153,35 @@ export default function VentasPage() {
     }
   }, [s, period])
 
-  const rows = list.data ?? []
+  const allRows = list.data
+  // La búsqueda la hacemos acá (y no dentro de la tabla) para que los totales de abajo sumen solo lo que se ve.
+  const rows = useMemo(() => {
+    const data = allRows ?? []
+    const q = normalize(query.trim())
+    if (!q) return data
+    const words = q.split(/\s+/)
+    return data.filter((r) => {
+      const hay = normalize(
+        [
+          `#${r.id}`,
+          r.client_name || 'Consumidor final',
+          r.event_name ?? '',
+          r.items_preview.map((i) => i.name).join(' '),
+          SALE_CHANNEL_LABELS[r.channel],
+          statusText(r),
+          fmtDate(r.date),
+          dateShort(r.date),
+          r.notes ?? '',
+        ].join(' '),
+      )
+      return words.every((w) => hay.includes(w))
+    })
+  }, [allRows, query])
   const totals = useMemo(
     () => ({ total: rows.reduce((a, r) => a + r.total, 0), profit: rows.reduce((a, r) => a + r.profit, 0), balance: rows.reduce((a, r) => a + r.balance, 0) }),
     [rows],
   )
+  const noSalesEver = !!s && !s.first_sale_date
 
   const columns: Column<SaleListRow>[] = [
     { key: 'date', header: 'Fecha', cell: (r) => <span className="whitespace-nowrap">{dateShort(r.date)}</span>, className: 'w-[1%]', hideBelow: 'sm' },
@@ -152,9 +190,17 @@ export default function VentasPage() {
       key: 'client',
       header: 'Cliente',
       value: (r) => `${r.client_name || 'Consumidor final'} ${r.items_preview.map((i) => i.name).join(' ')} ${r.event_name ?? ''}`,
+      footer: (
+        <span className="font-semibold text-ink-soft">
+          {rows.length === 1 ? '1 venta' : `${int(rows.length)} ventas`}
+          {query.trim() ? (rows.length === 1 ? ' encontrada' : ' encontradas') : ''}
+        </span>
+      ),
       cell: (r) => (
         <div className="min-w-0">
-          <span className={r.client_name ? 'font-semibold text-ink' : 'text-ink-soft'}>{r.client_name || 'Consumidor final'}</span>
+          <span className={clsx('block max-w-[44vw] truncate sm:max-w-[260px]', r.client_name ? 'font-semibold text-ink' : 'text-ink-soft')}>
+            {r.client_name || 'Consumidor final'}
+          </span>
           <span className="block max-w-[44vw] truncate text-[12.5px] text-muted sm:max-w-[34vw] md:hidden">
             <span className="sm:hidden">{dateShort(r.date)} · </span>
             {itemsSummary(r.items_preview)}
@@ -195,7 +241,7 @@ export default function VentasPage() {
     {
       key: 'status',
       header: 'Estado',
-      value: (r) => (r.status === 'pagado' ? 'Cobrada' : r.overdue ? 'Vencida' : 'Por cobrar'),
+      value: statusText,
       cell: (r) => <StatusBadge status={r.status} overdue={r.overdue} kind="sale" />,
       hideBelow: 'sm',
       className: 'w-[1%]',
@@ -204,9 +250,12 @@ export default function VentasPage() {
 
   const formOpen = newOpen || !!editing
   const closeForm = () => {
+    // Si venías del detalle (Editar), al cerrar volvés a ese detalle con los datos al día.
+    if (editing) openDetail(editing.id)
     closeNew()
     setEditing(null)
     setPresetEvent(null)
+    setPresetClient(null)
   }
 
   return (
@@ -254,7 +303,7 @@ export default function VentasPage() {
         <PeriodPicker />
         {s && s.count > 0 && (
           <p className="text-[13.5px] text-ink-soft">
-            {int(s.count)} {s.count === 1 ? 'venta' : 'ventas'} en {periodLabel.toLowerCase()}
+            {int(s.count)} {s.count === 1 ? 'venta' : 'ventas'} en el período
           </p>
         )}
       </div>
@@ -321,7 +370,15 @@ export default function VentasPage() {
               title={money(s.profit)}
               delta={delta((x) => x.profit)}
               deltaLabel={deltaLabel}
-              hint={s.total ? `Margen ${pct(s.margin)} · comisiones ${money(s.fees, { decimals: 0 })}` : '—'}
+              hint={
+                s.total ? (
+                  <>
+                    <span className="whitespace-nowrap">Margen {pct(s.margin)}</span> · comisiones <M n={s.fees} />
+                  </>
+                ) : (
+                  '—'
+                )
+              }
             />
             <KpiTile
               label="Por cobrar"
@@ -331,18 +388,31 @@ export default function VentasPage() {
               value={tileMoney(s.pending)}
               title={money(s.pending)}
               hint={
-                s.pending_count === 0 ? (
-                  <>
-                    ¡Todo cobrado en este período!
-                    {s.receivables.total > 0.01 && <> De ventas anteriores te deben {money(s.receivables.total, { decimals: 0 })}.</>}
-                  </>
-                ) : (
-                  <>
-                    {s.pending_count} {s.pending_count === 1 ? 'venta' : 'ventas'} de este período
-                    {s.overdue_count > 0 && <b className="text-bad"> · {s.overdue_count} vencida{s.overdue_count === 1 ? '' : 's'}</b>}
-                    {s.receivables.total > s.pending + 0.01 && <> · en total te deben {money(s.receivables.total, { decimals: 0 })}</>}
-                  </>
-                )
+                <>
+                  {s.count === 0 ? (
+                    s.receivables.total > 0.01 ? (
+                      <>De ventas anteriores te deben <M n={s.receivables.total} />.</>
+                    ) : (
+                      'Nada pendiente de cobro.'
+                    )
+                  ) : s.pending_count === 0 ? (
+                    <>
+                      ¡Todo cobrado en este período!
+                      {s.receivables.total > 0.01 && <> De ventas anteriores te deben <M n={s.receivables.total} />.</>}
+                    </>
+                  ) : (
+                    <>
+                      {s.pending_count} {s.pending_count === 1 ? 'venta' : 'ventas'} de este período
+                      {s.overdue_count > 0 && <b className="text-bad"> · {s.overdue_count} vencida{s.overdue_count === 1 ? '' : 's'}</b>}
+                      {s.receivables.total > s.pending + 0.01 && <> · en total te deben <M n={s.receivables.total} /></>}
+                    </>
+                  )}
+                  {s.receivables.total > 0.01 && (
+                    <Link to="/caja?tab=pendientes" className="mt-0.5 block font-bold text-sky-deep hover:underline">
+                      Ver quién te debe →
+                    </Link>
+                  )}
+                </>
               }
             />
           </div>
@@ -396,11 +466,32 @@ export default function VentasPage() {
               columns={columns}
               rowKey={(r) => r.id}
               onRowClick={(r) => openDetail(r.id)}
-              searchPlaceholder="Buscar cliente, vino o nº…"
+              searchable={false}
               initialSort={{ key: 'date', dir: 'desc' }}
               rowClassName={(r) => (r.overdue ? 'bg-bad-soft/25' : undefined)}
               toolbar={
-                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                  <label className="relative col-span-2 min-w-[200px] sm:max-w-xs sm:flex-1">
+                    <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" aria-hidden />
+                    <input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Escape' && query && (e.stopPropagation(), setQuery(''))}
+                      placeholder="Buscar cliente, vino o nº…"
+                      aria-label="Buscar cliente, vino o número de venta"
+                      className="h-10 w-full rounded-full border border-line-strong bg-paper pr-9 pl-9 text-[14.5px] placeholder:text-muted/70 focus:border-brown focus:ring-[3px] focus:ring-brown/15 focus:outline-none"
+                    />
+                    {query && (
+                      <button
+                        type="button"
+                        aria-label="Borrar la búsqueda"
+                        onClick={() => setQuery('')}
+                        className="absolute top-1/2 right-2.5 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted hover:bg-cream-deep hover:text-ink"
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </label>
                   <Select
                     aria-label="Canal"
                     className="sm:w-[170px]"
@@ -420,7 +511,7 @@ export default function VentasPage() {
                     emptyText="No hay clientes con ese nombre."
                     options={clients.map((c) => ({ value: c.id, label: c.name }))}
                   />
-                  {filtersOn && (
+                  {(filtersOn || query) && (
                     <Button size="sm" variant="ghost" icon={FilterX} onClick={clearFilters} className="col-span-2 justify-self-start">
                       Limpiar filtros
                     </Button>
@@ -428,22 +519,45 @@ export default function VentasPage() {
                 </div>
               }
               empty={
-                filtersOn ? (
+                query.trim() && (allRows?.length ?? 0) > 0 ? (
+                  <EmptyState compact icon={SearchX} title={`No encontramos «${query.trim()}»`} action={<Button onClick={() => setQuery('')}>Borrar la búsqueda</Button>}>
+                    Probá con otra palabra: el nombre del cliente, un vino o el número de venta (ej: 1234).
+                  </EmptyState>
+                ) : (status === 'por_cobrar' || status === 'vencida') && preset !== 'todo' ? (
+                  <EmptyState
+                    compact
+                    icon={FilterX}
+                    title={`No hay ventas ${status === 'vencida' ? 'vencidas' : 'por cobrar'} en este período`}
+                    action={
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <Button icon={History} onClick={() => setPreset('todo')}>
+                          Mirar desde siempre
+                        </Button>
+                        <Button variant="ghost" onClick={clearFilters}>
+                          Limpiar filtros
+                        </Button>
+                      </div>
+                    }
+                  >
+                    Los filtros miran solo el período elegido arriba ({periodLabel}). Lo que te deben de meses anteriores aparece si mirás «Desde siempre».
+                  </EmptyState>
+                ) : filtersOn ? (
                   <EmptyState compact icon={FilterX} title="No hay ventas con esos filtros" action={<Button onClick={clearFilters}>Limpiar filtros</Button>}>
                     Probá con otro canal, estado o cliente, o cambiá el período de arriba.
                   </EmptyState>
                 ) : (
                   <EmptyState
                     icon={Store}
-                    title="Todavía no hay ventas en este período"
+                    title={noSalesEver ? 'Todavía no cargaste ninguna venta' : 'No hay ventas en este período'}
                     action={
                       <Button icon={Plus} onClick={openNew}>
-                        Cargar una venta
+                        {noSalesEver ? 'Cargar mi primera venta' : 'Cargar una venta'}
                       </Button>
                     }
                   >
-                    Cargá tu primera venta: elegís el vino, la cantidad y cómo te pagan. El stock, la caja y la ganancia se calculan solos. Si buscás ventas viejas, cambiá el
-                    período de arriba.
+                    {noSalesEver
+                      ? 'Elegís el vino, la cantidad y cómo te pagan; el stock, la caja y la ganancia se calculan solos. Si todavía no cargaste tus vinos, empezá por «Vinos y stock».'
+                      : `No hay ventas cargadas en el período elegido (${periodLabel}). Si buscás ventas viejas, cambiá el período de arriba.`}
                   </EmptyState>
                 )
               }
@@ -457,15 +571,7 @@ export default function VentasPage() {
         </div>
       </Card>
 
-      <SaleFormModal
-        open={formOpen}
-        sale={editing}
-        presetEventId={presetEvent}
-        onClose={closeForm}
-        onSaved={(saved) => {
-          if (editing) openDetail(saved.id)
-        }}
-      />
+      <SaleFormModal open={formOpen} sale={editing} presetEventId={presetEvent} presetClientId={presetClient} onClose={closeForm} />
       <SaleDetailModal
         saleId={formOpen ? null : viewId}
         onClose={closeDetail}

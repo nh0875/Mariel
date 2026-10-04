@@ -74,6 +74,9 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
     [percent, applyTo, roundTo, scope, winery, wineType],
   )
   const debounced = useDebounced(body, 350)
+  // Mientras escribís, la vista previa todavía muestra los números anteriores: no dejamos aplicar
+  // hasta que la vista previa corresponda exactamente a lo que vas a guardar.
+  const settled = JSON.stringify(debounced) === JSON.stringify(body)
   const preview = useQuery({
     queryKey: ['/products/bulk-price', 'preview', debounced],
     queryFn: () => api.post<BulkPriceResult>('/products/bulk-price?preview=1', debounced),
@@ -81,19 +84,25 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
   })
   const result = !percentError && !scopeMissing ? preview.data : undefined
   const count = result?.updated ?? 0
+  const upToDate = settled && !preview.isFetching && !!result
 
-  const apply = useApiMutation(() => api.post<BulkPriceResult>('/products/bulk-price', body), {
+  const apply = useApiMutation((b: typeof body) => api.post<BulkPriceResult>('/products/bulk-price', b), {
     success: (r) => `Listo: actualizamos los precios de ${r.updated} ${r.updated === 1 ? 'vino' : 'vinos'}`,
     onSuccess: onClose,
   })
 
+  const which = applyTo === 'both' ? 'los precios minorista y mayorista' : applyTo === 'retail' ? 'el precio minorista' : 'el precio mayorista'
   const onApply = async () => {
+    if (!upToDate) return
+    const frozen = debounced
+    const pctText = `${frozen.percent > 0 ? '+' : frozen.percent < 0 ? '−' : ''}${pct(Math.abs(frozen.percent) / 100, 1)}`
+    const roundText = frozen.round_to ? `, redondeado para ${frozen.percent < 0 ? 'abajo' : 'arriba'} a los ${money(frozen.round_to)}` : ''
     const ok = await confirm({
-      title: `¿Aplicar ${percent && percent > 0 ? 'el aumento' : 'el cambio'} a ${count} ${count === 1 ? 'vino' : 'vinos'}?`,
-      message: 'Las ventas que ya cargaste no cambian: los precios nuevos corren para las próximas. Si te equivocás, podés hacer otro cambio con el porcentaje al revés.',
+      title: `¿Aplicar ${pctText} a ${count} ${count === 1 ? 'vino' : 'vinos'}?`,
+      message: `Cambia ${which}${roundText}, tal como lo ves en la vista previa. Las ventas que ya cargaste no cambian: los precios nuevos corren para las próximas. Si te equivocás, podés hacer otro cambio con el porcentaje al revés.`,
       confirmText: 'Sí, aplicar',
     })
-    if (ok) apply.mutate()
+    if (ok) apply.mutate(frozen)
   }
 
   const examples: BulkPriceChange[] = result?.examples ?? []
@@ -111,7 +120,7 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
           <Button variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="primary" onClick={onApply} loading={apply.isPending} disabled={!!percentError || scopeMissing || count === 0 || preview.isFetching}>
+          <Button variant="primary" onClick={onApply} loading={apply.isPending} disabled={!!percentError || scopeMissing || count === 0 || !upToDate}>
             {count ? `Aplicar a ${count} ${count === 1 ? 'vino' : 'vinos'}` : 'Aplicar'}
           </Button>
         </>
@@ -127,8 +136,8 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
             <b>Ejemplo:</b> si la bodega te aumentó 8 %, subí 8 % y mantenés el mismo margen. Un Malbec de $12.500 pasa a $13.500, y tu ganancia por botella crece igual que el costo.
           </p>
           <p>
-            <b>¿Por qué redondear?</b> Un precio como $13.500 es más fácil de leer, de cobrar y de dar vuelto que $13.437,80. Siempre redondeamos <b>para arriba</b>, así nunca perdés margen por
-            redondear.
+            <b>¿Por qué redondear?</b> Un precio como $13.500 es más fácil de leer, de cobrar y de dar vuelto que $13.437,80. Cuando aumentás redondeamos <b>para arriba</b>, así nunca perdés
+            margen por redondear; cuando bajás, <b>para abajo</b>, así la baja se nota de verdad.
           </p>
           <p>Para bajar precios (una promo, por ejemplo), poné un número negativo: −10 baja 10 %.</p>
         </HelpBox>
@@ -144,7 +153,7 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
               ))}
             </div>
           </Field>
-          <Field label="Redondeo" hint="Para arriba, al múltiplo que elijas.">
+          <Field label="Redondeo" hint={percent != null && percent < 0 ? 'Como estás bajando, para abajo, al múltiplo que elijas.' : 'Para arriba, al múltiplo que elijas.'}>
             <Select value={roundTo} onChange={(v) => setRoundTo(Number(v))} options={ROUND_OPTIONS} />
           </Field>
         </div>
@@ -190,7 +199,7 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <p className="text-[14px] font-bold text-ink">Así quedarían</p>
-            {preview.isFetching && <Spinner size={14} className="text-muted" />}
+            {(preview.isFetching || !settled) && <Spinner size={14} className="text-muted" />}
             {result && (
               <Badge tone="sky">
                 {count} {count === 1 ? 'vino cambia' : 'vinos cambian'}
@@ -198,7 +207,7 @@ export function BulkPriceModal({ open, onClose, products }: { open: boolean; onC
             )}
             {avgMarginAfter != null && applyTo !== 'wholesale' && (
               <span className="text-[13px] text-ink-soft">
-                · margen minorista promedio después: <b className="text-ink">{pct(avgMarginAfter, 0)}</b>
+                Margen minorista promedio después: <b className="text-ink">{pct(avgMarginAfter, 0)}</b>
               </span>
             )}
           </div>

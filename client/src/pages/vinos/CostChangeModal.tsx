@@ -4,12 +4,12 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { today } from '@shared/dates'
 import { marginOnPrice } from '@shared/calc'
 import { api } from '@/lib/api'
-import { money, pct } from '@/lib/format'
+import { date as fmtDate, money, pct } from '@/lib/format'
 import { useApiMutation } from '@/lib/queries'
 import { Button, DateInput, Field, Modal, MoneyInput, TextInput } from '@/components/ui'
 import type { ProductRow } from './types'
 
-export function CostChangeModal({ product, open, onClose }: { product: ProductRow; open: boolean; onClose: () => void }) {
+export function CostChangeModal({ product, open, onClose, minDate }: { product: ProductRow; open: boolean; onClose: () => void; minDate?: string | null }) {
   const [cost, setCost] = useState<number | null>(product.unit_cost)
   const [date, setDate] = useState(today())
   const [notes, setNotes] = useState('')
@@ -27,11 +27,17 @@ export function CostChangeModal({ product, open, onClose }: { product: ProductRo
     onSuccess: onClose,
   })
 
-  const changed = cost != null && Math.abs(cost - product.unit_cost) > 0.004
+  const changed = cost != null && cost >= 0 && Math.abs(cost - product.unit_cost) > 0.004
+  const dateError =
+    date > today()
+      ? 'No puede ser una fecha futura.'
+      : minDate && date < minDate
+        ? `Este vino está en el sistema desde el ${fmtDate(minDate)}: elegí esa fecha o una posterior.`
+        : undefined
   const stock = Math.max(product.stock, 0)
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
-    if (changed && date) save.mutate()
+    if (changed && date && !dateError && !save.isPending) save.mutate()
   }
 
   return (
@@ -45,7 +51,7 @@ export function CostChangeModal({ product, open, onClose }: { product: ProductRo
           <Button variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="primary" type="submit" form="costo-form" loading={save.isPending} disabled={!changed || !date}>
+          <Button variant="primary" type="submit" form="costo-form" loading={save.isPending} disabled={!changed || !date || !!dateError}>
             Guardar costo nuevo
           </Button>
         </>
@@ -64,11 +70,23 @@ export function CostChangeModal({ product, open, onClose }: { product: ProductRo
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Costo nuevo por botella" required htmlFor="costo-valor" info="costo_promedio">
+          <Field
+            label="Costo nuevo por botella"
+            required
+            htmlFor="costo-valor"
+            info="costo_promedio"
+            error={cost != null && cost < 0 ? 'El costo no puede ser negativo.' : undefined}
+            hint={cost != null && !changed ? 'Es el mismo costo que ya tiene: escribí el nuevo.' : 'Lo que te cuesta cada botella puesta en tu depósito.'}
+          >
             <MoneyInput id="costo-valor" value={cost} onChange={setCost} />
           </Field>
-          <Field label="¿Desde cuándo?" htmlFor="costo-fecha" hint="Normalmente hoy. Si es una corrección vieja, la fecha del error.">
-            <DateInput id="costo-fecha" value={date} onChange={setDate} />
+          <Field
+            label="¿Desde cuándo?"
+            htmlFor="costo-fecha"
+            error={dateError}
+            hint="Normalmente hoy. Si es una corrección vieja, la fecha del error."
+          >
+            <DateInput id="costo-fecha" value={date} onChange={setDate} max={today()} min={minDate ?? undefined} />
           </Field>
           <Field label="Motivo" htmlFor="costo-nota" className="sm:col-span-2" hint="Opcional, pero ayuda a entender el cambio después.">
             <TextInput id="costo-nota" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Ej: la bodega nos bonificó 10 %" />

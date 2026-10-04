@@ -6,8 +6,9 @@ import type { ManualStockKind } from '@shared/constants'
 import { today } from '@shared/dates'
 import { api } from '@/lib/api'
 import { bottles, int, money } from '@/lib/format'
-import { useApiMutation } from '@/lib/queries'
-import { Button, ChoiceCards, DateInput, EventSelect, Field, IntInput, Modal, TextInput, type ChoiceOption } from '@/components/ui'
+import { date as fmtDate } from '@/lib/format'
+import { useApi, useApiMutation } from '@/lib/queries'
+import { Button, ChoiceCards, DateInput, EventSelect, Field, IntInput, Modal, Spinner, TextInput, type ChoiceOption } from '@/components/ui'
 import type { ProductRow } from './types'
 
 const OPTIONS: ChoiceOption<ManualStockKind>[] = [
@@ -28,7 +29,7 @@ const NOTE_PLACEHOLDER: Record<ManualStockKind, string> = {
   devolucion: 'Ej: el cliente la cambió por otra',
 }
 
-export function AdjustStockModal({ product, open, onClose }: { product: ProductRow; open: boolean; onClose: () => void }) {
+export function AdjustStockModal({ product, open, onClose, minDate }: { product: ProductRow; open: boolean; onClose: () => void; minDate?: string | null }) {
   const [kind, setKind] = useState<ManualStockKind>('ajuste')
   const [counted, setCounted] = useState<number | null>(null)
   const [qty, setQty] = useState<number | null>(1)
@@ -52,7 +53,12 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
   const stock = product.stock
   const cost = product.unit_cost
   const isOut = kind === 'rotura' || kind === 'degustacion' || kind === 'regalo' || kind === 'consumo'
-  const diff = counted == null ? null : counted - stock
+  // Para el conteo: lo que el sistema tenía AL FINAL de la fecha elegida (si contaste hace unos días,
+  // las ventas posteriores no se pisan). El servidor hace la misma cuenta al guardar.
+  const isPast = !!date && date < today()
+  const at = useApi<{ date: string; stock: number }>(`/products/${product.id}/stock-at`, { date }, { enabled: open && kind === 'ajuste' && /^\d{4}-\d{2}-\d{2}$/.test(date) && !(minDate && date < minDate) && date <= today() })
+  const systemStock: number | null = at.data && at.data.date === date ? at.data.stock : isPast ? null : stock
+  const diff = counted == null || systemStock == null ? null : counted - systemStock
   const n = qty ?? 0
 
   let error: string | undefined
@@ -65,7 +71,14 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
     error = `Según el sistema ${stock === 1 ? 'queda 1 botella' : `quedan ${int(Math.max(stock, 0))} botellas`}. Si contaste y hay otra cantidad, elegí «Conté y hay otra cantidad».`
   }
   const noChange = kind === 'ajuste' && diff === 0
-  const canSave = !error && !noChange && (kind === 'ajuste' ? counted != null : n > 0) && !!date
+  const futureDate = !!date && date > today()
+  const beforeFirst = !!date && !!minDate && date < minDate
+  const dateError = futureDate
+    ? 'La fecha no puede ser futura: cargalo el día que pase.'
+    : beforeFirst
+      ? `Este vino está en el sistema desde el ${fmtDate(minDate)}: lo de antes ya está incluido en el stock con el que lo cargaste.`
+      : undefined
+  const canSave = !error && !noChange && (kind === 'ajuste' ? counted != null && diff != null : n > 0) && !!date && !dateError
 
   const save = useApiMutation(
     () =>
@@ -73,6 +86,7 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
         date,
         kind,
         qty: kind === 'ajuste' ? diff : n,
+        counted: kind === 'ajuste' ? counted : undefined,
         event_id: kind === 'degustacion' || kind === 'regalo' ? eventId : null,
         notes: notes || null,
       }),
@@ -85,25 +99,28 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
     setTried(true)
-    if (canSave) save.mutate()
+    if (canSave && !save.isPending) save.mutate()
   }
 
   // Qué va a pasar, en palabras (y en plata).
   let impact: ReactNode = null
-  if (kind === 'ajuste' && diff != null && counted != null && counted >= 0) {
+  const sysWhen = isPast ? `al ${fmtDate(date)}` : 'hoy'
+  if (kind === 'ajuste' && diff != null && systemStock != null && counted != null && counted >= 0) {
     impact = noChange ? (
       <p>
         <b className="text-good">¡Coincide con el sistema!</b> No hace falta ajustar nada.
       </p>
     ) : diff < 0 ? (
       <p>
-        El sistema dice <b className="text-ink">{int(stock)}</b> y contaste <b className="text-ink">{int(counted)}</b>: faltan <b className="text-ink">{bottles(-diff)}</b>. A costo son{' '}
-        <b className="text-ink">{money(-diff * cost)}</b>, que se cuentan como merma (faltante) en Reportes.
+        El sistema dice <b className="text-ink">{int(systemStock)}</b> {sysWhen} y contaste <b className="text-ink">{int(counted)}</b>: faltan <b className="text-ink">{bottles(-diff)}</b>. A costo
+        son <b className="text-ink">{money(-diff * cost)}</b>, que se cuentan como merma (faltante) en Reportes.
+        {isPast && systemStock !== stock && <> El stock de hoy pasa de {int(stock)} a {int(stock + diff)}.</>}
       </p>
     ) : (
       <p>
-        El sistema dice <b className="text-ink">{int(stock)}</b> y contaste <b className="text-ink">{int(counted)}</b>: sobran <b className="text-ink">{bottles(diff)}</b>. Se suman al stock,
-        valorizadas al costo promedio ({money(cost)}).
+        El sistema dice <b className="text-ink">{int(systemStock)}</b> {sysWhen} y contaste <b className="text-ink">{int(counted)}</b>: sobran <b className="text-ink">{bottles(diff)}</b>. Se suman al
+        stock, valorizadas al costo promedio ({money(cost)}).
+        {isPast && systemStock !== stock && <> El stock de hoy pasa de {int(stock)} a {int(stock + diff)}.</>}
       </p>
     )
   } else if (isOut && n > 0 && !error) {
@@ -149,7 +166,23 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
 
         <div className="grid gap-4 sm:grid-cols-2">
           {kind === 'ajuste' ? (
-            <Field label="¿Cuántas botellas contaste?" required htmlFor="ajuste-counted" error={error} hint={`El sistema dice ${int(stock)}. Escribí lo que hay de verdad y calculamos la diferencia.`}>
+            <Field
+              label="¿Cuántas botellas contaste?"
+              required
+              htmlFor="ajuste-counted"
+              error={error}
+              hint={
+                dateError ? (
+                  'Elegí una fecha válida y te mostramos cuántas había según el sistema.'
+                ) : systemStock == null ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Spinner size={12} /> Mirando cuántas había ese día…
+                  </span>
+                ) : (
+                  `El sistema dice ${int(systemStock)} ${sysWhen}. Escribí lo que hay de verdad y calculamos la diferencia.`
+                )
+              }
+            >
               <IntInput id="ajuste-counted" value={counted} onChange={setCounted} placeholder="Ej: 25" aria-invalid={!!error} />
             </Field>
           ) : (
@@ -157,8 +190,13 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
               <IntInput id="ajuste-qty" value={qty} onChange={setQty} aria-invalid={!!error} />
             </Field>
           )}
-          <Field label="Fecha" htmlFor="ajuste-date" hint="Cuándo pasó. Por defecto, hoy.">
-            <DateInput id="ajuste-date" value={date} onChange={setDate} />
+          <Field
+            label="Fecha"
+            htmlFor="ajuste-date"
+            error={dateError}
+            hint={kind === 'ajuste' ? 'El día que contaste. Por defecto, hoy.' : 'Cuándo pasó. Por defecto, hoy.'}
+          >
+            <DateInput id="ajuste-date" value={date} onChange={setDate} max={today()} min={minDate ?? undefined} />
           </Field>
           {(kind === 'degustacion' || kind === 'regalo') && (
             <Field label="¿Fue en un evento?" hint="Opcional. Así el costo de estas botellas se suma al evento.">
@@ -170,7 +208,7 @@ export function AdjustStockModal({ product, open, onClose }: { product: ProductR
           </Field>
         </div>
 
-        {impact && <div className="rounded-xl bg-cream-deep/80 px-4 py-3 text-[14.5px] leading-relaxed text-ink-soft">{impact}</div>}
+        {impact && !dateError && <div className="rounded-xl bg-cream-deep/80 px-4 py-3 text-[14.5px] leading-relaxed text-ink-soft">{impact}</div>}
       </form>
     </Modal>
   )

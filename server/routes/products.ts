@@ -6,6 +6,8 @@
 //   (services/stock.ts). Acá solo se agregan movimientos (inicial, ajustes, cambio de costo).
 // - Un vino con ventas o compras no se borra (se perdería la historia): se desactiva.
 import express, { Router } from 'express'
+import ExcelJS from 'exceljs'
+import type { ZodIssue, ZodTypeAny, z } from 'zod'
 import { all, get, run, tx, withBools } from '../db'
 import { HttpError, notFound, parseId, parsePeriod, qn, qs, validate } from '../lib/http'
 import { addSheet, excelFilename, fmtDate, newWorkbook, periodSubtitle, readFirstSheet, sendWorkbook, sendWorkbookFile, type ExcelColumn } from '../lib/excel'
@@ -68,6 +70,90 @@ const OUT_KINDS: StockMovementKind[] = ['rotura', 'degustacion', 'regalo', 'cons
 
 /** Desde cuándo cuenta "los últimos 90 días" (hoy incluido). */
 const since90 = () => addDays(today(), -89)
+
+// ───────────────────────── Validación con palabras de la gente ─────────────────────────
+// validate() (lib/http) ya da mensajes en castellano, pero solo traduce algunos campos.
+// Acá traducimos los de este módulo para que nunca aparezca "units_per_box" o "winery".
+const FIELD_LABELS_ES: Record<string, string> = {
+  name: 'Nombre',
+  winery: 'Bodega',
+  varietal: 'Varietal',
+  wine_type: 'Tipo',
+  vintage: 'Cosecha',
+  region: 'Región',
+  size_ml: 'Tamaño (ml)',
+  sku: 'Código (SKU)',
+  unit_cost: 'Costo por botella',
+  price_retail: 'Precio minorista',
+  price_wholesale: 'Precio mayorista',
+  min_stock: 'Stock mínimo',
+  units_per_box: 'Botellas por caja',
+  active: 'Activo',
+  notes: 'Notas',
+  initial_stock: 'Botellas que tenés hoy',
+  date: 'Fecha',
+  kind: 'Qué pasó',
+  qty: 'Cantidad de botellas',
+  event_id: 'Evento',
+  percent: 'Porcentaje',
+  apply_to: 'Qué precios',
+  product_ids: 'Vinos elegidos',
+  round_to: 'Redondeo',
+}
+
+function issueText(i: ZodIssue): string {
+  const key = [...i.path].reverse().find((p) => typeof p === 'string') as string | undefined
+  const label = key ? (FIELD_LABELS_ES[key] ?? key) : ''
+  let msg = i.message
+  if (i.code === 'invalid_type' && i.expected === 'integer') msg = 'tiene que ser un número entero (sin decimales)'
+  return label ? `${label}: ${msg}` : msg
+}
+
+/** validate() + nombres de campos en castellano. */
+function check<S extends ZodTypeAny>(schema: S, data: unknown): z.output<S> {
+  try {
+    return validate(schema, data)
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 400 && Array.isArray(err.details)) {
+      const parts = (err.details as ZodIssue[]).slice(0, 4).map(issueText)
+      throw new HttpError(400, `Revisá estos datos → ${parts.join(' · ')}`, err.details)
+    }
+    throw err
+  }
+}
+
+/** El esquema acepta "2026-13-45" (solo mira el formato): acá verificamos que la fecha exista. */
+function assertRealDate(s: string, label = 'Fecha') {
+  const [y, m, d] = s.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  const ok = dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d && y >= 1990 && y <= 2100
+  if (!ok) throw new HttpError(400, `Revisá estos datos → ${label}: esa fecha no existe (revisá el día, el mes y el año).`)
+}
+
+/** Fecha del primer movimiento del vino (normalmente su alta o su primera compra). */
+function firstMovementDate(productId: number): string | null {
+  return get<{ d: string | null }>('SELECT MIN(date) AS d FROM stock_movements WHERE product_id = ?', [productId])?.d ?? null
+}
+
+/**
+ * Un ajuste o cambio de costo con fecha ANTERIOR a que el vino existiera en el sistema no tiene sentido:
+ * lo que pasó antes ya está incluido en el stock con el que se cargó (y un conteo así sumaría botellas de más).
+ */
+function assertNotBeforeFirst(productId: number, date: string) {
+  const first = firstMovementDate(productId)
+  if (first && date < first) {
+    const name = get<{ name: string }>('SELECT name FROM products WHERE id = ?', [productId])?.name ?? 'el vino'
+    throw new HttpError(
+      400,
+      `Ese día «${name}» todavía no estaba en el sistema (su primer movimiento es del ${fmtDate(first)}). Lo que pasó antes ya está incluido en el stock con el que lo cargaste: elegí una fecha desde el ${fmtDate(first)}.`,
+    )
+  }
+}
+
+/** Botellas que había de un vino al final de un día (suma de sus movimientos hasta esa fecha). */
+function stockAt(productId: number, date: string): number {
+  return get<{ s: number }>('SELECT COALESCE(SUM(qty), 0) AS s FROM stock_movements WHERE product_id = ? AND date <= ?', [productId, date])?.s ?? 0
+}
 
 function normText(s: unknown): string {
   return String(s ?? '')
@@ -235,7 +321,7 @@ function queryMovements(f: { productId?: number; from?: string; to?: string; kin
     const eventId = (r.ev_id as number | null) ?? null
     let reference: string | null = null
     if (saleId) {
-      reference = [`Venta #${saleId}`, r.client_name, r.event_name ? `Evento: ${r.event_name}` : null].filter(Boolean).join(' · ')
+      reference = [`Venta #${saleId}`, r.client_name || 'Consumidor final', r.event_name ? `Evento: ${r.event_name}` : null].filter(Boolean).join(' · ')
     } else if (purchaseId) {
       reference = [`Compra #${purchaseId}`, r.supplier_name, r.invoice_number ? `Fact. ${r.invoice_number}` : null].filter(Boolean).join(' · ')
     } else if (eventId) {
@@ -301,6 +387,8 @@ function productStats(p: ProductWithStats) {
     shrinkage_bottles: shrink.bottles,
     shrinkage_cost: round2(shrink.cost),
     reorder_suggestion: reorderSuggestion(p),
+    /** Desde cuándo tiene movimientos (no se aceptan ajustes con fecha anterior). */
+    first_movement_date: firstMovementDate(p.id),
   }
 }
 
@@ -503,7 +591,7 @@ router.get('/products/export', async (req, res) => {
     {
       name: 'Catálogo',
       title: 'Catálogo de vinos',
-      subtitle: `Stock y costos al ${fmtDate(today())}`,
+      subtitle: `${products.length} ${products.length === 1 ? 'vino' : 'vinos'}${activeQ === '1' ? ' activos' : ' (activos y desactivados)'} · stock, costos y precios de hoy`,
       columns,
       rows: products,
       notes: [
@@ -517,7 +605,7 @@ router.get('/products/export', async (req, res) => {
     {
       name: 'Para reponer',
       title: 'Vinos para reponer',
-      subtitle: `Vinos activos con stock en el mínimo o por debajo, al ${fmtDate(today())}`,
+      subtitle: 'Vinos activos con stock en el mínimo o por debajo, con cuánto conviene pedir',
       columns: [
         { header: 'Vino', key: 'name', width: 30 },
         { header: 'Bodega', key: 'winery', width: 24 },
@@ -681,12 +769,44 @@ router.get('/products/import-template', async (req, res) => {
   await sendWorkbookFile(res, excelFilename(withProducts ? 'mis-vinos-para-editar' : 'plantilla-vinos'), wb)
 })
 
+/**
+ * Números de fila (1, 2, 3… como los ve el usuario en Excel) de las filas con datos de la primera hoja,
+ * con el mismo criterio que readFirstSheet (fila 1 = encabezados; se saltean las filas vacías).
+ */
+async function dataRowNumbers(buffer: Buffer): Promise<number[]> {
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer)
+  const ws = wb.worksheets[0]
+  if (!ws) return []
+  const headers: string[] = []
+  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => {
+    headers[col] = String(cell.text ?? '').trim()
+  })
+  const out: number[] = []
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
+    if (n <= 1) return
+    let hasValue = false
+    row.eachCell({ includeEmpty: true }, (cell, col) => {
+      if (!headers[col]) return
+      let v: unknown = cell.value
+      if (v && typeof v === 'object' && 'result' in (v as object)) v = (v as { result: unknown }).result
+      if (v && typeof v === 'object' && 'text' in (v as object)) v = (v as { text: unknown }).text
+      if (v && typeof v === 'object' && 'richText' in (v as object)) v = cell.text
+      if (v !== null && v !== undefined && v !== '') hasValue = true
+    })
+    if (hasValue) out.push(n)
+  })
+  return out
+}
+
 router.post('/products/import', express.raw({ type: () => true, limit: '20mb' }), async (req, res) => {
   const body = req.body as unknown
   if (!Buffer.isBuffer(body) || body.length === 0) throw new HttpError(400, 'No llegó ningún archivo. Elegí el Excel y probá de nuevo.')
   let rows: Record<string, unknown>[]
+  let rowNumbers: number[] = []
   try {
     rows = await readFirstSheet(body)
+    rowNumbers = await dataRowNumbers(body)
   } catch {
     throw new HttpError(
       400,
@@ -721,8 +841,10 @@ router.post('/products/import', express.raw({ type: () => true, limit: '20mb' })
   const notes: { row: number; message: string }[] = []
 
   tx(() => {
+    // Número de fila REAL del Excel (readFirstSheet saltea las filas vacías, así que i + 2 podría no coincidir).
+    const sameShape = rowNumbers.length === rows.length
     rows.forEach((raw, i) => {
-      const rowNum = i + 2
+      const rowNum = sameShape ? rowNumbers[i] : i + 2
       const cells: Partial<Record<ImportField, unknown>> = {}
       for (const [h, f] of headerMap) {
         const v = raw[h]
@@ -769,7 +891,7 @@ router.post('/products/import', express.raw({ type: () => true, limit: '20mb' })
         // Cada fila en su propio "savepoint": si falla, no deja nada a medias.
         tx(() => {
           if (match) {
-            const merged = validate(productInput, {
+            const merged = check(productInput, {
               name,
               winery: match.winery,
               varietal: match.varietal,
@@ -803,7 +925,7 @@ router.post('/products/import', express.raw({ type: () => true, limit: '20mb' })
               )
             }
           } else {
-            const data = validate(productInput, {
+            const data = check(productInput, {
               min_stock: settings.defaults.min_stock,
               units_per_box: settings.defaults.units_per_box,
               ...patch,
@@ -836,7 +958,7 @@ router.get('/products', (req, res) => {
 })
 
 router.post('/products/bulk-price', (req, res) => {
-  const data = validate(bulkPriceInput, req.body)
+  const data = check(bulkPriceInput, req.body)
   const preview = qs(req, 'preview') === '1' || qs(req, 'preview') === 'true'
   let targets: Product[]
   if (data.product_ids && data.product_ids.length) {
@@ -849,10 +971,17 @@ router.post('/products/bulk-price', (req, res) => {
   }
   targets.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
   const factor = 1 + data.percent / 100
+  // Al subir se redondea para arriba (nunca perdés margen por redondear). Al BAJAR se redondea para abajo:
+  // si no, una baja chica con redondeo grueso podía terminar subiendo el precio ($12.350 −1 % → $13.000).
   const newPrice = (old: number) => {
     if (!old) return old
     const raw = round2(old * factor)
-    return data.round_to ? roundUpTo(raw, data.round_to) : raw
+    if (!data.round_to) return raw
+    if (data.percent < 0) {
+      const down = Math.floor(raw / data.round_to + 1e-9) * data.round_to
+      return down > 0 ? down : raw
+    }
+    return roundUpTo(raw, data.round_to)
   }
   const doRetail = data.apply_to !== 'wholesale'
   const doWholesale = data.apply_to !== 'retail'
@@ -904,7 +1033,7 @@ router.get('/products/:id', (req, res) => {
 })
 
 router.post('/products', (req, res) => {
-  const data = validate(productInput, req.body)
+  const data = check(productInput, req.body)
   const id = tx(() => {
     checkUniqueSku(data.sku)
     return insertProduct(data)
@@ -914,9 +1043,30 @@ router.post('/products', (req, res) => {
 
 router.put('/products/:id', (req, res) => {
   const id = parseId(req.params.id, 'ese vino')
-  if (!get('SELECT id FROM products WHERE id = ?', [id])) throw notFound('ese vino')
+  const row = get('SELECT * FROM products WHERE id = ?', [id])
+  if (!row) throw notFound('ese vino')
+  const current = toProduct(row)
+  // Lo que no venga en el body queda como estaba (si otra pantalla manda solo { price_retail },
+  // no se resetean el stock mínimo, el tamaño ni se reactiva un vino desactivado).
+  const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
+  const base: Record<string, unknown> = {
+    name: current.name,
+    winery: current.winery,
+    varietal: current.varietal,
+    wine_type: current.wine_type,
+    vintage: current.vintage,
+    region: current.region,
+    size_ml: current.size_ml,
+    sku: current.sku,
+    price_retail: current.price_retail,
+    price_wholesale: current.price_wholesale,
+    min_stock: current.min_stock,
+    units_per_box: current.units_per_box,
+    active: current.active,
+    notes: current.notes,
+  }
   // El costo y el stock no se editan acá: para eso están /cost y /adjust (así queda registrado).
-  const data = validate(productInput, { ...req.body, unit_cost: undefined, initial_stock: undefined })
+  const data = check(productInput, { ...base, ...body, unit_cost: undefined, initial_stock: undefined })
   checkUniqueSku(data.sku, id)
   updateProductRow(id, data)
   res.json(loadProduct(id))
@@ -951,16 +1101,41 @@ router.post('/products/:id/adjust', (req, res) => {
   const id = parseId(req.params.id, 'ese vino')
   const product = get<{ id: number; stock: number }>('SELECT id, stock FROM products WHERE id = ?', [id])
   if (!product) throw notFound('ese vino')
-  const data = validate(stockAdjustInput, req.body)
+  const body: Record<string, unknown> = req.body && typeof req.body === 'object' ? { ...(req.body as Record<string, unknown>) } : {}
+  // Conteo de inventario: si viene "counted" (botellas que contaste), la diferencia se calcula acá contra
+  // lo que el sistema tenía AL FINAL DE ESA FECHA. Así un conteo cargado con fecha de hace unos días
+  // no pisa las ventas que hubo después.
+  let counted: number | null = null
+  if (body.kind === 'ajuste' && body.counted !== undefined && body.counted !== null && body.counted !== '') {
+    const c = body.counted
+    if (typeof c !== 'number' || !Number.isInteger(c) || c < 0 || c > 1_000_000) {
+      throw new HttpError(400, 'Revisá estos datos → Botellas que contaste: tiene que ser un número entero, 0 o más.')
+    }
+    counted = c
+    if (typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+      assertRealDate(body.date)
+      assertNotBeforeFirst(id, body.date)
+      const diff = c - stockAt(id, body.date)
+      if (diff === 0) {
+        throw new HttpError(400, `Contaste ${c} y el sistema dice lo mismo para el ${fmtDate(body.date)}: no hace falta ajustar nada.`)
+      }
+      body.qty = diff
+    }
+  }
+  const data = check(stockAdjustInput, body)
+  assertRealDate(data.date)
+  assertNotBeforeFirst(id, data.date)
   // El usuario escribe "cuántas botellas"; el signo lo pone el sistema según el tipo.
   const qty = data.kind === 'ajuste' ? data.qty : OUT_KINDS.includes(data.kind) ? -Math.abs(data.qty) : Math.abs(data.qty)
   if (qty < 0 && product.stock + qty < 0) {
     const has = product.stock
     throw new HttpError(
       400,
-      data.kind === 'ajuste'
-        ? `Con ese ajuste el stock quedaría en ${has + qty}. Si contaste las botellas, poné lo que contaste (no puede ser menos de 0).`
-        : `No podés sacar ${Math.abs(qty)} ${Math.abs(qty) === 1 ? 'botella' : 'botellas'}: según el sistema ${has === 1 ? 'queda 1' : `quedan ${has}`}. Si contaste y hay otra cantidad, primero usá «Conté y hay otra cantidad».`,
+      counted != null
+        ? `Con ese conteo, el stock de hoy quedaría en ${has + qty}: después del ${fmtDate(data.date)} salieron más botellas de las que contaste. Revisá la fecha o la cantidad.`
+        : data.kind === 'ajuste'
+          ? `Con ese ajuste el stock quedaría en ${has + qty}. Si contaste las botellas, poné lo que contaste (no puede ser menos de 0).`
+          : `No podés sacar ${Math.abs(qty)} ${Math.abs(qty) === 1 ? 'botella' : 'botellas'}: según el sistema ${has === 1 ? 'queda 1' : `quedan ${has}`}. Si contaste y hay otra cantidad, primero usá «Conté y hay otra cantidad».`,
     )
   }
   if (data.event_id && !get('SELECT id FROM events WHERE id = ?', [data.event_id])) throw new HttpError(400, 'El evento elegido no existe.')
@@ -976,10 +1151,22 @@ router.post('/products/:id/adjust', (req, res) => {
   res.json(loadProduct(id))
 })
 
+/** Botellas que había al final de un día (para el conteo con fecha pasada). */
+router.get('/products/:id/stock-at', (req, res) => {
+  const id = parseId(req.params.id, 'ese vino')
+  if (!get('SELECT id FROM products WHERE id = ?', [id])) throw notFound('ese vino')
+  const d = qs(req, 'date') ?? today()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new HttpError(400, 'Revisá estos datos → Fecha: tiene que ser una fecha válida')
+  assertRealDate(d)
+  res.json({ date: d, stock: stockAt(id, d) })
+})
+
 router.post('/products/:id/cost', (req, res) => {
   const id = parseId(req.params.id, 'ese vino')
   if (!get('SELECT id FROM products WHERE id = ?', [id])) throw notFound('ese vino')
-  const data = validate(costChangeInput, req.body)
+  const data = check(costChangeInput, req.body)
+  assertRealDate(data.date)
+  assertNotBeforeFirst(id, data.date)
   addMovement({ product_id: id, date: data.date, kind: 'revaluo', qty: 0, unit_cost: data.unit_cost, notes: data.notes })
   res.json(loadProduct(id))
 })
@@ -1025,8 +1212,14 @@ router.get('/stock/movements', (req, res) => {
 })
 
 router.get('/stock/export', async (req, res) => {
-  const { from, to } = parsePeriod(req)
   const productId = qn(req, 'product_id')
+  // Para la planilla de UN vino sin fechas: toda su historia (del primer al último movimiento).
+  let defaults: { from: string; to: string } | undefined
+  if (productId && !qs(req, 'from') && !qs(req, 'to')) {
+    const r = get<{ a: string | null; b: string | null }>('SELECT MIN(date) AS a, MAX(date) AS b FROM stock_movements WHERE product_id = ?', [productId])
+    if (r?.a) defaults = { from: r.a, to: r.b && r.b > today() ? r.b : today() }
+  }
+  const { from, to } = parsePeriod(req, defaults)
   const movements = queryMovements({ from, to, productId, order: 'asc' })
   // Resumen por vino: stock al inicio + entradas − salidas = stock al final.
   const kinds = (ks: string[]) => ks.map((k) => `'${k}'`).join(',')
@@ -1087,15 +1280,15 @@ router.get('/stock/export', async (req, res) => {
         { header: 'Vino', key: 'name', width: 30 },
         { header: 'Bodega', key: 'winery', width: 22 },
         { header: 'Stock al inicio', key: 'stock_start', type: 'int' },
-        { header: 'Entradas (compras)', key: 'entradas', type: 'int' },
+        { header: 'Entradas (compras y stock inicial)', key: 'entradas', type: 'int' },
         { header: 'Vendidas', key: 'ventas', type: 'int' },
-        { header: 'Roturas, degust. y regalos', key: 'mermas', type: 'int' },
+        { header: 'Roturas, degustaciones, regalos y consumo', key: 'mermas', type: 'int' },
         { header: 'Ajustes y devoluciones (±)', key: 'ajustes', type: 'int' },
         { header: 'Stock al final', key: 'stock_end', type: 'int' },
       ],
       rows: summary,
       notes: [
-        'Stock al inicio + entradas − vendidas − roturas/degustaciones/regalos ± ajustes = stock al final.',
+        'Stock al inicio + entradas − vendidas − roturas/degustaciones/regalos/consumo ± ajustes y devoluciones = stock al final.',
         'Sirve para controlar el inventario y para pasarle al contador.',
       ],
     },

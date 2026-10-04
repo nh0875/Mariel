@@ -104,20 +104,25 @@ export default function VinosPage() {
   const kpi = useMemo(() => {
     const priced = active.filter((p) => p.price_retail > 0)
     const low = active.filter((p) => stockLevel(p) !== 'ok').sort((a, b) => a.stock - a.min_stock - (b.stock - b.min_stock) || a.name.localeCompare(b.name, 'es'))
+    // Botellas y valor: TODOS los vinos con botellas (también los desactivados que todavía tienen),
+    // igual que en Inicio. Esa plata está invertida aunque el vino ya no se ofrezca.
+    const inactiveWithStock = all.filter((p) => !p.active && p.stock > 0)
     return {
-      bottles: active.reduce((s, p) => s + Math.max(p.stock, 0), 0),
-      withStock: active.filter((p) => p.stock > 0).length,
-      value: active.reduce((s, p) => s + p.stock_value, 0),
+      bottles: all.reduce((s, p) => s + Math.max(p.stock, 0), 0),
+      withStock: all.filter((p) => p.stock > 0).length,
+      inactiveWithStock,
+      value: all.reduce((s, p) => s + p.stock_value, 0),
       low,
       avgMargin: priced.length ? priced.reduce((s, p) => s + p.margin_retail, 0) / priced.length : null,
       under: priced.filter((p) => p.margin_retail < target - 0.005).length,
     }
-  }, [active, target])
+  }, [all, active, target])
 
   const columns: Column<ProductRow>[] = [
     {
       key: 'name',
       header: 'Vino',
+      footer: `Total (${rows.length} ${rows.length === 1 ? 'vino' : 'vinos'})`,
       value: (p) => `${p.name} ${p.winery ?? ''} ${p.varietal ?? ''} ${p.vintage ?? ''} ${p.sku ?? ''}`,
       cell: (p) => (
         <span className="block min-w-[140px]">
@@ -147,7 +152,7 @@ export default function VinosPage() {
           <span className="text-[12px] text-muted">{daysOfStockText(p.days_of_stock, p.stock)}</span>
         </span>
       ),
-      footer: int(rows.reduce((s, p) => s + p.stock, 0)),
+      footer: int(rows.reduce((s, p) => s + Math.max(p.stock, 0), 0)),
     },
     { key: 'unit_cost', header: 'Costo', align: 'right', hideBelow: 'md', cell: (p) => money(p.unit_cost, { decimals: 0 }) },
     { key: 'price_retail', header: 'Precio', align: 'right', hideBelow: 'sm', cell: (p) => (p.price_retail ? money(p.price_retail) : <span className="text-muted">—</span>) },
@@ -242,10 +247,14 @@ export default function VinosPage() {
               value={int(kpi.bottles)}
               hint={
                 <span className="inline-flex items-center gap-1">
-                  en {kpi.withStock} de {active.length} vinos
+                  en {kpi.withStock} {kpi.withStock === 1 ? 'vino' : 'vinos'}
                   <InfoTip
                     title="Botellas en stock"
-                    text="Suma de las botellas de todos tus vinos activos. Sale de los movimientos: compras y stock inicial suman; ventas, roturas, degustaciones y regalos restan."
+                    text={`Suma de las botellas de todos tus vinos${
+                      kpi.inactiveWithStock.length
+                        ? ` (incluye ${kpi.inactiveWithStock.length === 1 ? '1 vino desactivado que todavía tiene botellas' : `${kpi.inactiveWithStock.length} vinos desactivados que todavía tienen botellas`})`
+                        : ''
+                    }. Sale de los movimientos: compras y stock inicial suman; ventas, roturas, degustaciones y regalos restan.`}
                   />
                 </span>
               }
@@ -283,9 +292,9 @@ export default function VinosPage() {
                   <span className="inline-flex items-center gap-1 whitespace-nowrap">
                     <Badge tone="good">≥ {pct(target, 0)}</Badge> tu objetivo
                   </span>
-                  <Badge tone="warn">25–{pct(target, 0)}</Badge>
+                  {target > 0.25 && <Badge tone="warn">25–{pct(target, 0)}</Badge>}
                   <span className="inline-flex items-center gap-1">
-                    <Badge tone="bad">&lt; 25 %</Badge>
+                    <Badge tone="bad">&lt; {pct(Math.min(0.25, target), 0)}</Badge>
                     <InfoTip term="margen_bruto" />
                   </span>
                 </span>
@@ -336,7 +345,7 @@ export default function VinosPage() {
       <ProductFormModal open={newOpen} onClose={closeNew} />
       <BulkPriceModal open={bulkOpen} onClose={() => setBulkOpen(false)} products={all} />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
-      <PriceListModal open={listOpen} onClose={() => setListOpen(false)} count={active.filter((p) => p.price_retail > 0).length} />
+      <PriceListModal open={listOpen} onClose={() => setListOpen(false)} products={all} />
     </>
   )
 }
