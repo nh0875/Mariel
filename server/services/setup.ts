@@ -1,5 +1,5 @@
 // Datos mínimos para que el sistema funcione desde el primer minuto.
-import { all, run, scalar, tx } from '../db'
+import { all, run, scalar, tx, DATA_TABLES } from '../db'
 import { getSettings, updateSettings } from './settings'
 
 /**
@@ -29,5 +29,19 @@ export function ensureBaseData() {
       return { ...m, account_id: target }
     })
     if (changed) updateSettings({ payment_methods: methods })
+  })
+}
+
+/** Borra TODOS los datos del negocio (vinos, ventas, compras, gastos, caja, contactos…). La configuración se mantiene. */
+export function wipeAllData() {
+  tx(() => {
+    for (const t of DATA_TABLES) run(`DELETE FROM ${t}`)
+    try {
+      run(`DELETE FROM sqlite_sequence`)
+    } catch {
+      /* puede no existir */
+    }
+    const s = getSettings()
+    updateSettings({ payment_methods: s.payment_methods.map((m) => ({ ...m, account_id: null })), onboarding: { ...s.onboarding, demo_loaded: false } })
   })
 }
