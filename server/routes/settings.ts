@@ -44,12 +44,13 @@ import { HttpError, badRequest, notFound, validate } from '../lib/http'
 import { addSheet, excelFilename, newWorkbook, sendWorkbookFile, type ExcelSheet } from '../lib/excel'
 import { KEEP_AUTO, KEEP_OTHER, RestoreError, backupKind, backupPath, createBackup, listBackups, restoreFromBuffer, restoreFromFile, type BackupInfo } from '../lib/backup'
 import { getSettings, updateSettings } from '../services/settings'
-import { loadDemoData } from '../seed/demo'
+import { forgetDemoSettings, loadDemoData } from '../seed/demo'
 import { ensureBaseData, wipeAllData } from '../services/setup'
 import { listSales } from '../services/sales'
 import { listPurchases } from '../services/purchases'
 import { listExpenses } from '../services/expenses'
 import { accountBalances } from '../services/payments'
+import { movementOrderSql } from '../services/stock'
 
 const router = Router()
 
@@ -174,8 +175,12 @@ router.post('/data/reset', async (req, res) => {
       throw backupError(err, 'No se pudo hacer la copia de seguridad previa, así que no borramos nada. Revisá que haya espacio libre en el disco.')
     }
   }
+  const wasDemo = getSettings().onboarding.demo_loaded
   wipeAllData()
   ensureBaseData()
+  // Si lo que se borra es el ejemplo, también se van sus datos del negocio inventados (dirección,
+  // teléfono, mail, dueña) y su dólar: vuelven los que había antes.
+  if (wasDemo) forgetDemoSettings()
   if (body.restart_onboarding === true) updateSettings({ onboarding: { completed: false, demo_loaded: false } })
   res.json({ ok: true })
 })
@@ -452,7 +457,7 @@ export function buildFullExport() {
        CASE WHEN m.ref_type = 'sale_item' THEN (SELECT si.sale_id FROM sale_items si WHERE si.id = m.ref_id) END AS sale_id,
        CASE WHEN m.ref_type = 'purchase_item' THEN (SELECT pi.purchase_id FROM purchase_items pi WHERE pi.id = m.ref_id) END AS purchase_id,
        CASE WHEN m.ref_type = 'event' THEN (SELECT e.name FROM events e WHERE e.id = m.ref_id) END AS event_name
-     FROM stock_movements m ORDER BY m.date DESC, m.id DESC`,
+     FROM stock_movements m ORDER BY ${movementOrderSql('m', 'DESC', { initialFirst: false })}`,
   )
   const movimientos = sheet<MovRow>({
     name: 'Movimientos de stock',
@@ -499,7 +504,7 @@ export function buildFullExport() {
       { header: 'Total', key: 'total', type: 'money' },
       { header: 'Comisión del medio de pago', key: 'fee', type: 'money' },
       { header: 'Costo del vino (CMV)', key: 'cost', type: 'money' },
-      { header: 'Ganancia de la venta', key: 'profit', type: 'money' },
+      { header: 'Te quedó (después de comisiones)', key: 'profit', type: 'money' },
       { header: 'Cobrado', key: 'paid', type: 'money' },
       { header: 'Falta cobrar', key: 'balance', type: 'money' },
       { header: 'Estado', key: 'status', width: 14, value: (s) => (s.overdue ? 'Vencida' : STATUS_SALE[s.status]) },
@@ -864,7 +869,14 @@ router.get('/export/all', async (_req, res) => {
   })
   const wb = newWorkbook()
   addSheet(wb, readme)
-  for (const s of sheets) addSheet(wb, s as ExcelSheet<Record<string, unknown>>)
+  // Entre hoja y hoja le damos un respiro al servidor: si mientras tanto otra pantalla pide algo,
+  // se atiende enseguida en vez de esperar a que termine todo el Excel (~1,5 s con 14 meses de datos).
+  const breathe = () => new Promise<void>((r) => setImmediate(r))
+  for (const s of sheets) {
+    await breathe()
+    addSheet(wb, s as ExcelSheet<Record<string, unknown>>)
+  }
+  await breathe()
   await sendWorkbookFile(res, excelFilename('todos-los-datos'), wb)
 })
 

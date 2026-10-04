@@ -157,7 +157,7 @@ export default function EventoDetailPage() {
     },
     {
       key: 'profit',
-      header: 'Te dejó',
+      header: 'Te quedó',
       align: 'right',
       cell: (x) => <span className={resultClass(x.profit)}>{money(x.profit, { decimals: 0 })}</span>,
       hideBelow: 'sm',

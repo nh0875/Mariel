@@ -477,12 +477,12 @@ router.get('/events/:id/export', async (req, res) => {
         { header: 'Total', key: 'total', type: 'money' },
         { header: 'Comisión', key: 'fee', type: 'money' },
         { header: 'Costo de las botellas', key: 'cost', type: 'money' },
-        { header: 'Ganancia', key: 'profit', type: 'money' },
+        { header: 'Te quedó (después de comisiones)', key: 'profit', type: 'money' },
       ] as ExcelColumn<EventSale>[],
       rows: [...d.sales].reverse(),
       notes: [
         'Las ventas que cargaste eligiendo este evento (entradas y vino).',
-        'Ganancia = Total − Comisión − Costo de las botellas. Todavía no descuenta los gastos del evento ni las botellas abiertas: eso está en «Resumen».',
+        'Te quedó = Total − Comisión − Costo de las botellas. Todavía no descuenta los gastos del evento ni las botellas abiertas: eso está en «Resumen».',
       ],
     },
     {

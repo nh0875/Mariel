@@ -33,6 +33,26 @@ export interface NewMovement {
 const round4 = (n: number) => Math.round(n * 10000) / 10000
 
 /**
+ * Orden de la historia de un vino (el mismo para el recálculo del costo y para el «saldo» que
+ * se muestra en su ficha y en el Excel):
+ *  1) el "stock inicial" (alta del vino) siempre primero, sea cual sea su fecha: es el punto de partida;
+ *  2) después por fecha;
+ *  3) dentro del mismo día, primero lo que ENTRA (compras, cambios de costo, sobrantes) y después lo
+ *     que SALE (ventas, roturas…). Así editar una compra o una venta (que vuelve a grabar sus
+ *     renglones) no cambia el costo de las ventas de ese mismo día.
+ */
+export function movementOrderSql(alias = '', dir: 'ASC' | 'DESC' = 'ASC', opts: { initialFirst?: boolean } = {}): string {
+  const a = alias ? `${alias}.` : ''
+  return [
+    // En listados de varios vinos no se adelanta el alta (se ordena por fecha); el saldo igual se calcula por vino.
+    ...(opts.initialFirst === false ? [] : [`CASE WHEN ${a}kind = 'inicial' THEN 0 ELSE 1 END ${dir}`]),
+    `${a}date ${dir}`,
+    `CASE WHEN ${a}kind IN ('compra', 'revaluo') OR ${a}qty > 0 THEN 0 ELSE 1 END ${dir}`,
+    `${a}id ${dir}`,
+  ].join(', ')
+}
+
+/**
  * Registra un movimiento de stock. Por defecto recalcula el vino al toque;
  * con { recalc: false } se puede cargar en lote y llamar a recalcProducts() al final.
  */
@@ -74,18 +94,10 @@ export function deleteMovement(id: number) {
  */
 export function recalcProduct(productId: number) {
   tx(() => {
-    // Orden de la historia:
-    //  1) el "stock inicial" (alta del vino) siempre primero, sea cual sea su fecha: es el punto de partida;
-    //  2) después por fecha;
-    //  3) dentro del mismo día, primero lo que ENTRA (compras, cambios de costo, sobrantes) y después lo
-    //     que SALE (ventas, roturas…). Así editar una compra o una venta (que vuelve a grabar sus
-    //     renglones) no cambia el costo de las ventas de ese mismo día.
+    // Orden de la historia: ver movementOrderSql (inicial primero, por fecha, en el día primero lo que entra).
     const movs = all<{ id: number; kind: StockMovementKind; qty: number; unit_cost: number; ref_type: string | null; ref_id: number | null }>(
       `SELECT id, kind, qty, unit_cost, ref_type, ref_id FROM stock_movements WHERE product_id = ?
-       ORDER BY CASE WHEN kind = 'inicial' THEN 0 ELSE 1 END,
-                date,
-                CASE WHEN kind IN ('compra', 'revaluo') OR qty > 0 THEN 0 ELSE 1 END,
-                id`,
+       ORDER BY ${movementOrderSql()}`,
       [productId],
     )
     let stock = 0

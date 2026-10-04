@@ -15,15 +15,14 @@ import { excelFilename, sendWorkbook } from '../lib/excel'
 import { monthlySeries } from '../services/finance'
 import { getSettings } from '../services/settings'
 import { round2, safeDiv } from '../../shared/calc'
-import { addMonths, endOfMonth, startOfMonth, today } from '../../shared/dates'
+import { lastCompleteMonths, today } from '../../shared/dates'
 import { reviewPrices, type CalculatorContext, type CalculatorProduct, type PriceReviewParams, type PriceReviewRow, type PriceReviewStatus } from '../../shared/pricing'
 
 const router = Router()
 
-/** Los últimos 3 meses completos antes del mes de `ref` (ej: ref 15/10 → julio, agosto, septiembre). */
+/** Los últimos 3 meses completos antes del mes de `ref` (ej: ref 15/10 → julio, agosto, septiembre). Igual que Metas. */
 export function contextWindow(ref: string = today()): { from: string; to: string } {
-  const lastFull = addMonths(startOfMonth(ref), -1)
-  return { from: addMonths(lastFull, -2), to: endOfMonth(lastFull) }
+  return lastCompleteMonths(ref, 3)
 }
 
 function activeProducts(): CalculatorProduct[] {

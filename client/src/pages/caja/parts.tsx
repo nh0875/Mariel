@@ -81,8 +81,8 @@ export function Kpi({
 }
 
 /** Monto con signo: verde si entra (+), rojo si sale (−). */
-export function SignedMoney({ value, className, strong = true }: { value: number; className?: string; strong?: boolean }) {
-  const s = money(Math.abs(value))
+export function SignedMoney({ value, className, strong = true, decimals }: { value: number; className?: string; strong?: boolean; decimals?: 0 | 2 | 'auto' }) {
+  const s = money(Math.abs(value), { decimals })
   return (
     <span className={clsx('vh-num whitespace-nowrap', strong && 'font-bold', value > 0.004 ? 'text-good' : value < -0.004 ? 'text-bad' : 'text-ink-soft', className)}>
       {value > 0.004 ? '+' : value < -0.004 ? '−' : ''}

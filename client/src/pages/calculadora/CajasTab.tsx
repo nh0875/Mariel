@@ -193,7 +193,7 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
             columns: [
               { key: 'label', header: 'Descuento' },
               { key: 'profit', header: 'Te queda por caja', align: 'right', format: (v) => money(Number(v)) },
-              { key: 'margin', header: 'Margen', align: 'right', format: (v) => pct(Number(v)) },
+              { key: 'margin', header: 'Margen después de IIBB y comisión', align: 'right', format: (v) => pct(Number(v)) },
             ],
             rows: chartRows,
           }}

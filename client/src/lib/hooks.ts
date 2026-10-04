@@ -35,7 +35,12 @@ export function useLocalState<T>(key: string, initial: T): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(`vinoh.${key}`)
-      return raw != null ? (JSON.parse(raw) as T) : initial
+      if (raw == null) return initial
+      const parsed = JSON.parse(raw) as unknown
+      // Si lo guardado está roto o es de otro tipo (ej. "null" donde va un texto), arrancamos de cero.
+      if (parsed == null && initial != null) return initial
+      if (initial != null && parsed != null && typeof parsed !== typeof initial) return initial
+      return parsed as T
     } catch {
       return initial
     }

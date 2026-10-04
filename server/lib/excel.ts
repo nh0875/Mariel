@@ -3,6 +3,7 @@
 // fechas como fechas reales (se pueden ordenar/filtrar), fila de totales con fórmulas,
 // filtros activados y una nota que explica cómo leer cada planilla.
 import ExcelJS from 'exceljs'
+import { Readable } from 'node:stream'
 import type { Response } from 'express'
 import { getSettings } from '../services/settings'
 import { today } from '../../shared/dates'
@@ -229,31 +230,70 @@ export async function sendWorkbookFile(res: Response, filename: string, wb: Exce
 }
 
 /** Lee un Excel subido y devuelve las filas de la primera hoja como objetos (usando la fila de encabezados). */
-export async function readFirstSheet(buffer: Buffer, headerRow = 1): Promise<Record<string, unknown>[]> {
-  const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer)
-  const ws = wb.worksheets[0]
-  if (!ws) return []
+/** El Excel tiene más filas de las permitidas (se corta apenas se pasa, sin leer el resto). */
+export class TooManyRowsError extends Error {}
+
+/** Valor "útil" de una celda: resultado de fórmulas, texto de links y de texto con formato. */
+function cellValue(cell: ExcelJS.Cell): unknown {
+  let v: unknown = cell.value
+  if (v && typeof v === 'object' && 'result' in (v as object)) v = (v as { result: unknown }).result
+  if (v && typeof v === 'object' && 'text' in (v as object)) v = (v as { text: unknown }).text
+  if (v && typeof v === 'object' && 'richText' in (v as object)) v = cell.text
+  return v
+}
+
+/**
+ * Lee la primera hoja de un Excel subido, fila por fila y SIN cargar todo el archivo en memoria
+ * (lector "en streaming"). Fila `headerRow` = encabezados; se saltean las filas vacías. Si hay más de
+ * `maxRows` filas con datos, corta en el momento con TooManyRowsError: un Excel gigante no congela el
+ * programa ni lo tira por falta de memoria. Devuelve cada fila con su número REAL en el Excel.
+ */
+export async function readSheetRows(
+  buffer: Buffer,
+  opts: { headerRow?: number; maxRows?: number } = {},
+): Promise<{ rows: Record<string, unknown>[]; rowNumbers: number[] }> {
+  const headerRow = opts.headerRow ?? 1
+  const maxRows = opts.maxRows ?? Infinity
+  const reader = new ExcelJS.stream.xlsx.WorkbookReader(Readable.from(buffer), {
+    worksheets: 'emit',
+    sharedStrings: 'cache',
+    styles: 'cache', // para reconocer las celdas con formato de fecha
+    hyperlinks: 'ignore',
+    entries: 'ignore',
+  })
   const headers: string[] = []
-  ws.getRow(headerRow).eachCell({ includeEmpty: true }, (cell, col) => {
-    headers[col] = String(cell.text ?? '').trim()
-  })
   const rows: Record<string, unknown>[] = []
-  ws.eachRow({ includeEmpty: false }, (row, n) => {
-    if (n <= headerRow) return
-    const obj: Record<string, unknown> = {}
-    let hasValue = false
-    row.eachCell({ includeEmpty: true }, (cell, col) => {
-      const h = headers[col]
-      if (!h) return
-      let v: unknown = cell.value
-      if (v && typeof v === 'object' && 'result' in (v as object)) v = (v as { result: unknown }).result
-      if (v && typeof v === 'object' && 'text' in (v as object)) v = (v as { text: unknown }).text
-      if (v && typeof v === 'object' && 'richText' in (v as object)) v = cell.text
-      if (v !== null && v !== undefined && v !== '') hasValue = true
-      obj[h] = v
-    })
-    if (hasValue) rows.push(obj)
-  })
-  return rows
+  const rowNumbers: number[] = []
+  for await (const ws of reader) {
+    for await (const row of ws) {
+      const n = row.number
+      if (n < headerRow) continue
+      if (n === headerRow) {
+        row.eachCell({ includeEmpty: true }, (cell, col) => {
+          headers[col] = String(cell.text ?? '').trim()
+        })
+        continue
+      }
+      const obj: Record<string, unknown> = {}
+      let hasValue = false
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        const h = headers[col]
+        if (!h) return
+        const v = cellValue(cell)
+        if (v !== null && v !== undefined && v !== '') hasValue = true
+        obj[h] = v
+      })
+      if (!hasValue) continue
+      rows.push(obj)
+      rowNumbers.push(n)
+      if (rows.length > maxRows) throw new TooManyRowsError(`Más de ${maxRows} filas`)
+    }
+    break // solo la primera hoja
+  }
+  return { rows, rowNumbers }
+}
+
+/** Primera hoja como lista de objetos { encabezado: valor } (ver readSheetRows). */
+export async function readFirstSheet(buffer: Buffer, headerRow = 1): Promise<Record<string, unknown>[]> {
+  return (await readSheetRows(buffer, { headerRow })).rows
 }

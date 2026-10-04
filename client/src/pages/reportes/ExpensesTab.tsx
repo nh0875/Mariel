@@ -3,7 +3,7 @@
 import { useNavigate } from 'react-router-dom'
 import { Receipt } from 'lucide-react'
 import { CHART_COLORS } from '@shared/constants'
-import type { Period } from '@shared/dates'
+import { monthLabel, type Period } from '@shared/dates'
 import { int, pct } from '@/lib/format'
 import { Badge, Button, Card, DataTable, EmptyState, ExportButton, StatTile, type Column } from '@/components/ui'
 import { ChartCard, ColumnChart, Legend, RankBars } from '@/components/charts'
@@ -11,6 +11,15 @@ import { Amount, BlockTitle, compact, Insights, money0, pesos, plural, ReportGua
 import type { ExpensesReport } from './types'
 
 type Cat = ExpensesReport['by_category'][number]
+
+/** "promedio de jul 26 a sep 26" — los meses completos que se usaron. */
+function avgWindow(d: ExpensesReport): string {
+  if (!d.avg_months.length) return 'sin meses completos'
+  const first = monthLabel(d.avg_months[0])
+  const last = monthLabel(d.avg_months[d.avg_months.length - 1])
+  const range = d.avg_months.length === 1 ? first : `${first} a ${last}`
+  return d.avg_basis === 'last_3' ? `últimos meses completos: ${range}` : `${plural(d.months_for_avg, 'mes completo', 'meses completos')}: ${range}`
+}
 
 function expenseInsights(d: ExpensesReport): Insight[] {
   const out: Insight[] = []
@@ -38,26 +47,27 @@ function expenseInsights(d: ExpensesReport): Insight[] {
       ),
     })
   }
-  const complete = d.by_month.filter((m) => !m.partial)
-  if (d.break_even_monthly != null && complete.length) {
-    const avgSales = complete.reduce((s, m) => s + m.sales, 0) / complete.length
+  if (d.break_even_monthly != null && d.months_for_avg > 0) {
+    // Ventas promedio de los MISMOS meses completos con que se calculó el equilibrio.
+    const avgSales = d.avg_sales
     const gap = avgSales - d.break_even_monthly
+    const window = avgWindow(d)
     out.push({
       tone: gap >= 0 ? 'good' : 'bad',
       text:
         gap >= 0 ? (
           <>
-            Para cubrir tus gastos fijos necesitás vender unos <b>{money0(d.break_even_monthly)}</b> por mes. Venís vendiendo {money0(avgSales)} en promedio: estás <b>{money0(gap)} por encima</b> del
-            punto de equilibrio.
+            Para cubrir tus gastos fijos necesitás vender unos <b>{money0(d.break_even_monthly)}</b> por mes. Venís vendiendo {money0(avgSales)} en promedio ({window}): estás{' '}
+            <b>{money0(gap)} por encima</b> del punto de equilibrio.
           </>
         ) : (
           <>
-            Para cubrir tus gastos fijos necesitás vender unos <b>{money0(d.break_even_monthly)}</b> por mes, y venís vendiendo {money0(avgSales)}: te faltan <b>{money0(-gap)} por mes</b>. Opciones:
-            vender más, subir el margen o bajar fijos.
+            Para cubrir tus gastos fijos necesitás vender unos <b>{money0(d.break_even_monthly)}</b> por mes, y venís vendiendo {money0(avgSales)} ({window}): te faltan <b>{money0(-gap)} por mes</b>.
+            Opciones: vender más, subir el margen o bajar fijos.
           </>
         ),
     })
-  } else if (d.break_even_monthly == null && t.sales > 0) {
+  } else if (d.break_even_monthly == null && t.sales > 0 && d.contribution_margin <= 0 && d.months_for_avg > 0) {
     out.push({
       tone: 'bad',
       text: <>Con los márgenes de este período, lo que te deja cada venta no alcanza ni para los gastos variables: no hay volumen de ventas que cubra los fijos. Revisá precios y costos.</>,
@@ -97,6 +107,7 @@ export function ExpensesTab({ period }: { period: Period }) {
           )
         }
         const rows = d.by_month.map((m) => ({ label: m.partial ? `${m.label}*` : m.label, fijos: m.fixed, variables: m.variable, total: m.total, ventas: m.sales }))
+        const partials = d.by_month.filter((m) => m.partial)
         const t = d.totals
         const cols: Column<Cat>[] = [
           { key: 'category', header: 'Categoría', cell: (c) => <span className="font-bold text-ink">{c.category}</span> },
@@ -115,7 +126,7 @@ export function ExpensesTab({ period }: { period: Period }) {
             hideBelow: 'sm',
             cell: (c) =>
               c.monthly_avg === 0 && c.total > 0 ? (
-                <span className="text-muted" title="Solo hubo gastos de esta categoría en el mes en curso, que no entra en el promedio.">
+                <span className="text-muted" title="No hubo gastos de esta categoría en los meses completos que se usan para el promedio.">
                   —
                 </span>
               ) : (
@@ -134,7 +145,11 @@ export function ExpensesTab({ period }: { period: Period }) {
                 label="Fijos por mes"
                 term="gastos_fijos"
                 value={<Amount value={d.fixed_avg} />}
-                hint={`Promedio de ${plural(d.months_for_avg, 'mes', 'meses')}${d.by_month.some((m) => m.partial) && d.by_month.length > 1 ? ' completos' : ''}.`}
+                hint={
+                  d.months_for_avg
+                    ? `Promedio (${avgWindow(d)}).${d.avg_basis === 'last_3' ? ' El período elegido no tiene meses completos.' : ''}`
+                    : 'Todavía no hay meses completos para promediar.'
+                }
               />
               <StatTile
                 label="Variables"
@@ -149,10 +164,14 @@ export function ExpensesTab({ period }: { period: Period }) {
                 value={d.break_even_monthly != null ? <Amount value={d.break_even_monthly} /> : '—'}
                 hint={
                   d.break_even_monthly != null
-                    ? `Punto de equilibrio: lo que tenés que vender por mes para no perder (fijos por mes ÷ margen de contribución, ${pct(d.contribution_margin, 0)}).`
-                    : t.sales > 0
-                      ? 'No se puede calcular: el margen de contribución no es positivo.'
-                      : 'Se calcula cuando hay ventas.'
+                    ? `Lo que tenés que vender por mes para no perder: fijos por mes ÷ margen de contribución (${pct(d.contribution_margin, 1)}), los dos con los mismos meses (${avgWindow(d)}). Mismo cálculo que la Calculadora y Metas.`
+                    : !d.months_for_avg
+                      ? 'Se calcula con meses completos: todavía no hay.'
+                      : d.fixed_avg <= 0
+                        ? 'No hay gastos fijos cargados en esos meses.'
+                        : d.contribution_margin <= 0
+                          ? 'No se puede calcular: el margen de contribución no es positivo.'
+                          : 'Se calcula cuando hay ventas.'
                 }
               />
             </div>
@@ -192,7 +211,11 @@ export function ExpensesTab({ period }: { period: Period }) {
                   { key: 'variables', label: 'Variables', color: CHART_COLORS.extra },
                 ]}
               />
-              {d.by_month.some((m) => m.partial) && <p className="px-2 pt-1 text-[12.5px] text-muted">* Mes en curso: todavía pueden faltar gastos.</p>}
+              {partials.length > 0 && (
+                <p className="px-2 pt-1 text-[12.5px] text-muted">
+                  * Mes incompleto ({partials.map((m) => `${m.label}: ${m.partial_note}`).join('; ')}): no es un mes entero, por eso no entra en los promedios.
+                </p>
+              )}
             </ChartCard>
 
             <div className="mt-6 grid gap-4 xl:grid-cols-5">
@@ -201,9 +224,7 @@ export function ExpensesTab({ period }: { period: Period }) {
               </Card>
               <section className="min-w-0 xl:col-span-3" aria-label="Gastos por categoría">
                 <BlockTitle title="Por categoría">
-                  «Por mes» = promedio de{' '}
-                  {d.months_for_avg < d.by_month.length ? `los ${plural(d.months_for_avg, 'mes completo', 'meses completos')} (sin el mes en curso)` : plural(d.months_for_avg, 'mes', 'meses')}, igual
-                  que «Fijos por mes». Comprar vino no es gasto: es stock.
+                  «Por mes» = promedio de {d.months_for_avg ? avgWindow(d) : 'los meses completos (todavía no hay)'}, igual que «Fijos por mes». Comprar vino no es gasto: es stock.
                 </BlockTitle>
                 <DataTable rows={d.by_category} columns={cols} rowKey={(c) => c.category} searchable={d.by_category.length > 8} searchPlaceholder="Buscar categoría…" dense />
               </section>

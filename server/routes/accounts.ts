@@ -12,7 +12,7 @@
 // - El flujo de caja por mes usa finance.monthlySeries() (criterio "percibido").
 import { Router } from 'express'
 import { z } from 'zod'
-import { accountInput, manualCashInput, transferInput } from '../../shared/schemas'
+import { accountInput, date as realDate, manualCashInput, transferInput } from '../../shared/schemas'
 import {
   ACCOUNT_KIND_LABELS,
   MANUAL_CASH_DIRECTION,
@@ -27,17 +27,17 @@ import {
   type PaymentRefType,
 } from '../../shared/constants'
 import { round2 } from '../../shared/calc'
-import { addDays, addMonths, daysBetween, endOfMonth, monthKey, monthsBetween, startOfMonth, today } from '../../shared/dates'
-import type { AccountWithBalance, Payment, SaleWithStatus } from '../../shared/types'
+import { addDays, addMonths, endOfMonth, startOfMonth, today } from '../../shared/dates'
+import type { AccountWithBalance, Payment } from '../../shared/types'
 import { all, get, run, scalar } from '../db'
 import { HttpError, badRequest, notFound, parseId, parsePeriod, qn, qs, validate } from '../lib/http'
 import { excelFilename, fmtDate, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
-import { accountBalances, addPayment, addTransfer, deletePayment, totalCash } from '../services/payments'
+import { accountBalances, addPayment, addTransfer, deletePayment, totalCash, type ScheduledPayment } from '../services/payments'
+import { pendingLists, projection, type PayableRow, type ReceivableRow } from '../services/cashProjection'
 import { monthlySeries, payables, periodSummary, receivables } from '../services/finance'
-import { listSales } from '../services/sales'
-import { listPurchases } from '../services/purchases'
-import { listExpenses } from '../services/expenses'
 import { ensureBaseData } from '../services/setup'
+
+export type { PayableRow, Projection, ReceivableRow } from '../services/cashProjection'
 
 const router = Router()
 
@@ -54,9 +54,12 @@ function moneyText(n: number): string {
 // ───────────────────────── Cuentas ─────────────────────────
 
 export type AccountRow = AccountWithBalance & {
-  /** Lo que entró y salió de esta cuenta en el mes (incluye transferencias: para la cuenta, es plata que entra o sale). */
+  /** Lo que entró y salió de esta cuenta en el mes hasta hoy (incluye transferencias: para la cuenta, es plata que entra o sale). */
   month_in: number
   month_out: number
+  /** Lo ya cargado para lo que queda del mes (fecha posterior a hoy): todavía no está en el saldo. */
+  month_scheduled_in: number
+  month_scheduled_out: number
   /** Cantidad de movimientos (si tiene, no se puede borrar: se desactiva). */
   movements_count: number
   last_movement: string | null
@@ -66,14 +69,18 @@ export type AccountRow = AccountWithBalance & {
 function listAccounts(asOf?: string): AccountRow[] {
   const ref = asOf ?? today()
   const mFrom = startOfMonth(ref)
-  const mTo = asOf ?? endOfMonth(ref)
+  const mEnd = endOfMonth(ref)
+  // "Entró/Salió este mes" va hasta la misma fecha que el saldo (hoy): lo cargado con fecha más
+  // adelante en el mes se muestra aparte como "programado".
   const month = new Map(
-    all<{ account_id: number; cin: number; cout: number }>(
+    all<{ account_id: number; cin: number; cout: number; sin: number; sout: number }>(
       `SELECT account_id,
-         COALESCE(SUM(CASE WHEN direction = 'in' THEN amount END), 0) AS cin,
-         COALESCE(SUM(CASE WHEN direction = 'out' THEN amount END), 0) AS cout
+         COALESCE(SUM(CASE WHEN direction = 'in' AND date <= ? THEN amount END), 0) AS cin,
+         COALESCE(SUM(CASE WHEN direction = 'out' AND date <= ? THEN amount END), 0) AS cout,
+         COALESCE(SUM(CASE WHEN direction = 'in' AND date > ? THEN amount END), 0) AS sin,
+         COALESCE(SUM(CASE WHEN direction = 'out' AND date > ? THEN amount END), 0) AS sout
        FROM payments WHERE date BETWEEN ? AND ? GROUP BY account_id`,
-      [mFrom, mTo],
+      [ref, ref, ref, ref, mFrom, mEnd],
     ).map((r) => [r.account_id, r]),
   )
   const counts = new Map(
@@ -86,6 +93,8 @@ function listAccounts(asOf?: string): AccountRow[] {
     ...a,
     month_in: round2(month.get(a.id)?.cin ?? 0),
     month_out: round2(month.get(a.id)?.cout ?? 0),
+    month_scheduled_in: round2(month.get(a.id)?.sin ?? 0),
+    month_scheduled_out: round2(month.get(a.id)?.sout ?? 0),
     movements_count: counts.get(a.id)?.n ?? 0,
     last_movement: counts.get(a.id)?.last ?? null,
   }))
@@ -181,7 +190,7 @@ router.delete('/accounts/:id', (req, res) => {
 // ───────────────────────── Arqueo ─────────────────────────
 
 const reconcileInput = z.object({
-  date: z.string().regex(ISO, 'tiene que ser una fecha válida'),
+  date: realDate, // la misma validación que todo lo demás: rechaza fechas que no existen (2026-02-30)
   counted: z.number().finite().min(-1e12).max(1e12),
 })
 
@@ -659,141 +668,6 @@ router.delete('/payments/:id', (req, res) => {
 
 // ───────────────────────── Por cobrar y por pagar ─────────────────────────
 
-export type ReceivableRow = SaleWithStatus & {
-  /** Días desde el vencimiento (0 si no venció o no tiene fecha). */
-  days_overdue: number
-  /** Días desde la venta. */
-  age_days: number
-}
-
-export interface PayableRow {
-  type: 'purchase' | 'expense'
-  id: number
-  date: string
-  due_date: string | null
-  /** Proveedor (compras) o descripción del gasto. */
-  name: string
-  /** "Compra #4 · factura A-0003" / "Alquiler · Inmobiliaria Sur". */
-  detail: string
-  supplier_id: number | null
-  total: number
-  paid: number
-  balance: number
-  overdue: boolean
-  days_overdue: number
-}
-
-function pendingLists(): { receivables: ReceivableRow[]; payables: PayableRow[] } {
-  const t = today()
-  const daysOver = (overdue: boolean, due: string | null) => (overdue && due ? Math.max(0, daysBetween(due, t)) : 0)
-  const rec = listSales({})
-    .filter((s) => s.balance > 0.01)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
-    .map((s) => ({ ...s, days_overdue: daysOver(s.overdue, s.due_date), age_days: Math.max(0, daysBetween(s.date, t)) }))
-  const pay: PayableRow[] = [
-    ...listPurchases({})
-      .filter((p) => p.balance > 0.01)
-      .map((p) => ({
-        type: 'purchase' as const,
-        id: p.id,
-        date: p.date,
-        due_date: p.due_date,
-        name: p.supplier_name ?? 'Compra sin proveedor',
-        detail: `Compra #${p.id}${p.invoice_number ? ` · factura ${p.invoice_number}` : ''}`,
-        supplier_id: p.supplier_id,
-        total: p.total,
-        paid: p.paid,
-        balance: p.balance,
-        overdue: p.overdue,
-        days_overdue: daysOver(p.overdue, p.due_date),
-      })),
-    ...listExpenses({})
-      .filter((e) => e.balance > 0.01)
-      .map((e) => ({
-        type: 'expense' as const,
-        id: e.id,
-        date: e.date,
-        due_date: e.due_date,
-        name: e.description,
-        detail: [e.category, e.supplier_name].filter(Boolean).join(' · '),
-        supplier_id: e.supplier_id,
-        total: e.amount,
-        paid: e.paid,
-        balance: e.balance,
-        overdue: e.overdue,
-        days_overdue: daysOver(e.overdue, e.due_date),
-      })),
-  ].sort((a, b) => (a.due_date ?? a.date).localeCompare(b.due_date ?? b.date) || a.date.localeCompare(b.date) || a.id - b.id)
-  return { receivables: rec, payables: pay }
-}
-
-export interface Projection {
-  days: number
-  from: string
-  until: string
-  /** Plata en todas las cuentas hoy. */
-  cash_now: number
-  /** Lo que te tendrían que pagar hasta `until` (vencido + vence en el plazo + ventas a cuenta sin fecha). */
-  next_30_days_in: number
-  /** Lo que tendrías que pagar hasta `until` (vencido + vence en el plazo + sin fecha + gastos fijos que todavía no se generaron). */
-  next_30_days_out: number
-  /** cash_now + entra − sale. */
-  expected_balance: number
-  in_breakdown: { overdue: number; upcoming: number; no_date: number; later: number }
-  out_breakdown: { overdue: number; upcoming: number; no_date: number; later: number; fixed: number }
-  fixed_items: { id: number; description: string; category: string; amount: number; date: string }[]
-}
-
-/** Qué pasaría con la caja en los próximos N días si se cobra y se paga todo lo que vence. */
-function projection(lists = pendingLists(), days = 30): Projection {
-  const t = today()
-  const until = addDays(t, days)
-  const bucket = (rows: { due_date: string | null; balance: number }[]) => {
-    const b = { overdue: 0, upcoming: 0, no_date: 0, later: 0 }
-    for (const r of rows) {
-      if (!r.due_date) b.no_date += r.balance
-      else if (r.due_date < t) b.overdue += r.balance
-      else if (r.due_date <= until) b.upcoming += r.balance
-      else b.later += r.balance
-    }
-    return { overdue: round2(b.overdue), upcoming: round2(b.upcoming), no_date: round2(b.no_date), later: round2(b.later) }
-  }
-  const inB = bucket(lists.receivables)
-  const outB = bucket(lists.payables)
-
-  // Gastos fijos (plantillas de "Gastos fijos") que caen en el plazo y todavía no se generaron.
-  const templates = all<{ id: number; description: string; category: string; amount: number; day_of_month: number }>(
-    'SELECT id, description, category, amount, day_of_month FROM recurring_expenses WHERE active = 1 ORDER BY day_of_month, id',
-  )
-  const fixed_items: Projection['fixed_items'] = []
-  for (const m of monthsBetween(t, until)) {
-    const last = Number(endOfMonth(`${m}-01`).slice(8, 10))
-    for (const tpl of templates) {
-      const date = `${m}-${String(Math.min(tpl.day_of_month, last)).padStart(2, '0')}`
-      if (date > until) continue
-      const generated = get('SELECT id FROM expenses WHERE recurring_id = ? AND substr(date, 1, 7) = ?', [tpl.id, m])
-      if (generated) continue
-      fixed_items.push({ id: tpl.id, description: tpl.description, category: tpl.category, amount: round2(tpl.amount), date })
-    }
-  }
-  const fixed = round2(fixed_items.reduce((s, f) => s + f.amount, 0))
-  const cash_now = totalCash(t)
-  const next_in = round2(inB.overdue + inB.upcoming + inB.no_date)
-  const next_out = round2(outB.overdue + outB.upcoming + outB.no_date + fixed)
-  return {
-    days,
-    from: t,
-    until,
-    cash_now,
-    next_30_days_in: next_in,
-    next_30_days_out: next_out,
-    expected_balance: round2(cash_now + next_in - next_out),
-    in_breakdown: inB,
-    out_breakdown: { ...outB, fixed },
-    fixed_items,
-  }
-}
-
 function pendingData() {
   const lists = pendingLists()
   const r = receivables()
@@ -879,15 +753,36 @@ router.get('/pending/export', async (_req, res) => {
         { label: '+ Te tienen que pagar (vencido)', amount: pr.in_breakdown.overdue },
         { label: '+ Te tienen que pagar (vence en los próximos 30 días)', amount: pr.in_breakdown.upcoming },
         { label: '+ Ventas a cuenta sin fecha de pago', amount: pr.in_breakdown.no_date },
+        { label: '+ Cobros programados (ya cargados, con fecha más adelante)', amount: pr.in_breakdown.scheduled },
         { label: '− Tenés que pagar (vencido)', amount: -pr.out_breakdown.overdue },
         { label: '− Tenés que pagar (vence en los próximos 30 días)', amount: -pr.out_breakdown.upcoming },
         { label: '− Deudas sin fecha de vencimiento', amount: -pr.out_breakdown.no_date },
+        { label: '− Pagos programados (ya cargados como pagados, con fecha más adelante)', amount: -pr.out_breakdown.scheduled },
         { label: '− Gastos fijos que todavía no cargaste (alquiler, sueldos…)', amount: -pr.out_breakdown.fixed },
         { label: '= Plata que te quedaría', amount: pr.expected_balance },
       ],
       notes: [
         'Es una estimación: supone que cobrás y pagás todo lo que vence en los próximos 30 días (y lo ya vencido).',
+        'Programados: pagos o cobros que ya cargaste con una fecha que todavía no llegó (por ejemplo, gastos fijos generados como pagados para el día 20). En Gastos figuran como pagados, pero la plata sale de la cuenta ese día; por eso la plata de hoy todavía no los descuenta y se restan acá. El detalle está en la hoja «Programados».',
         'No incluye ventas ni compras nuevas que todavía no hiciste. Si el resultado da negativo o muy justo, anticipate: cobrá lo vencido o negociá plazos.',
+      ],
+    },
+    {
+      name: 'Programados',
+      title: 'Pagos y cobros programados (ya cargados, con fecha más adelante)',
+      subtitle: `Del ${fmtDate(addDays(t, 1))} al ${fmtDate(pr.until)}`,
+      columns: [
+        { header: 'Fecha', key: 'date', type: 'date' },
+        { header: 'Qué es', key: 'label', width: 34 },
+        { header: 'Tipo', key: 'ref_type', width: 22, value: (r: ScheduledPayment) => PAYMENT_REF_LABELS[r.ref_type] ?? r.ref_type },
+        { header: 'Cuenta', key: 'account_name', width: 22 },
+        { header: 'Entra', key: 'in', type: 'money', value: (r: ScheduledPayment) => (r.direction === 'in' ? r.amount : null) },
+        { header: 'Sale', key: 'out', type: 'money', value: (r: ScheduledPayment) => (r.direction === 'out' ? r.amount : null) },
+      ] as ExcelColumn<ScheduledPayment>[],
+      rows: pr.scheduled_items,
+      notes: [
+        'Movimientos que ya cargaste con una fecha que todavía no llegó. El saldo de hoy no los cuenta: entran o salen de la cuenta ese día.',
+        'Ejemplo típico: al generar los gastos fijos del mes, los que se debitan solos quedan «pagados» con la fecha de su débito.',
       ],
     },
   ])

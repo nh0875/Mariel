@@ -12,7 +12,7 @@
 //   GET /inflation · PUT /inflation/:month { rate } · DELETE /inflation/:month
 import { Router, type Request } from 'express'
 import type ExcelJS from 'exceljs'
-import { round2, safeDiv } from '../../shared/calc'
+import { daysOfStock, round2, safeDiv, salesWindowDays } from '../../shared/calc'
 import {
   CLIENT_KIND_LABELS,
   PAYMENT_METHOD_LABELS,
@@ -24,13 +24,13 @@ import {
   type SaleChannel,
   type WineType,
 } from '../../shared/constants'
-import { addDays, addMonths, endOfMonth, monthLabel, monthLabelLong, monthsBetween, presetToPeriod, startOfMonth, today } from '../../shared/dates'
+import { addDays, addMonths, endOfMonth, monthLabel, monthLabelLong, monthPart, presetToPeriod, startOfMonth, today } from '../../shared/dates'
 import { inflationInput } from '../../shared/schemas'
 import type { InflationRate, MonthlyPoint, PeriodSummary } from '../../shared/types'
 import { all, get, run } from '../db'
 import { HttpError, notFound, parsePeriod, validate } from '../lib/http'
 import { addSheet, excelFilename, fmtDate, newWorkbook, periodSubtitle, sendWorkbookFile, type ExcelColumn } from '../lib/excel'
-import { expensesByCategory, monthlySeries, periodSummary, salesByChannel, salesByProduct, type ChannelSales, type ProductSales } from '../services/finance'
+import { breakEvenFrom, breakEvenLastMonths, expensesByCategory, monthlySeries, periodSummary, salesByChannel, salesByProduct, type ChannelSales, type ProductSales } from '../services/finance'
 import { getSettings } from '../services/settings'
 
 const router = Router()
@@ -89,8 +89,11 @@ function reportPeriod(req: Request): ReportPeriod {
   return effectivePeriod(p.from, p.to)
 }
 
-const currentMonth = () => today().slice(0, 7)
-const isCurrentPartialMonth = (month: string) => month === currentMonth() && today() < endOfMonth(today())
+/**
+ * Un mes es parcial si el período toma solo algunos días (ej. 15 al 28) o si es el mes en curso.
+ * Los parciales se marcan en pantalla y en el Excel y no entran en los promedios por mes.
+ */
+const partOf = (m: { month: string; from: string; to: string }) => monthPart(m, today())
 
 // ───────────────────────── Estado de resultados ─────────────────────────
 
@@ -103,15 +106,21 @@ export interface ExpenseCategoryByMonth {
   months: Record<string, number>
 }
 
+/** Mes del estado de resultados: `partial` + `partial_note` ("15 al 28", "en curso") si no está completo. */
+export type PnlMonth = MonthlyPoint & { partial: boolean; partial_note: string }
+
 export interface PnlReport {
   period: ReportPeriod
-  months: MonthlyPoint[]
+  months: PnlMonth[]
   total: PeriodSummary
   expenses_by_category: ExpenseCategoryByMonth[]
 }
 
 export function pnlReport(from: string, to: string): Omit<PnlReport, 'period'> {
-  const months = monthlySeries(from, to)
+  const months = monthlySeries(from, to).map((m) => {
+    const p = partOf(m)
+    return { ...m, partial: p.partial, partial_note: p.note }
+  })
   const total = periodSummary(from, to)
   const keys = months.map((m) => m.month)
   // Agrupado por categoría Y naturaleza, así el detalle suma exacto a "Gastos fijos" y "Gastos variables".
@@ -160,6 +169,8 @@ export interface ProductReportRow extends ProductSales {
   abc: AbcClass
   /** true = tiene stock pero no se vendió en el período ("vino quieto"). */
   idle: boolean
+  /** Está en el sistema hace menos de 90 días: si no se vendió, todavía no se lo trata como «quieto / plata parada». */
+  is_new: boolean
   /** Última vez que se vendió (en toda la historia). */
   last_sale: string | null
 }
@@ -204,11 +215,14 @@ export function productsReport(from: string, to: string): ProductReportRow[] {
        WHERE si.product_id IS NOT NULL GROUP BY si.product_id`,
     ).map((r) => [r.product_id, r.d]),
   )
+  const firstDate = new Map(all<{ product_id: number; d: string }>('SELECT product_id, MIN(date) AS d FROM stock_movements GROUP BY product_id').map((r) => [r.product_id, r.d]))
   const extras = (id: number) => {
     const p = byId.get(id)
     const stock = p?.stock ?? 0
     const unitCost = p?.unit_cost ?? 0
     const q90 = sold90.get(id) ?? 0
+    // Igual que en Vinos: un vino nuevo se mide con los días que lleva, no con 90.
+    const rateDays = salesWindowDays(firstDate.get(id) ?? null, today())
     return {
       active: !!p?.active,
       stock,
@@ -216,8 +230,9 @@ export function productsReport(from: string, to: string): ProductReportRow[] {
       price_retail: p?.price_retail ?? 0,
       stock_value: stock > 0 ? round2(stock * unitCost) : 0,
       sold_90d: q90,
-      days_of_stock: q90 > 0 ? Math.max(0, Math.round(stock / (q90 / 90))) : null,
+      days_of_stock: daysOfStock(stock, q90, rateDays),
       last_sale: lastSale.get(id) ?? null,
+      is_new: firstDate.has(id) && rateDays < 90,
     }
   }
   const classified = classifyAbc(sold).map((r) => ({ ...r, ...extras(r.product_id), idle: false }))
@@ -253,7 +268,7 @@ export const channelLabel = (c: string) => (SALE_CHANNEL_LABELS[c as SaleChannel
 export interface ChannelRow extends ChannelSales {
   label: string
   bottles: number
-  /** Lo que te dejó ÷ ventas (después del vino y las comisiones, antes de los gastos generales). */
+  /** Lo que te quedó ÷ ventas (después del vino y las comisiones, antes de los gastos generales). */
   margin: number
   avg_ticket: number
   /** Parte de las ventas del período (0..1). */
@@ -459,17 +474,27 @@ export function clientsReport(from: string, to: string): Omit<ClientsReport, 'pe
 
 export interface ExpensesReport {
   period: ReportPeriod
-  /** monthly_avg = lo de esa categoría en los meses completos ÷ months_for_avg (igual que fixed_avg). */
+  /** monthly_avg = lo de esa categoría en los meses del promedio (avg_months) ÷ months_for_avg (igual que fixed_avg). */
   by_category: { category: string; nature: string; total: number; count: number; share: number; monthly_avg: number }[]
-  by_month: { month: string; label: string; fixed: number; variable: number; total: number; sales: number; pct_of_sales: number | null; partial: boolean }[]
+  by_month: { month: string; label: string; fixed: number; variable: number; total: number; sales: number; pct_of_sales: number | null; partial: boolean; partial_note: string }[]
   totals: { total: number; fixed: number; variable: number; sales: number }
-  /** Promedio de gastos fijos por mes (meses completos; el mes en curso no cuenta si hay otros). */
+  /** Promedio de gastos fijos por mes, con los meses COMPLETOS (los parciales no cuentan). */
   fixed_avg: number
   /** Cuántos meses se usaron para el promedio. */
   months_for_avg: number
+  /** Los meses usados para los promedios y el punto de equilibrio ('YYYY-MM'). */
+  avg_months: string[]
+  /**
+   * De dónde salen los promedios: 'period' = los meses completos del período elegido;
+   * 'last_3' = el período no tiene ningún mes completo (ej. «Este mes»), así que se usan los
+   * últimos 3 meses completos, igual que Calculadora y Metas.
+   */
+  avg_basis: 'period' | 'last_3'
+  /** Ventas promedio por mes en esos mismos meses ("venís vendiendo"). */
+  avg_sales: number
   /** Gastos variables ÷ ventas del período (0..1). */
   variable_pct_of_sales: number
-  /** Margen de contribución: lo que queda de cada $1 vendido después del vino, comisiones, mermas y gastos variables (0..1). */
+  /** Margen de contribución en los meses del promedio: lo que queda de cada $1 vendido después del vino, comisiones, mermas y gastos variables (0..1). */
   contribution_margin: number
   /** Ventas por mes necesarias para cubrir los gastos fijos promedio (null si el margen de contribución no es positivo). */
   break_even_monthly: number | null
@@ -478,7 +503,8 @@ export interface ExpensesReport {
 export function expensesReport(from: string, to: string): Omit<ExpensesReport, 'period'> {
   const months = monthlySeries(from, to)
   const s = periodSummary(from, to)
-  const by_month = months.map((m) => ({
+  const parts = months.map((m) => partOf(m))
+  const by_month = months.map((m, i) => ({
     month: m.month,
     label: m.label,
     fixed: m.expenses_fixed,
@@ -486,25 +512,29 @@ export function expensesReport(from: string, to: string): Omit<ExpensesReport, '
     total: m.expenses,
     sales: m.sales,
     pct_of_sales: m.sales > 0 ? m.expenses / m.sales : null,
-    partial: isCurrentPartialMonth(m.month),
+    partial: parts[i].partial,
+    partial_note: parts[i].note,
   }))
-  // Promedios por mes: solo con meses completos (el mes en curso y los que no llegaron no cuentan, si hay otros).
-  const complete = by_month.length > 1 ? by_month.filter((m) => !m.partial && m.month <= currentMonth()) : by_month
-  const forAvg = complete.length ? complete : by_month
-  const avgMonths = new Set(forAvg.map((m) => m.month))
-  const fixed_avg = round2(
-    safeDiv(
-      forAvg.reduce((x, m) => x + m.fixed, 0),
-      forAvg.length,
-    ),
-  )
+  // Promedios por mes y punto de equilibrio: SOLO meses completos (medio mes daría promedios falsamente
+  // bajos). Si el período no tiene ninguno (ej. «Este mes»), los últimos 3 meses completos, como
+  // Calculadora y Metas. Fijos promedio y margen de contribución salen de los MISMOS meses.
+  const completeMonths = months.filter((_, i) => !parts[i].partial)
+  const fromPeriod = breakEvenFrom(completeMonths)
+  const useLast3 = fromPeriod.months.length === 0
+  const be = useLast3 ? breakEvenLastMonths(today()) : fromPeriod
+  const avgMonths = new Set(be.months)
+  const nAvg = be.months.length
   // Lo de cada categoría en esos mismos meses, así "Por mes" se calcula igual que "Fijos por mes".
   const catInAvg = new Map<string, number>()
-  for (const r of all<{ category: string; m: string; amount: number }>(
-    `SELECT category, substr(date, 1, 7) AS m, SUM(amount) AS amount FROM expenses WHERE date BETWEEN ? AND ? GROUP BY category, m`,
-    [from, to],
-  )) {
-    if (avgMonths.has(r.m)) catInAvg.set(r.category, (catInAvg.get(r.category) ?? 0) + (r.amount || 0))
+  if (nAvg) {
+    const first = `${be.months[0]}-01`
+    const last = endOfMonth(`${be.months[nAvg - 1]}-01`)
+    for (const r of all<{ category: string; m: string; amount: number }>(
+      `SELECT category, substr(date, 1, 7) AS m, SUM(amount) AS amount FROM expenses WHERE date BETWEEN ? AND ? GROUP BY category, m`,
+      [first, last],
+    )) {
+      if (avgMonths.has(r.m)) catInAvg.set(r.category, (catInAvg.get(r.category) ?? 0) + (r.amount || 0))
+    }
   }
   const by_category = expensesByCategory(from, to).map((c) => ({
     category: c.category,
@@ -512,20 +542,35 @@ export function expensesReport(from: string, to: string): Omit<ExpensesReport, '
     total: c.amount,
     count: c.count,
     share: safeDiv(c.amount, s.expenses),
-    monthly_avg: round2(safeDiv(catInAvg.get(c.category) ?? 0, forAvg.length)),
+    monthly_avg: round2(safeDiv(catInAvg.get(c.category) ?? 0, nAvg)),
   }))
-  const contribution = s.sales - s.cogs - s.fees - s.shrinkage - s.expenses_variable
-  const contribution_margin = safeDiv(contribution, s.sales)
   return {
     by_category,
     by_month,
     totals: { total: s.expenses, fixed: s.expenses_fixed, variable: s.expenses_variable, sales: s.sales },
-    fixed_avg,
-    months_for_avg: forAvg.length,
+    fixed_avg: be.fixed_avg,
+    months_for_avg: nAvg,
+    avg_months: be.months,
+    avg_basis: useLast3 ? 'last_3' : 'period',
+    avg_sales: be.sales_avg,
     variable_pct_of_sales: safeDiv(s.expenses_variable, s.sales),
-    contribution_margin,
-    break_even_monthly: contribution_margin > 0 ? round2(fixed_avg / contribution_margin) : null,
+    contribution_margin: be.contribution_margin ?? 0,
+    break_even_monthly: be.break_even,
   }
+}
+
+/** Texto de los meses del promedio para notas: "los 3 meses completos de jul 26 a sep 26 del período". */
+function avgWindowText(d: Pick<ExpensesReport, 'avg_months' | 'avg_basis' | 'months_for_avg'>): string {
+  if (!d.months_for_avg) return 'ningún mes completo'
+  const range = monthsRangeText(d.avg_months)
+  const n = d.months_for_avg === 1 ? 'el mes completo' : `los ${d.months_for_avg} meses completos`
+  return d.avg_basis === 'last_3' ? `${n} de ${range} (el período elegido no tiene meses completos)` : `${n} de ${range}`
+}
+
+/** "jul 26 a sep 26" / "sep 26" — los meses que se usaron para un promedio. */
+export function monthsRangeText(months: string[]): string {
+  if (!months.length) return ''
+  return months.length === 1 ? monthLabel(months[0]) : `${monthLabel(months[0])} a ${monthLabel(months[months.length - 1])}`
 }
 
 // ───────────────────────── Inflación ─────────────────────────
@@ -546,8 +591,10 @@ export interface InflationMonthRow {
   real_growth_vs_prev: number | null
   /** Crecimiento en pesos "de cada mes", contra el mes anterior (0..1). null en los mismos casos. */
   nominal_growth_vs_prev: number | null
-  /** Mes en curso (todavía no terminó: sus ventas están incompletas). */
+  /** Mes incompleto: el mes en curso o uno que el período toma solo en parte (sus ventas están incompletas). */
   partial: boolean
+  /** "en curso" / "15 al 28" ('' si está completo). */
+  partial_note: string
 }
 
 export interface InflationReport {
@@ -577,6 +624,7 @@ export function inflationReport(from: string, to: string): Omit<InflationReport,
   const lastIdx = raw.length ? raw[raw.length - 1] : 100
   const months: InflationMonthRow[] = series.map((m, i) => {
     const factor = lastIdx / raw[i]
+    const part = partOf(m)
     return {
       month: m.month,
       label: m.label,
@@ -587,7 +635,8 @@ export function inflationReport(from: string, to: string): Omit<InflationReport,
       sales_today_pesos: round2(m.sales * factor),
       real_growth_vs_prev: null,
       nominal_growth_vs_prev: null,
-      partial: isCurrentPartialMonth(m.month),
+      partial: part.partial,
+      partial_note: part.note,
     }
   })
   months.forEach((m, i) => {
@@ -603,8 +652,10 @@ export function inflationReport(from: string, to: string): Omit<InflationReport,
     .slice(1)
     .filter((m) => m.rate == null)
     .map((m) => m.month)
-  const missingPast = months.slice(1).filter((m) => m.rate == null && !m.partial).length
-  const missingCurrent = months.slice(1).some((m) => m.rate == null && m.partial)
+  // "Faltante del mes en curso" es normal (el INDEC la publica después); los demás faltan de verdad.
+  const running = (m: InflationMonthRow) => m.partial_note.includes('en curso')
+  const missingPast = months.slice(1).filter((m) => m.rate == null && !running(m)).length
+  const missingCurrent = months.slice(1).some((m) => m.rate == null && running(m))
   const base = months.length ? months[months.length - 1].month : null
   const totals = {
     sales: round2(months.reduce((s, m) => s + m.sales, 0)),
@@ -614,7 +665,7 @@ export function inflationReport(from: string, to: string): Omit<InflationReport,
     ? `Llevamos las ventas de cada mes a "pesos de ${monthLabelLong(base)}": multiplicamos cada mes por la inflación acumulada desde ese mes hasta ${monthLabelLong(base)}. ` +
       `Ejemplo: si después de un mes hubo dos meses de 10 %, sus ventas se multiplican por 1,1 × 1,1 = 1,21. ` +
       `Así se pueden comparar meses distintos sin que la inflación te engañe. Crecimiento real = (ventas del mes ÷ ventas del mes anterior) ÷ (1 + inflación del mes) − 1.` +
-      (months.some((m) => m.partial) && months.length > 1 ? ' El mes en curso no se compara con el anterior: todavía no terminó.' : '') +
+      (months.some((m) => m.partial) && months.length > 1 ? ' Los meses incompletos (el mes en curso o los que el período toma solo en parte) no se comparan con el anterior.' : '') +
       (missingPast
         ? ` Faltan cargar ${missingPast} ${missingPast === 1 ? 'mes' : 'meses'}${missingCurrent ? ' (más el mes en curso)' : ''}: mientras tanto se toman como 0 % y los montos ajustados quedan un poco bajos.`
         : missingCurrent
@@ -706,7 +757,9 @@ function colLetter(n: number): string {
   return s
 }
 
-const monthHeader = (m: string) => (isCurrentPartialMonth(m) ? `${monthLabel(m)} (en curso)` : monthLabel(m))
+/** Encabezado de un mes en el Excel: "feb 26 (15 al 28)" / "oct 26 (en curso)" si es parcial. */
+const monthHeader = (m: { month: string; partial: boolean; partial_note: string }) => (m.partial ? `${monthLabel(m.month)} (${m.partial_note})` : monthLabel(m.month))
+const monthLongWithNote = (m: { month: string; partial: boolean; partial_note: string }) => (m.partial ? `${monthLabelLong(m.month)} (${m.partial_note})` : monthLabelLong(m.month))
 const natureLabel = (n: string) => (n === 'fijo' ? 'Fijo' : 'Variable')
 const wineTypeLabel = (t: string) => WINE_TYPE_LABELS[t as WineType] ?? t
 
@@ -749,7 +802,7 @@ function writePnl(p: ReportPeriod): Writer {
     }))
     const columns: ExcelColumn<Row>[] = [
       { header: 'Concepto', key: 'concept', width: 36 },
-      ...ms.map((m) => ({ header: monthHeader(m.month), key: m.month, type: 'money' as const, width: 15 })),
+      ...ms.map((m) => ({ header: monthHeader(m), key: m.month, type: 'money' as const, width: 15 })),
       { header: 'Total del período', key: 'total', type: 'money', width: 18 },
     ]
     const ws = addSheet(wb, {
@@ -805,7 +858,7 @@ function writePnl(p: ReportPeriod): Writer {
       columns: [
         { header: 'Categoría', key: 'category', width: 34 },
         { header: 'Tipo', key: 'nature', value: (c) => natureLabel(c.nature), width: 10 },
-        ...ms.map((m) => ({ header: monthHeader(m.month), key: m.month, type: 'money' as const, width: 14, value: (c: CatRow) => c.months[m.month] ?? 0 })),
+        ...ms.map((m) => ({ header: monthHeader(m), key: m.month, type: 'money' as const, width: 14, value: (c: CatRow) => c.months[m.month] ?? 0 })),
         { header: 'Total', key: 'total', type: 'money', width: 16 },
       ],
       rows: d.expenses_by_category,
@@ -830,11 +883,12 @@ const PRODUCT_SHEETS: SheetInfo[] = [
   },
 ]
 
-const ABC_TEXT: Record<AbcClass | 'Q', string> = {
+const ABC_TEXT: Record<AbcClass | 'Q' | 'N', string> = {
   A: 'A · Los que más dejan',
   B: 'B · Aportan',
   C: 'C · Aportan poco',
   Q: 'Quieto · No se vendió',
+  N: 'Nuevo · Todavía sin ventas (menos de 90 días)',
 }
 
 function writeProducts(p: ReportPeriod): Writer {
@@ -849,12 +903,12 @@ function writeProducts(p: ReportPeriod): Writer {
         { header: 'Vino', key: 'name', width: 32 },
         { header: 'Bodega', key: 'winery', value: (r) => r.winery ?? '', width: 20 },
         { header: 'Tipo', key: 'wine_type', value: (r) => wineTypeLabel(r.wine_type), width: 12 },
-        { header: 'Clase', key: 'abc', value: (r) => (r.idle ? 'Quieto' : r.abc), width: 9 },
+        { header: 'Clase', key: 'abc', value: (r) => (r.idle ? (r.is_new ? 'Nuevo' : 'Quieto') : r.abc), width: 9 },
         { header: 'Botellas vendidas', key: 'bottles', type: 'int', width: 12 },
         { header: 'Ventas', key: 'revenue', type: 'money' },
         { header: 'Costo', key: 'cost', type: 'money' },
         { header: 'Ganancia bruta', key: 'profit', type: 'money' },
-        { header: 'Margen', key: 'margin', type: 'percent', total: false, width: 10, value: (r) => (r.bottles > 0 ? r.margin : null) },
+        { header: 'Margen bruto', key: 'margin', type: 'percent', total: false, width: 10, value: (r) => (r.bottles > 0 ? r.margin : null) },
         { header: '% de la ganancia', key: 'share', type: 'percent', total: false, width: 12, value: (r) => (r.idle ? null : r.share) },
         { header: '% acumulado', key: 'cumulative_share', type: 'percent', total: false, width: 12, value: (r) => (r.idle ? null : r.cumulative_share) },
         { header: 'Stock (botellas)', key: 'stock', type: 'int', width: 11 },
@@ -867,14 +921,14 @@ function writeProducts(p: ReportPeriod): Writer {
       notes: [
         'Ventas = cantidad × precio de cada renglón (sin repartir descuentos ni envíos de la venta). Ganancia bruta = ventas − costo de esas botellas. Margen = ganancia ÷ ventas.',
         `Clase ABC: ordenamos los vinos de mayor a menor ganancia y vamos sumando. A = los que juntos llegan al ${ABC_LIMITS.A * 100} % de la ganancia (el primero siempre es A). B = hasta el ${ABC_LIMITS.B * 100} %. C = el resto y los que no dejaron ganancia.`,
-        '"Quieto" = tiene stock pero no se vendió en el período: es plata parada en botellas (mirá la columna Stock valorizado).',
-        'Días de stock = stock actual ÷ botellas vendidas por día en los últimos 90 días (igual que en Vinos y stock). Vacío = no se vendió en 90 días.',
+        '"Quieto" = tiene stock pero no se vendió en el período: es plata parada en botellas (mirá la columna Stock valorizado). "Nuevo" = tampoco se vendió, pero está en el sistema hace menos de 90 días: todavía es pronto para decir que está parado.',
+        'Días de stock = stock actual ÷ botellas vendidas por día en los últimos 90 días, o en los días que lleva en el sistema si es más nuevo (igual que en Vinos y stock). Vacío = no se vendió en ese tiempo.',
         'Stock, costo por botella y días de stock son de hoy (no del período).',
       ],
     })
-    const classes: (AbcClass | 'Q')[] = ['A', 'B', 'C', 'Q']
+    const classes: (AbcClass | 'Q' | 'N')[] = ['A', 'B', 'C', 'Q', ...(rows.some((r) => r.idle && r.is_new) ? (['N'] as const) : [])]
     const summary = classes.map((k) => {
-      const rs = rows.filter((r) => (k === 'Q' ? r.idle : !r.idle && r.abc === k))
+      const rs = rows.filter((r) => (k === 'Q' ? r.idle && !r.is_new : k === 'N' ? r.idle && r.is_new : !r.idle && r.abc === k))
       const profit = rs.reduce((s, r) => s + r.profit, 0)
       return {
         clase: ABC_TEXT[k],
@@ -911,7 +965,7 @@ function writeProducts(p: ReportPeriod): Writer {
 const CHANNEL_SHEETS: SheetInfo[] = [
   {
     name: 'Canales de venta',
-    what: 'Ventas, ticket promedio, costo, comisiones y lo que te dejó cada canal (local, online, mayorista…).',
+    what: 'Ventas, ticket promedio, costo, comisiones y lo que te quedó de cada canal (local, online, mayorista…).',
     why: 'No todos los canales dejan lo mismo: uno puede vender mucho y dejar poco.',
   },
   {
@@ -943,12 +997,12 @@ function writeChannels(p: ReportPeriod): Writer {
         { header: 'Ticket promedio', key: 'avg_ticket', type: 'money', total: false },
         { header: 'Costo del vino', key: 'cost', type: 'money' },
         { header: 'Comisiones', key: 'fees', type: 'money' },
-        { header: 'Lo que te dejó', key: 'profit', type: 'money' },
-        { header: 'Margen', key: 'margin', type: 'percent', total: false, width: 10 },
+        { header: 'Te quedó (después de comisiones)', key: 'profit', type: 'money' },
+        { header: '% que te quedó', key: 'margin', type: 'percent', total: false, width: 10 },
       ],
       rows: d.channels,
       notes: [
-        '"Lo que te dejó" = ventas − costo del vino − comisiones de cobro de ese canal, antes de los gastos generales (alquiler, sueldos…). Margen = lo que te dejó ÷ ventas.',
+        '"Te quedó" = ventas − costo del vino − comisiones de cobro de ese canal, antes de los gastos generales (alquiler, sueldos…). % que te quedó = te quedó ÷ ventas.',
         'Ticket promedio = ventas ÷ cantidad de ventas: cuánto gasta en promedio cada cliente por compra en ese canal.',
       ],
     })
@@ -1032,12 +1086,12 @@ function writeClients(p: ReportPeriod): Writer {
         { header: 'Compras', key: 'count', type: 'int', width: 10 },
         { header: 'Botellas', key: 'bottles', type: 'int', width: 10 },
         { header: 'Ticket promedio', key: 'avg_ticket', type: 'money', total: false },
-        { header: 'Lo que te dejó', key: 'profit', type: 'money' },
+        { header: 'Te quedó (después de comisiones)', key: 'profit', type: 'money' },
         { header: 'Última compra', key: 'last_purchase', type: 'date', width: 13 },
       ],
       rows,
       notes: [
-        '"Lo que te dejó" = lo que compró − costo del vino − comisiones de cobro (antes de los gastos generales).',
+        '"Te quedó" = lo que compró − costo del vino − comisiones de cobro (antes de los gastos generales).',
         'Última compra: la más reciente en toda la historia (no solo en el período). Si hace mucho que no vuelve, es un buen momento para escribirle.',
         d.walk_in.count > 0
           ? `La última fila son las ventas sin cliente cargado (las de mostrador, "consumidor final" en el ticket): ${Math.round(d.walk_in.share * 100)} % de tus ventas. Si cargás aunque sea el nombre, vas a saber quién vuelve.`
@@ -1079,7 +1133,7 @@ function writeExpenses(p: ReportPeriod): Writer {
       ],
       rows: d.by_category,
       notes: [
-        `Promedio por mes = lo gastado en esa categoría en ${d.months_for_avg === 1 ? 'el mes' : `los ${d.months_for_avg} meses`}${d.months_for_avg < d.by_month.length ? ' completos (el mes en curso no cuenta: todavía pueden faltar gastos)' : ' del período'} ÷ ${d.months_for_avg}. Es el mismo criterio que "Gastos fijos promedio por mes".`,
+        `Promedio por mes = lo gastado en esa categoría en ${avgWindowText(d)} ÷ ${d.months_for_avg}. Es el mismo criterio que "Gastos fijos promedio por mes". Los meses incompletos no cuentan: medio mes daría un promedio falsamente bajo.`,
         'Comprar vino no es un gasto (es stock) y los retiros de los dueños tampoco: por eso no aparecen acá.',
       ],
     })
@@ -1089,7 +1143,7 @@ function writeExpenses(p: ReportPeriod): Writer {
       title: 'Gastos fijos y variables, mes a mes',
       subtitle: sub,
       columns: [
-        { header: 'Mes', key: 'label', value: (m) => (m.partial ? `${monthLabelLong(m.month)} (en curso)` : monthLabelLong(m.month)), width: 22 },
+        { header: 'Mes', key: 'label', value: (m) => monthLongWithNote(m), width: 26 },
         { header: 'Gastos fijos', key: 'fixed', type: 'money' },
         { header: 'Gastos variables', key: 'variable', type: 'money' },
         { header: 'Total gastos', key: 'total', type: 'money' },
@@ -1098,11 +1152,12 @@ function writeExpenses(p: ReportPeriod): Writer {
       ],
       rows: d.by_month,
       notes: [
-        `Gastos fijos promedio por mes: $ ${fmtNumber(d.fixed_avg)} (${d.months_for_avg} ${d.months_for_avg === 1 ? 'mes' : 'meses'}${d.by_month.some((m) => m.partial) && d.by_month.length > 1 ? ', sin contar el mes en curso' : ''}).`,
-        `Gastos variables = ${fmtPct(d.variable_pct_of_sales)} de las ventas. Margen de contribución = ${fmtPct(d.contribution_margin)}: de cada $ 100 vendidos, quedan $ ${Math.round(d.contribution_margin * 100)} para pagar los fijos (después del vino, comisiones, mermas y gastos variables).`,
+        `Gastos fijos promedio por mes: $ ${fmtNumber(d.fixed_avg)} (${avgWindowText(d)}).`,
+        `Gastos variables = ${fmtPct(d.variable_pct_of_sales)} de las ventas del período. Margen de contribución (${avgWindowText(d)}) = ${fmtPct(d.contribution_margin)}: de cada $ 100 vendidos, quedan $ ${Math.round(d.contribution_margin * 100)} para pagar los fijos (después del vino, comisiones, mermas y gastos variables).`,
         d.break_even_monthly != null
-          ? `Punto de equilibrio ≈ $ ${fmtNumber(d.break_even_monthly)} de ventas por mes (gastos fijos promedio ÷ margen de contribución). Vendiendo menos que eso, perdés plata.`
-          : 'Punto de equilibrio: con los márgenes de este período no se llega a cubrir los gastos fijos (el margen de contribución no es positivo).',
+          ? `Punto de equilibrio ≈ $ ${fmtNumber(d.break_even_monthly)} de ventas por mes (gastos fijos promedio ÷ margen de contribución, con los mismos meses). Vendiendo menos que eso, perdés plata. Es el mismo cálculo que la Calculadora y Metas (ellas usan siempre los últimos 3 meses completos).`
+          : 'Punto de equilibrio: no se puede calcular (faltan gastos fijos o ventas, o el margen de contribución no es positivo).',
+        'Meses marcados con días entre paréntesis (ej. "15 al 28") o "en curso": están incompletos y no entran en los promedios.',
       ],
     })
   }
@@ -1124,7 +1179,7 @@ function writeInflation(p: ReportPeriod): Writer {
       title: d.base_month ? `Ventas en pesos de ${monthLabelLong(d.base_month)}` : 'Ventas ajustadas por inflación',
       subtitle: periodSubtitle(p.from, p.to),
       columns: [
-        { header: 'Mes', key: 'label', value: (m) => (m.partial ? `${monthLabelLong(m.month)} (en curso)` : monthLabelLong(m.month)), width: 22 },
+        { header: 'Mes', key: 'label', value: (m) => monthLongWithNote(m), width: 26 },
         { header: 'Ventas (pesos de ese mes)', key: 'sales', type: 'money', width: 18 },
         { header: 'Inflación del mes', key: 'rate', type: 'percent', total: false, width: 12, value: (m) => (m.rate == null ? null : m.rate / 100) },
         { header: 'Índice de precios', key: 'index', type: 'number', total: false, width: 12 },

@@ -50,6 +50,7 @@ const OBJECT_KEYS = ['business', 'pricing', 'defaults', 'onboarding'] as const
 export function getSettings(): Settings {
   const s = defaultSettings() as unknown as Record<string, unknown>
   for (const row of all<{ key: string; value: string }>('SELECT key, value FROM settings')) {
+    if (row.key.startsWith('_')) continue // claves internas (ej. lo que había antes de cargar el ejemplo)
     try {
       const v = JSON.parse(row.value)
       if ((OBJECT_KEYS as readonly string[]).includes(row.key) && v && typeof v === 'object') {

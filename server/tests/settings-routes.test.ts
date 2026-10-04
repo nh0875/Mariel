@@ -261,6 +261,8 @@ describe('GET /system', () => {
 
 describe('Datos de ejemplo y borrar todo', () => {
   it('carga los datos de ejemplo, los marca y después borra todo dejando las cuentas base', async () => {
+    // Datos reales del negocio antes de probar el ejemplo.
+    await s.put('/settings', { business: { owner: 'Laura', phone: '11 4444-1234', address: '' }, usd_rate: 1200, usd_rate_date: '2026-01-10' })
     const r = await s.post('/demo/load')
     expect(r.status).toBe(200)
     expect(r.body.ok).toBe(true)
@@ -268,6 +270,9 @@ describe('Datos de ejemplo y borrar todo', () => {
     expect(scalar<number>('SELECT COUNT(*) FROM products')).toBeGreaterThan(10)
     const st = (await s.get('/settings')).body
     expect(st.onboarding).toEqual({ completed: true, demo_loaded: true })
+    expect(st.business).toMatchObject({ owner: 'Mariel', address: 'Av. Siempreviva 742, CABA', phone: '11 5555-0101' })
+    expect(st.usd_rate).toBe(1450)
+    expect(st._before_demo).toBeUndefined() // clave interna: no se muestra
 
     const sys = (await s.get('/system')).body
     expect(sys.counts.find((c: any) => c.table === 'sales').count).toBe(r.body.sales)
@@ -282,11 +287,32 @@ describe('Datos de ejemplo y borrar todo', () => {
     expect(scalar<number>('SELECT COUNT(*) FROM accounts')).toBe(3)
     const after = (await s.get('/settings')).body
     expect(after.business.name).toBe('Mi vinoteca')
+    // Los datos inventados del ejemplo no quedan: vuelven los de antes (no salen en los comprobantes reales).
+    expect(after.business).toMatchObject({ owner: 'Laura', phone: '11 4444-1234', address: '', email: '' })
+    expect(after.usd_rate).toBe(1200)
+    expect(after.usd_rate_date).toBe('2026-01-10')
     expect(after.onboarding).toEqual({ completed: true, demo_loaded: false })
     // Los medios de pago quedan apuntando a las cuentas nuevas
     const accounts = (await s.get('/system')).body.counts.find((c: any) => c.table === 'accounts').count
     expect(accounts).toBe(3)
     expect(after.payment_methods.every((m: any) => m.account_id != null)).toBe(true)
+  }, 120_000)
+
+  it('si después de cargar el ejemplo cambiaste un dato del negocio, borrar el ejemplo lo respeta', async () => {
+    await s.post('/demo/load')
+    await s.put('/settings', { business: { phone: '351 999-0000' } })
+    await s.post('/data/reset')
+    const after = (await s.get('/settings')).body
+    expect(after.business.phone).toBe('351 999-0000') // lo puso la persona
+    expect(after.business.owner).toBe('') // era del ejemplo
+    expect(after.usd_rate).toBe(0)
+    // Borrar todo con datos propios (no de ejemplo) no toca la configuración.
+    seedLittle()
+    await s.put('/settings', { business: { owner: 'Mariel' }, usd_rate: 1450 })
+    await s.post('/data/reset')
+    const own = (await s.get('/settings')).body
+    expect(own.business.owner).toBe('Mariel')
+    expect(own.usd_rate).toBe(1450)
   }, 120_000)
 
   it('con restart_onboarding vuelve a mostrar la bienvenida', async () => {

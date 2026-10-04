@@ -5,7 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRightLeft, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import { MANUAL_CASH_KINDS } from '@shared/constants'
-import { addDays } from '@shared/dates'
+import { addDays, today } from '@shared/dates'
 import { api } from '@/lib/api'
 import { date as fmtDate, dateShort, money } from '@/lib/format'
 import { usePeriod } from '@/lib/period'
@@ -97,11 +97,21 @@ export function MovementsTab({
     if (ok) remove.mutate(m.id)
   }
 
+  const todayStr = today()
   const columns: Column<MovementRow>[] = [
     {
       key: 'date',
       header: 'Fecha',
-      cell: (m) => <span className="whitespace-nowrap">{nb(dateShort(m.date))}</span>,
+      cell: (m) => (
+        <span className="whitespace-nowrap">
+          {nb(dateShort(m.date))}
+          {m.date > todayStr && (
+            <span className="block text-[11.5px] font-bold text-warn" title="Cargado con una fecha que todavía no llegó: el saldo de hoy no lo cuenta.">
+              programado
+            </span>
+          )}
+        </span>
+      ),
       className: 'w-[1%]',
       hideBelow: 'sm',
     },

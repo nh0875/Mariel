@@ -16,7 +16,7 @@
 import { all, get } from '../db'
 import { round2, safeDiv } from '../../shared/calc'
 import { SHRINKAGE_KINDS } from '../../shared/constants'
-import { monthLabel, monthsBetween, today } from '../../shared/dates'
+import { lastCompleteMonths, monthLabel, monthsBetween, today } from '../../shared/dates'
 import type { MonthlyPoint, PeriodSummary } from '../../shared/types'
 
 type Agg = Omit<PeriodSummary, 'from' | 'to'>
@@ -293,4 +293,51 @@ export function lowStock(): { id: number; name: string; stock: number; min_stock
   return all(
     `SELECT id, name, stock, min_stock, winery FROM products WHERE active = 1 AND stock <= min_stock ORDER BY (stock - min_stock), name`,
   )
+}
+
+/**
+ * Punto de equilibrio, calculado igual en Calculadora, Metas y Reportes:
+ *   gastos fijos promedio por mes ÷ margen de contribución,
+ * los dos sobre los MISMOS meses (completos y con movimiento). Margen de contribución = lo que queda
+ * de cada $ 1 vendido después del vino, las comisiones, las mermas y los gastos variables.
+ * `points` tiene que traer solo meses completos (ver monthPart); acá se descartan los vacíos.
+ */
+export interface BreakEvenBasis {
+  /** Meses usados ('YYYY-MM'), solo los que tuvieron ventas o gastos. */
+  months: string[]
+  fixed_avg: number
+  /** Ventas promedio por mes en esos meses. */
+  sales_avg: number
+  sales: number
+  /** Vino vendido + comisiones + mermas + gastos variables, en esos meses. */
+  variable_costs: number
+  /** (ventas − costos variables) ÷ ventas; null si no hubo ventas. */
+  contribution_margin: number | null
+  /** null si no hay gastos fijos, no hubo ventas o el margen no es positivo. */
+  break_even: number | null
+}
+
+export function breakEvenFrom(points: MonthlyPoint[]): BreakEvenBasis {
+  const active = points.filter((m) => m.sales > 0 || m.expenses > 0)
+  const n = active.length
+  const sales = active.reduce((s, m) => s + m.sales, 0)
+  const variable = active.reduce((s, m) => s + m.cogs + m.fees + m.shrinkage + m.expenses_variable, 0)
+  const fixed = active.reduce((s, m) => s + m.expenses_fixed, 0)
+  const fixed_avg = n ? round2(fixed / n) : 0
+  const contribution_margin = sales > 0 ? (sales - variable) / sales : null
+  return {
+    months: active.map((m) => m.month),
+    fixed_avg,
+    sales_avg: n ? round2(sales / n) : 0,
+    sales: round2(sales),
+    variable_costs: round2(variable),
+    contribution_margin,
+    break_even: fixed_avg > 0 && contribution_margin != null && contribution_margin > 0 ? round2(fixed_avg / contribution_margin) : null,
+  }
+}
+
+/** Punto de equilibrio con los últimos 3 meses completos (lo que usan Calculadora y Metas). */
+export function breakEvenLastMonths(ref: string = today(), n = 3): BreakEvenBasis & { from: string; to: string } {
+  const w = lastCompleteMonths(ref, n)
+  return { ...w, ...breakEvenFrom(monthlySeries(w.from, w.to)) }
 }

@@ -70,6 +70,8 @@ export function EquilibrioTab({ ctx, state, set, onReset }: { ctx: CalculatorCon
   const varPct = state.variablePct ?? 0
   const variableOther = price * (varPct / 100)
   const be = breakEven({ fixed_costs: fixed, avg_price: price, avg_variable_cost_per_bottle: variableCostPerBottle(price, cost, varPct) })
+  // Sin tocar nada: son los promedios reales (los mismos meses que usan Metas y Reportes).
+  const untouched = state.fixed === base.fixed && state.price === base.price && state.cost === base.cost && state.variablePct === base.variable_pct
   const months = monthsText(ctx.months_used)
   // Botellas por mes reales (sin redondear, para que "te quedan $ X" coincida con Reportes).
   const actual = !base.isExample ? base.bottles : null
@@ -194,7 +196,15 @@ export function EquilibrioTab({ ctx, state, set, onReset }: { ctx: CalculatorCon
             value={be.ok ? int(be.bottles) : '—'}
           />
           {be.ok && be.bottles > 0 && (
-            <TicketRow label="En pesos: ventas por mes" sub={`Gastos fijos ÷ margen de contribución (${pct(be.contribution_margin)})`} value={money(be.sales, { decimals: 0 })} />
+            <TicketRow
+              label="En pesos: ventas por mes"
+              sub={
+                untouched && !base.isExample
+                  ? `Gastos fijos ÷ margen de contribución (${pct(be.contribution_margin)}). Es la misma cuenta que Metas y Reportes con ${months} (puede diferir unos pesos por el redondeo de los números de arriba).`
+                  : `Gastos fijos ÷ margen de contribución (${pct(be.contribution_margin)})`
+              }
+              value={money(be.sales, { decimals: 0 })}
+            />
           )}
 
           {!be.ok && be.error && (

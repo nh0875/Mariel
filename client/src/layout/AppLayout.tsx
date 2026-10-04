@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import { NAV, TONE_VAR } from '@/lib/nav'
 import { useSettings } from '@/lib/queries'
 import { Loading } from '@/components/ui'
+import { ErrorBoundary } from './ErrorBoundary'
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
@@ -75,6 +76,7 @@ function QuickActions() {
           key={a.label}
           type="button"
           title={a.title}
+          data-nav-to={a.to}
           onClick={() => navigate(a.to)}
           className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line-strong bg-paper px-2.5 text-[14px] font-bold text-ink transition-colors hover:border-ink/30 sm:px-3"
         >
@@ -147,9 +149,12 @@ export function AppLayout() {
         </div>
         <DemoBanner />
         <main className="mx-auto w-full max-w-[1320px] px-4 pt-7 pb-16 sm:px-8">
-          <Suspense fallback={<Loading />}>
-            <Outlet />
-          </Suspense>
+          {/* Un error en una pantalla no se lleva puesto el menú; al cambiar de pantalla se recupera. */}
+          <ErrorBoundary inline resetKey={pathname}>
+            <Suspense fallback={<Loading />}>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
     </div>

@@ -34,7 +34,8 @@ function quadrants(rows: ProductReportRow[]) {
     medianMargin: mm,
     volumeLowMargin: enough ? sold.filter((r) => r.bottles >= mb && r.margin <= mm - GAP).sort((a, b) => b.bottles - a.bottles) : [],
     marginLowVolume: enough ? sold.filter((r) => r.bottles < mb && r.margin >= mm + GAP).sort((a, b) => b.margin - a.margin) : [],
-    idle: rows.filter((r) => r.idle).sort((a, b) => b.stock_value - a.stock_value),
+    // Los recién cargados (menos de 90 días) no son «plata parada»: todavía no hubo tiempo de venderlos.
+    idle: rows.filter((r) => r.idle && !r.is_new).sort((a, b) => b.stock_value - a.stock_value),
   }
 }
 
@@ -115,7 +116,8 @@ function ProductsContent({
   onNewSale: () => void
 }) {
   const sold = rows.filter((r) => !r.idle)
-  const filtered = filter === 'todos' ? rows : rows.filter((r) => (filter === 'Q' ? r.idle : !r.idle && r.abc === filter))
+  const filtered = filter === 'todos' ? rows : rows.filter((r) => (filter === 'Q' ? r.idle && !r.is_new : !r.idle && r.abc === filter))
+  const newIdle = rows.filter((r) => r.idle && r.is_new)
   // Los totales de abajo de la tabla son de lo que se está viendo (si filtrás la clase A, suman la clase A).
   const totals = useMemo(() => {
     const xs = filtered.filter((r) => !r.idle)
@@ -133,7 +135,7 @@ function ProductsContent({
     }
   }, [filtered])
   const classes = (['A', 'B', 'C', 'Q'] as const).map((k) => {
-    const rs = rows.filter((r) => (k === 'Q' ? r.idle : !r.idle && r.abc === k))
+    const rs = rows.filter((r) => (k === 'Q' ? r.idle && !r.is_new : !r.idle && r.abc === k))
     return {
       k,
       count: rs.length,
@@ -254,14 +256,14 @@ function ProductsContent({
     { key: 'cost', header: 'Costo', align: 'right', hideBelow: 'lg', cell: (r) => (r.idle ? '—' : money0(r.cost)), footer: totals.any ? money0(totals.cost) : '—' },
     {
       key: 'profit',
-      header: 'Ganancia',
+      header: 'Ganancia bruta',
       align: 'right',
       cell: (r) => (r.idle ? <span className="text-muted">—</span> : <Amount value={r.profit} className={clsx('font-bold', r.profit < 0 && 'text-bad')} />),
       footer: totals.any ? <Amount value={totals.profit} className={totals.profit < 0 ? 'text-bad' : undefined} /> : '—',
     },
     {
       key: 'margin',
-      header: 'Margen',
+      header: 'Margen bruto',
       align: 'right',
       hideBelow: 'sm',
       cell: (r) => (r.idle ? '—' : <span className={r.margin < 0 ? 'text-bad' : undefined}>{pct(r.margin, 0)}</span>),
@@ -277,7 +279,7 @@ function ProductsContent({
       value: (r) => (r.idle ? null : r.share),
       footer: totals.any ? pct(totals.share, 0) : '—',
     },
-    { key: 'abc', header: 'Clase', align: 'center', cell: (r) => <AbcBadge abc={r.abc} idle={r.idle} />, value: (r) => (r.idle ? 'D' : r.abc) },
+    { key: 'abc', header: 'Clase', align: 'center', cell: (r) => <AbcBadge abc={r.abc} idle={r.idle} isNew={r.idle && r.is_new} />, value: (r) => (r.idle ? (r.is_new ? 'E' : 'D') : r.abc) },
     {
       key: 'days_of_stock',
       header: 'Días de stock',
@@ -330,7 +332,9 @@ function ProductsContent({
                   <AbcBadge abc={c.k === 'Q' ? 'C' : c.k} idle={c.k === 'Q'} />
                   <span className="text-[1.45rem] leading-none font-extrabold text-ink">{plural(c.count, 'vino', 'vinos')}</span>
                   <span className="text-[12.5px] leading-snug text-ink-soft">
-                    {c.k === 'Q' ? (c.count ? `${compact(c.stock_value)} parados en stock` : 'Todos se vendieron') : `${info.short} · ${pct(c.share, 0)} de la ganancia`}
+                    {c.k === 'Q'
+                      ? `${c.count ? `${compact(c.stock_value)} parados en stock` : 'Todos se vendieron'}${newIdle.length ? ` (aparte, ${plural(newIdle.length, 'vino nuevo', 'vinos nuevos')} sin ventas todavía)` : ''}`
+                      : `${info.short} · ${pct(c.share, 0)} de la ganancia`}
                   </span>
                 </button>
               )

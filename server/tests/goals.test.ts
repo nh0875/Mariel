@@ -239,7 +239,24 @@ describe('GET /goals/export', () => {
     expect(ws.getCell('C6').value).toBe(10000)
     expect(ws.getCell('D6').value).toBe(8000)
     expect(ws.getCell('E6').value).toBeCloseTo(0.8, 6)
+    expect(ws.getCell('F6').value).toBe('No')
     expect(String(ws.getCell('A2').value)).toContain('Período: 01/01/2025 al 31/12/2025')
+  })
+
+  it('una meta que no se cumplió por poco no dice 100,0 %', async () => {
+    const p = wine()
+    sale('2025-03-02', p, 1, 4699)
+    await t.put('/goals/2025-03', { sales_target: 4700 }) // 99,98 %
+    sale('2025-04-02', p, 1, 4700)
+    await t.put('/goals/2025-04', { sales_target: 4700 }) // justo
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await (await t.raw('/goals/export?year=2025')).arrayBuffer())
+    const ws = wb.worksheets[0]
+    expect(ws.getCell('A7').value).toBe('Marzo 2025')
+    expect(ws.getCell('E7').value).toBe(0.999) // se ve "99,9 %"
+    expect(ws.getCell('F7').value).toBe('No')
+    expect(ws.getCell('E8').value).toBe(1)
+    expect(ws.getCell('F8').value).toBe('Sí')
   })
 
   it('los meses que todavía no empezaron van vacíos (no "0 %" de avance)', async () => {
@@ -253,24 +270,29 @@ describe('GET /goals/export', () => {
     expect(ws.getCell('C5').value).toBe(10000)
     expect(ws.getCell('D5').value).toBeNull() // ventas reales
     expect(ws.getCell('E5').value).toBeNull() // avance
-    expect(ws.getCell('J5').value).toBeNull() // uso del presupuesto
+    expect(ws.getCell('F5').value).toBeNull() // ¿cumplida?
+    expect(ws.getCell('K5').value).toBeNull() // uso del presupuesto
   })
 })
 
 describe('Sugerencia: la cuenta se puede verificar con la calculadora', () => {
-  it('el punto de equilibrio es exactamente gastos fijos ÷ el margen que se muestra', async () => {
+  it('el punto de equilibrio es gastos fijos ÷ margen de contribución, sin redondear (igual que Calculadora y Reportes)', async () => {
     const p = wine(1000, 1000)
     for (const m of ['2025-03', '2025-04', '2025-05']) {
       sale(`${m}-10`, p, 10, 3000) // ventas 30.000, vino 10.000
       expense(`${m}-05`, 9000, 'fijo')
       expense(`${m}-06`, 6300, 'variable')
     }
-    // Margen de contribución real 0,45666… → se muestra y se usa 0,457.
+    // Margen de contribución real 0,45666… → se usa entero; en el texto se muestra con 4 decimales.
     const r = await t.get('/goals/suggest?month=2025-06')
-    expect(r.body.contribution_margin).toBe(0.457)
-    expect(r.body.break_even_sales).toBe(Math.round((9000 / 0.457) * 100) / 100)
+    const cm = (90000 - 30000 - 18900) / 90000
+    expect(r.body.contribution_margin).toBeCloseTo(cm, 12)
+    expect(r.body.break_even_sales).toBe(Math.round((9000 / cm) * 100) / 100)
     const text = r.body.explanation.replace(/\u00a0/g, ' ')
-    expect(text).toContain('$ 9.000 ÷ 0,457 = $ 19.694')
+    expect(text).toContain('$ 9.000 ÷ 0,4567 = $ 19.708')
+    // Reportes con esos mismos 3 meses completos da exactamente lo mismo.
+    const rep = await t.get('/reports/expenses?from=2025-03-01&to=2025-05-31')
+    expect(rep.body.break_even_monthly).toBe(r.body.break_even_sales)
   })
 
   it('el año pasado + inflación se expresa en pesos del mes de la meta (no "de hoy")', async () => {

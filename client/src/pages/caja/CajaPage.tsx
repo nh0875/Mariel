@@ -131,7 +131,7 @@ function AccountCard({
         {nb(money(a.balance, { decimals: 0 }))}
       </p>
       <div className="border-t border-line pt-2 text-[12.5px] text-ink-soft">
-        <p className="vh-label mb-0.5">Este mes</p>
+        <p className="vh-label mb-0.5">Este mes, hasta hoy</p>
         <div className="flex flex-wrap gap-x-3 gap-y-0.5">
           <span className="inline-flex items-center gap-1">
             <ArrowDownLeft size={13} className="text-good" aria-hidden /> Entró <b className="vh-num text-ink">{nb(money(a.month_in, { decimals: 0 }))}</b>
@@ -140,6 +140,18 @@ function AccountCard({
             <ArrowUpRight size={13} className="text-bad" aria-hidden /> Salió <b className="vh-num text-ink">{nb(money(a.month_out, { decimals: 0 }))}</b>
           </span>
         </div>
+        {(a.month_scheduled_out > 0.5 || a.month_scheduled_in > 0.5) && (
+          <p className="mt-1 text-[12px] leading-snug text-muted" title="Movimientos ya cargados con una fecha que todavía no llegó: el saldo de hoy no los cuenta.">
+            Programado para lo que queda del mes:{' '}
+            {[
+              a.month_scheduled_out > 0.5 ? `sale ${nb(money(a.month_scheduled_out, { decimals: 0 }))}` : null,
+              a.month_scheduled_in > 0.5 ? `entra ${nb(money(a.month_scheduled_in, { decimals: 0 }))}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            .
+          </p>
+        )}
       </div>
     </div>
   )
@@ -209,6 +221,7 @@ export default function CajaPage() {
   const total = accounts.reduce((s, a) => s + a.balance, 0)
   const usdRate = settings?.usd_rate ?? 0
   const pending = pendingQ.data?.totals
+  const scheduledOut = pendingQ.data?.projection.out_breakdown.scheduled ?? 0
   // Recién empezás: ninguna cuenta tiene saldo inicial ni movimientos → te contamos cómo cargar lo que ya tenés.
   const fresh = accounts.length > 0 && accounts.every((a) => a.movements_count === 0 && Math.abs(a.initial_balance) < 0.005)
 
@@ -353,6 +366,12 @@ export default function CajaPage() {
                 <p className="mt-1 text-[13px] text-muted">
                   Incluye {nb(money(inactiveMoney, { decimals: 0 }))} que quedaron en {inactive.filter((a) => Math.abs(a.balance) > 0.004).map((a) => `«${a.name}»`).join(', ')} (desactivada). Si esa plata
                   ya no está ahí, reactivala y pasala a otra cuenta o hacele un arqueo.
+                </p>
+              )}
+              {scheduledOut > 0.5 && (
+                <p className="mt-1 text-[13px] text-muted">
+                  Todavía no descuenta {nb(money(scheduledOut, { decimals: 0 }))} de pagos programados para los próximos 30 días (ya cargados como pagados, con fecha más adelante): salen de la
+                  cuenta el día de su fecha. Están en «Por cobrar y por pagar».
                 </p>
               )}
               {pending && (pending.receivables > 0 || pending.payables > 0) && (

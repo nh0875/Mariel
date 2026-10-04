@@ -192,3 +192,56 @@ export function accountBalances(asOf: string = today()): AccountWithBalance[] {
 export function totalCash(asOf: string = today()): number {
   return round2(accountBalances(asOf).reduce((s, a) => s + a.balance, 0))
 }
+
+/**
+ * Movimiento ya cargado con fecha posterior a hoy ("programado"): por ejemplo, un gasto fijo del día
+ * 20 que se generó como pagado, o un cobro cargado para la semana que viene. El saldo de hoy todavía
+ * no lo cuenta (accountBalances suma hasta hoy), pero la plata va a salir/entrar ese día, así que las
+ * proyecciones de caja lo tienen que sumar aparte.
+ */
+export interface ScheduledPayment {
+  id: number
+  date: string
+  direction: 'in' | 'out'
+  amount: number
+  account_id: number
+  account_name: string
+  ref_type: PaymentRefType
+  ref_id: number | null
+  /** "Alquiler" / "Bodega Norte" / "Cliente: Juan" — para mostrar qué es. */
+  label: string
+}
+
+/**
+ * Movimientos programados: fecha > `ref` (y ≤ `until`, si se pasa). Sin transferencias: no cambian
+ * la plata total (sale de una cuenta y entra en otra).
+ */
+export function scheduledPayments(ref: string = today(), until?: string | null): ScheduledPayment[] {
+  return all<ScheduledPayment>(
+    `SELECT p.id, p.date, p.direction, p.amount, p.account_id, a.name AS account_name, p.ref_type, p.ref_id,
+       COALESCE(
+         CASE p.ref_type
+           WHEN 'expense' THEN (SELECT e.description FROM expenses e WHERE e.id = p.ref_id)
+           WHEN 'purchase' THEN (SELECT 'Compra a ' || COALESCE(s.name, 'proveedor') FROM purchases pu LEFT JOIN suppliers s ON s.id = pu.supplier_id WHERE pu.id = p.ref_id)
+           WHEN 'sale' THEN (SELECT 'Cobro de venta' || COALESCE(' a ' || c.name, '') FROM sales sa LEFT JOIN clients c ON c.id = sa.client_id WHERE sa.id = p.ref_id)
+           WHEN 'sale_fee' THEN 'Comisión de cobro'
+         END,
+         NULLIF(p.description, ''),
+         'Movimiento'
+       ) AS label
+     FROM payments p JOIN accounts a ON a.id = p.account_id
+     WHERE p.ref_type <> 'transfer' AND p.date > ? ${until ? 'AND p.date <= ?' : ''}
+     ORDER BY p.date, p.id`,
+    until ? [ref, until] : [ref],
+  ).map((r) => ({ ...r, amount: round2(r.amount) }))
+}
+
+/** Totales de lo programado (ver scheduledPayments). */
+export function scheduledTotals(ref: string = today(), until?: string | null): { in: number; out: number; count: number } {
+  const rows = scheduledPayments(ref, until)
+  return {
+    in: round2(rows.filter((r) => r.direction === 'in').reduce((s, r) => s + r.amount, 0)),
+    out: round2(rows.filter((r) => r.direction === 'out').reduce((s, r) => s + r.amount, 0)),
+    count: rows.length,
+  }
+}

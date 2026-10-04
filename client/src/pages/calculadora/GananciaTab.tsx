@@ -136,7 +136,7 @@ export function GananciaTab({ ctx, state, set, onReset }: { ctx: CalculatorConte
 
         <div className="mt-5 grid grid-cols-2 gap-2.5">
           <MiniStat
-            label="Margen"
+            label="Margen después de IIBB y comisión"
             info={
               <InfoTip title="Margen (después de IIBB y comisión)" text="Lo que te queda ÷ precio. Es el número del semáforo: de cada $ 100 que cobrás, cuántos quedan para gastos fijos y ganancia." />
             }

@@ -7,6 +7,7 @@ import type { OpenBottlesInput } from '@shared/schemas'
 import type { WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
 import { bottles as fmtBottles, money } from '@/lib/format'
+import { beforeAltaText, winesBeforeAlta } from '@/lib/alta'
 import { useApiMutation, useProducts } from '@/lib/queries'
 import { Button, DateInput, Field, IntInput, Modal, ProductSelect, TextInput } from '@/components/ui'
 import { nb } from './parts'
@@ -67,6 +68,15 @@ export function OpenBottlesModal({ open, event, onClose }: { open: boolean; even
     return null
   }
   const errors = rows.map(rowError)
+  // Aviso (no bloquea): fecha anterior al alta de algún vino elegido.
+  const beforeAlta = beforeAltaText(
+    winesBeforeAlta(
+      products,
+      rows.map((r) => r.productId),
+      date,
+    ),
+    'abiertas',
+  )
   const dateError = /^\d{4}-\d{2}-\d{2}$/.test(date) ? null : 'Elegí la fecha.'
   const hasErrors = errors.some(Boolean) || !!dateError
 
@@ -142,7 +152,20 @@ export function OpenBottlesModal({ open, event, onClose }: { open: boolean; even
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Fecha" required error={submitted && dateError} hint="Normalmente, el día del evento.">
+          <Field
+            label="Fecha"
+            required
+            error={submitted && dateError}
+            hint={
+              beforeAlta ? (
+                <span className="font-semibold text-warn" data-testid="before-alta">
+                  {beforeAlta}
+                </span>
+              ) : (
+                'Normalmente, el día del evento.'
+              )
+            }
+          >
             <DateInput value={date} onChange={setDate} aria-invalid={submitted && !!dateError} />
           </Field>
           <Field label="Nota" hint="Opcional. Ej: «Para la mesa de degustación».">

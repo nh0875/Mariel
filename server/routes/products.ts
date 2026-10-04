@@ -6,12 +6,11 @@
 //   (services/stock.ts). Acá solo se agregan movimientos (inicial, ajustes, cambio de costo).
 // - Un vino con ventas o compras no se borra (se perdería la historia): se desactiva.
 import express, { Router } from 'express'
-import ExcelJS from 'exceljs'
 import type { ZodIssue, ZodTypeAny, z } from 'zod'
 import { all, get, run, tx, withBools } from '../db'
 import { HttpError, notFound, parseId, parsePeriod, qn, qs, validate } from '../lib/http'
-import { addSheet, excelFilename, fmtDate, newWorkbook, periodSubtitle, readFirstSheet, sendWorkbook, sendWorkbookFile, type ExcelColumn } from '../lib/excel'
-import { addMovement, deleteMovement } from '../services/stock'
+import { addSheet, excelFilename, fmtDate, newWorkbook, periodSubtitle, readSheetRows, sendWorkbook, sendWorkbookFile, TooManyRowsError, type ExcelColumn } from '../lib/excel'
+import { addMovement, deleteMovement, movementOrderSql } from '../services/stock'
 import { getSettings } from '../services/settings'
 import { bulkPriceInput, costChangeInput, productInput, stockAdjustInput } from '../../shared/schemas'
 import {
@@ -24,7 +23,7 @@ import {
   type StockMovementKind,
   type WineType,
 } from '../../shared/constants'
-import { marginOnPrice, markupOnCost, reorderSuggestion, round2, roundUpTo } from '../../shared/calc'
+import { daysOfStock, marginOnPrice, markupOnCost, reorderSuggestion, round2, roundUpTo, salesWindowDays } from '../../shared/calc'
 import { addDays, addMonths, monthLabel, monthsBetween, startOfMonth, today } from '../../shared/dates'
 import type { Product, StockMovement } from '../../shared/types'
 
@@ -42,6 +41,14 @@ export interface ProductWithStats extends Product {
   margin_wholesale: number
   /** Botellas × costo promedio (0 si el stock es negativo). */
   stock_value: number
+  /** Día del alta del vino (movimiento «stock inicial»). Lo de antes ya está en ese stock inicial. */
+  alta_date: string | null
+  /** Primer movimiento de stock (alta o compra más vieja). */
+  first_date: string | null
+  /** Días con los que se mide el ritmo de venta: 90, o menos si el vino está hace menos en el sistema. */
+  rate_days: number
+  /** Está hace menos de 90 días: todavía no hay datos suficientes para decir que está «parado». */
+  is_new: boolean
 }
 
 export interface MovementRow extends StockMovement {
@@ -65,7 +72,8 @@ export interface MovementRow extends StockMovement {
 
 // ───────────────────────── Ayudas ─────────────────────────
 
-const DELETABLE_KINDS: StockMovementKind[] = [...MANUAL_STOCK_KINDS, 'revaluo']
+// 'devolucion': ya no se carga a mano, pero las viejas se pueden borrar.
+const DELETABLE_KINDS: StockMovementKind[] = [...MANUAL_STOCK_KINDS, 'devolucion', 'revaluo']
 const OUT_KINDS: StockMovementKind[] = ['rotura', 'degustacion', 'regalo', 'consumo']
 
 /** Desde cuándo cuenta "los últimos 90 días" (hoy incluido). */
@@ -179,31 +187,52 @@ function soldSince(from: string, productId?: number): Map<number, number> {
   return new Map(rows.map((r) => [r.product_id, r.q || 0]))
 }
 
-function decorate(p: Product, sold90: number): ProductWithStats {
-  const perDay = sold90 / 90
+type ProductDates = { alta: string | null; first: string | null }
+
+/** Alta (stock inicial) y primer movimiento de cada vino (o de uno solo). */
+function productDates(productId?: number): Map<number, ProductDates> {
+  return new Map(
+    all<{ product_id: number; alta: string | null; first: string | null }>(
+      `SELECT product_id, MIN(CASE WHEN kind = 'inicial' THEN date END) AS alta, MIN(date) AS first
+       FROM stock_movements ${productId ? 'WHERE product_id = ?' : ''} GROUP BY product_id`,
+      productId ? [productId] : [],
+    ).map((r) => [r.product_id, { alta: r.alta, first: r.first }]),
+  )
+}
+
+function decorate(p: Product, sold90: number, dates: ProductDates | undefined): ProductWithStats {
+  const t = today()
+  const first = dates?.first ?? null
+  // Un vino cargado hace 10 días se mide con esos 10 días, no con 90 (si no, parecería que no se vende).
+  const rateDays = salesWindowDays(first, t)
   return {
     ...p,
     sold_90d: sold90,
-    days_of_stock: sold90 > 0 ? Math.max(0, Math.round(p.stock / perDay)) : null,
+    days_of_stock: daysOfStock(p.stock, sold90, rateDays),
     margin_retail: marginOnPrice(p.price_retail, p.unit_cost),
     margin_wholesale: marginOnPrice(p.price_wholesale, p.unit_cost),
     stock_value: p.stock > 0 ? round2(p.stock * p.unit_cost) : 0,
+    alta_date: dates?.alta ?? null,
+    first_date: first,
+    rate_days: rateDays,
+    is_new: !!first && rateDays < 90,
   }
 }
 
 function listProducts(filter: { active?: boolean } = {}): ProductWithStats[] {
   const where = filter.active === undefined ? '' : `WHERE active = ${filter.active ? 1 : 0}`
   const sold = soldSince(since90())
+  const dates = productDates()
   return all(`SELECT * FROM products ${where}`)
     .map(toProduct)
     .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }) || a.id - b.id)
-    .map((p) => decorate(p, sold.get(p.id) ?? 0))
+    .map((p) => decorate(p, sold.get(p.id) ?? 0, dates.get(p.id)))
 }
 
 function loadProduct(id: number): ProductWithStats {
   const row = get('SELECT * FROM products WHERE id = ?', [id])
   if (!row) throw notFound('ese vino')
-  return decorate(toProduct(row), soldSince(since90(), id).get(id) ?? 0)
+  return decorate(toProduct(row), soldSince(since90(), id).get(id) ?? 0, productDates(id).get(id))
 }
 
 /** Cuánto conviene pedir de un vino (la regla vive en shared/calc.ts, igual que en la pantalla). */
@@ -289,7 +318,7 @@ function queryMovements(f: { productId?: number; from?: string; to?: string; kin
        pi.purchase_id, pu.invoice_number, sup.name AS supplier_name,
        e.id AS ev_id, e.name AS event_name
      FROM (
-       SELECT sm.*, SUM(sm.qty) OVER (PARTITION BY sm.product_id ORDER BY sm.date, sm.id ROWS UNBOUNDED PRECEDING) AS saldo
+       SELECT sm.*, SUM(sm.qty) OVER (PARTITION BY sm.product_id ORDER BY ${movementOrderSql('sm')} ROWS UNBOUNDED PRECEDING) AS saldo
        FROM stock_movements sm ${inner.length ? 'WHERE ' + inner.join(' AND ') : ''}
      ) m
      JOIN products p ON p.id = m.product_id
@@ -301,7 +330,7 @@ function queryMovements(f: { productId?: number; from?: string; to?: string; kin
      LEFT JOIN suppliers sup ON sup.id = pu.supplier_id
      LEFT JOIN events e ON e.id = (CASE WHEN m.ref_type = 'event' THEN m.ref_id ELSE s.event_id END)
      ${outer.length ? 'WHERE ' + outer.join(' AND ') : ''}
-     ORDER BY m.date ${dir}, m.id ${dir}
+     ORDER BY ${movementOrderSql('m', dir, { initialFirst: false })}
      ${f.limit ? `LIMIT ${Math.trunc(f.limit)}` : ''}`,
     [...innerParams, ...outerParams],
   )
@@ -590,7 +619,7 @@ router.get('/products/export', async (req, res) => {
         'Margen = (precio − costo) ÷ precio. Dice de cada $100 que cobrás cuántos te quedan después de pagar el vino.',
         'Markup = (precio − costo) ÷ costo. Es cuánto le sumaste al costo. Ojo: no son lo mismo. Un markup de 66,7 % es un margen de 40 %.',
         'Stock valorizado = botellas × costo promedio: la plata que tenés invertida en cada vino. La fila TOTAL suma todo tu stock.',
-        'Días de stock = stock ÷ (botellas vendidas en los últimos 90 días ÷ 90). Vacío = no se vendió en los últimos 90 días.',
+        'Días de stock = stock ÷ (botellas vendidas en los últimos 90 días ÷ 90). Si el vino está en el sistema hace menos de 90 días, se usan los días que lleva (si no, un vino nuevo parecería que no se vende). Vacío = no se vendió en ese tiempo.',
       ],
     },
     {
@@ -609,7 +638,7 @@ router.get('/products/export', async (req, res) => {
       ],
       rows: low,
       notes: [
-        'Sugerido: lo necesario para cubrir unos 45 días de venta (al ritmo de los últimos 90 días) o el doble del stock mínimo, lo que sea mayor, redondeado a cajas cerradas.',
+        'Sugerido: lo necesario para cubrir unos 45 días de venta (al ritmo de los últimos 90 días, o de los días que lleva si es nuevo) o el doble del stock mínimo, lo que sea mayor, redondeado a cajas cerradas.',
         'Costo estimado = sugerido × costo promedio actual. Es una referencia: la bodega puede haber aumentado.',
       ],
     },
@@ -760,52 +789,28 @@ router.get('/products/import-template', async (req, res) => {
   await sendWorkbookFile(res, excelFilename(withProducts ? 'mis-vinos-para-editar' : 'plantilla-vinos'), wb)
 })
 
-/**
- * Números de fila (1, 2, 3… como los ve el usuario en Excel) de las filas con datos de la primera hoja,
- * con el mismo criterio que readFirstSheet (fila 1 = encabezados; se saltean las filas vacías).
- */
-async function dataRowNumbers(buffer: Buffer): Promise<number[]> {
-  const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer)
-  const ws = wb.worksheets[0]
-  if (!ws) return []
-  const headers: string[] = []
-  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => {
-    headers[col] = String(cell.text ?? '').trim()
-  })
-  const out: number[] = []
-  ws.eachRow({ includeEmpty: false }, (row, n) => {
-    if (n <= 1) return
-    let hasValue = false
-    row.eachCell({ includeEmpty: true }, (cell, col) => {
-      if (!headers[col]) return
-      let v: unknown = cell.value
-      if (v && typeof v === 'object' && 'result' in (v as object)) v = (v as { result: unknown }).result
-      if (v && typeof v === 'object' && 'text' in (v as object)) v = (v as { text: unknown }).text
-      if (v && typeof v === 'object' && 'richText' in (v as object)) v = cell.text
-      if (v !== null && v !== undefined && v !== '') hasValue = true
-    })
-    if (hasValue) out.push(n)
-  })
-  return out
-}
+/** Máximo de filas por importación (una lista de 3.000 vinos pesa menos de 1 MB). */
+const IMPORT_MAX_ROWS = 3000
+const TOO_MANY_ROWS_MSG = 'Son demasiadas filas (más de 3.000). Dividí el archivo en partes.'
 
-router.post('/products/import', express.raw({ type: () => true, limit: '20mb' }), async (req, res) => {
+// 5 MB alcanzan de sobra para 3.000 vinos; un archivo más grande no se lee (no congela el programa).
+router.post('/products/import', express.raw({ type: () => true, limit: '5mb' }), async (req, res) => {
   const body = req.body as unknown
   if (!Buffer.isBuffer(body) || body.length === 0) throw new HttpError(400, 'No llegó ningún archivo. Elegí el Excel y probá de nuevo.')
   let rows: Record<string, unknown>[]
   let rowNumbers: number[] = []
   try {
-    rows = await readFirstSheet(body)
-    rowNumbers = await dataRowNumbers(body)
-  } catch {
+    // Se lee una sola vez, fila por fila, y se corta apenas pasa las 3.000 filas.
+    ;({ rows, rowNumbers } = await readSheetRows(body, { maxRows: IMPORT_MAX_ROWS }))
+  } catch (err) {
+    if (err instanceof TooManyRowsError) throw new HttpError(400, TOO_MANY_ROWS_MSG)
     throw new HttpError(
       400,
       'No pudimos leer el archivo. ¿Es un Excel (.xlsx)? Si es un .xls viejo o un .csv, abrilo en Excel y usá «Guardar como» → Libro de Excel (.xlsx).',
     )
   }
   if (rows.length === 0) throw new HttpError(400, 'El Excel está vacío: no encontramos vinos debajo de los encabezados.')
-  if (rows.length > 3000) throw new HttpError(400, 'Son demasiadas filas (más de 3.000). Dividí el archivo en partes.')
+  if (rows.length > IMPORT_MAX_ROWS) throw new HttpError(400, TOO_MANY_ROWS_MSG)
 
   // Qué columna es cada cosa (tolerante a mayúsculas, tildes y "($)").
   const headerMap = new Map<string, ImportField>()
@@ -1088,11 +1093,16 @@ router.delete('/products/:id', (req, res) => {
 
 // ───────────────────────── Stock: ajustes y costo ─────────────────────────
 
+/** Las devoluciones se cargan editando la venta (ver MANUAL_STOCK_KINDS). */
+export const RETURN_MSG =
+  'Las devoluciones de clientes se cargan desde la venta: abrila en «Ventas», tocá «Editar», sacá la botella devuelta (o bajá la cantidad) y guardá. Así vuelve al stock y se corrigen la venta y su ganancia; si le devolviste la plata, borrá o corregí el cobro en el detalle de la venta.'
+
 router.post('/products/:id/adjust', (req, res) => {
   const id = parseId(req.params.id, 'ese vino')
   const product = get<{ id: number; stock: number }>('SELECT id, stock FROM products WHERE id = ?', [id])
   if (!product) throw notFound('ese vino')
   const body: Record<string, unknown> = req.body && typeof req.body === 'object' ? { ...(req.body as Record<string, unknown>) } : {}
+  if (body.kind === 'devolucion') throw new HttpError(400, RETURN_MSG)
   // Conteo de inventario: si viene "counted" (botellas que contaste), la diferencia se calcula acá contra
   // lo que el sistema tenía AL FINAL DE ESA FECHA. Así un conteo cargado con fecha de hace unos días
   // no pisa las ventas que hubo después.
@@ -1222,6 +1232,7 @@ router.get('/stock/export', async (req, res) => {
     ventas: number
     mermas: number
     ajustes: number
+    devoluciones: number
     stock_end: number
   }>(
     `SELECT p.name, p.winery,
@@ -1229,14 +1240,15 @@ router.get('/stock/export', async (req, res) => {
        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? AND m.kind IN ('inicial','compra') THEN m.qty END), 0) AS entradas,
        COALESCE(-SUM(CASE WHEN m.date BETWEEN ? AND ? AND m.kind = 'venta' THEN m.qty END), 0) AS ventas,
        COALESCE(-SUM(CASE WHEN m.date BETWEEN ? AND ? AND m.kind IN (${kinds(OUT_KINDS)}) THEN m.qty END), 0) AS mermas,
-       COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? AND m.kind IN ('ajuste','devolucion') THEN m.qty END), 0) AS ajustes,
+       COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? AND m.kind = 'ajuste' THEN m.qty END), 0) AS ajustes,
+       COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? AND m.kind = 'devolucion' THEN m.qty END), 0) AS devoluciones,
        COALESCE(SUM(CASE WHEN m.date <= ? THEN m.qty END), 0) AS stock_end
      FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
      ${productId ? 'WHERE p.id = ?' : ''}
      GROUP BY p.id
      HAVING stock_start <> 0 OR stock_end <> 0 OR SUM(CASE WHEN m.date BETWEEN ? AND ? THEN 1 ELSE 0 END) > 0
      ORDER BY p.name COLLATE NOCASE`,
-    [from, from, to, from, to, from, to, from, to, to, ...(productId ? [productId] : []), from, to],
+    [from, from, to, from, to, from, to, from, to, from, to, to, ...(productId ? [productId] : []), from, to],
   )
   const productName = productId ? get<{ name: string }>('SELECT name FROM products WHERE id = ?', [productId])?.name : undefined
   await sendWorkbook(res, excelFilename(productName ? `movimientos-${productName}` : 'movimientos-de-stock'), [
@@ -1274,12 +1286,15 @@ router.get('/stock/export', async (req, res) => {
         { header: 'Entradas (compras y stock inicial)', key: 'entradas', type: 'int' },
         { header: 'Vendidas', key: 'ventas', type: 'int' },
         { header: 'Roturas, degustaciones, regalos y consumo', key: 'mermas', type: 'int' },
-        { header: 'Ajustes y devoluciones (±)', key: 'ajustes', type: 'int' },
+        { header: 'Ajustes por conteo (± faltantes y sobrantes)', key: 'ajustes', type: 'int' },
+        ...(summary.some((r) => r.devoluciones !== 0) ? [{ header: 'Devoluciones (cargas viejas)', key: 'devoluciones', type: 'int' as const }] : []),
         { header: 'Stock al final', key: 'stock_end', type: 'int' },
       ],
       rows: summary,
       notes: [
-        'Stock al inicio + entradas − vendidas − roturas/degustaciones/regalos/consumo ± ajustes y devoluciones = stock al final.',
+        `Stock al inicio + entradas − vendidas − roturas/degustaciones/regalos/consumo ± ajustes por conteo${summary.some((r) => r.devoluciones !== 0) ? ' + devoluciones' : ''} = stock al final.`,
+        'En el resultado, las roturas, degustaciones, regalos, consumo y los ajustes por conteo van a costo como «Mermas»: un faltante suma merma y un sobrante la resta. Así cierra: stock al inicio + compras − costo de lo vendido − mermas = stock al final (todo a costo).',
+        'Las devoluciones de clientes se cargan editando la venta (sale la botella de la venta y vuelve al stock); «Devoluciones» solo aparece si quedaron cargas viejas hechas a mano, que también cuentan en mermas.',
         'Sirve para controlar el inventario y para pasarle al contador.',
       ],
     },

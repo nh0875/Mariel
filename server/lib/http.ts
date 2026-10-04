@@ -165,7 +165,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return
   }
   if (err?.type === 'entity.too.large') {
-    res.status(413).json({ error: 'El archivo es demasiado grande.' })
+    res.status(413).json({ error: 'El archivo es demasiado grande. Revisá que sea el correcto (la lista de vinos pesa mucho menos: si tiene fotos u otras hojas, dejá solo la de los vinos).' })
     return
   }
   if (err?.type === 'entity.parse.failed') {

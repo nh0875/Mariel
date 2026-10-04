@@ -1,10 +1,11 @@
 // Datos de ejemplo: 14 meses de una vinoteca ficticia, para probar el sistema sin miedo.
 // Todo es inventado (bodegas, clientes, montos). Se genera siempre igual (semilla fija)
 // y usa los mismos servicios que la carga real, así los números cierran igual que en la vida real.
-import { all, run, tx } from '../db'
+import { all, get, run, tx } from '../db'
 import { addDays, addMonths, endOfMonth, monthKey, monthsBetween, parseISODate, startOfMonth, today as todayFn } from '../../shared/dates'
 import { round2, roundUpTo } from '../../shared/calc'
 import type { PaymentMethod, SaleChannel, WineType } from '../../shared/constants'
+import type { Settings } from '../../shared/types'
 import { ensureBaseData, wipeAllData } from '../services/setup'
 import { getSettings, updateSettings } from '../services/settings'
 import { addMovement } from '../services/stock'
@@ -110,6 +111,59 @@ const EVENTS = [
 // Inflación mensual de referencia (inventada, en el orden de los meses del período).
 const INFLATION_PATH = [2.1, 2.3, 2.0, 2.4, 2.7, 2.2, 2.0, 1.9, 2.3, 2.1, 1.8, 2.0, 2.2, 1.9]
 
+/** Datos del negocio inventados que pone la demo. */
+export const DEMO_BUSINESS = {
+  name: 'VINOH!',
+  tagline: 'Viví el vino',
+  owner: 'Mariel',
+  email: 'hola@vinoh.com.ar',
+  phone: '11 5555-0101',
+  address: 'Av. Siempreviva 742, CABA',
+} as const
+export const DEMO_USD_RATE = 1450
+
+/** Clave de settings donde queda lo que había antes de cargar el ejemplo. */
+const BEFORE_DEMO_KEY = '_before_demo' // con «_»: getSettings() no la muestra
+type BeforeDemo = { business: Settings['business']; usd_rate: number; usd_rate_date: string | null }
+
+function rememberSettingsBeforeDemo(before: Settings) {
+  // Si ya estaba el ejemplo cargado (se carga dos veces), lo guardado de antes sigue valiendo.
+  if (before.onboarding.demo_loaded && get('SELECT 1 FROM settings WHERE key = ?', [BEFORE_DEMO_KEY])) return
+  const value: BeforeDemo = { business: before.business, usd_rate: before.usd_rate, usd_rate_date: before.usd_rate_date }
+  run('INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [BEFORE_DEMO_KEY, JSON.stringify(value)])
+}
+
+/**
+ * Al borrar los datos de ejemplo: devuelve los datos del negocio y el dólar que había antes de
+ * cargarlo. Solo pisa lo que sigue igual al ejemplo (si la persona ya cambió, por ejemplo, el
+ * teléfono por el suyo, se respeta). Si no hay nada guardado (bases viejas), vacía los campos que
+ * siguen con los valores inventados.
+ */
+export function forgetDemoSettings() {
+  const s = getSettings()
+  const row = get<{ value: string }>('SELECT value FROM settings WHERE key = ?', [BEFORE_DEMO_KEY])
+  let prev: BeforeDemo | null = null
+  try {
+    prev = row ? (JSON.parse(row.value) as BeforeDemo) : null
+  } catch {
+    prev = null
+  }
+  const business = { ...s.business }
+  for (const k of Object.keys(DEMO_BUSINESS) as (keyof typeof DEMO_BUSINESS)[]) {
+    if (business[k] !== DEMO_BUSINESS[k]) continue
+    // name y tagline de la demo son los de la marca: si no había otros, quedan.
+    if (prev) business[k] = prev.business?.[k] ?? business[k]
+    else if (k !== 'name' && k !== 'tagline') business[k] = ''
+  }
+  const patch: Partial<Settings> = { business }
+  if (s.usd_rate === DEMO_USD_RATE) {
+    patch.usd_rate = prev ? prev.usd_rate : 0
+    patch.usd_rate_date = prev ? prev.usd_rate_date : null
+  }
+  updateSettings(patch)
+  run('DELETE FROM settings WHERE key = ?', [BEFORE_DEMO_KEY])
+}
+
 export function loadDemoData(ref: string = todayFn()): { sales: number; purchases: number; expenses: number } {
   const r = rng(20260104)
   const rand = (a: number, b: number) => a + r() * (b - a)
@@ -138,8 +192,11 @@ export function loadDemoData(ref: string = todayFn()): { sales: number; purchase
     }
   }
   const pf = (d: string) => priceFactor.get(monthKey(d)) ?? 1
+  // Precios «de cartel» como los pondría una persona (entrada redondeada a $ 500, presupuesto a $ 5.000).
+  const ticketPrice = (base: number, d: string) => Math.max(500, Math.round((base * pf(d)) / 500) * 500)
 
   let counts = { sales: 0, purchases: 0, expenses: 0 }
+  const before = getSettings()
 
   tx(() => {
     wipeAllData()
@@ -152,10 +209,13 @@ export function loadDemoData(ref: string = todayFn()): { sales: number; purchase
     run('UPDATE accounts SET initial_balance = ? WHERE id = ?', [4800000, banco])
     run('UPDATE accounts SET initial_balance = ? WHERE id = ?', [250000, mp])
 
+    // Los datos del negocio de la demo son inventados: guardamos los de antes para devolverlos al
+    // borrar el ejemplo (si no, la dirección y el teléfono falsos saldrían en los comprobantes reales).
+    rememberSettingsBeforeDemo(before)
     const s = getSettings()
     updateSettings({
-      business: { ...s.business, name: 'VINOH!', tagline: 'Viví el vino', owner: 'Mariel', email: 'hola@vinoh.com.ar', phone: '11 5555-0101', address: 'Av. Siempreviva 742, CABA' },
-      usd_rate: 1450,
+      business: { ...s.business, ...DEMO_BUSINESS },
+      usd_rate: DEMO_USD_RATE,
       usd_rate_date: ref,
       onboarding: { completed: true, demo_loaded: true },
     })
@@ -238,8 +298,8 @@ export function loadDemoData(ref: string = todayFn()): { sales: number; purchase
         e.kind,
         e.location,
         e.attendees,
-        e.ticket ? round2(e.ticket * pf(date)) : null,
-        round2(180000 * pf(date)),
+        e.ticket ? ticketPrice(e.ticket, date) : null,
+        Math.round((180000 * pf(date)) / 5000) * 5000,
         'Evento de ejemplo',
       ]).lastInsertRowid
       return { ...e, id, date }
@@ -430,7 +490,7 @@ export function loadDemoData(ref: string = todayFn()): { sales: number; purchase
         if (ev.ticket) {
           createSale({
             date: d, client_id: null, channel: 'eventos', price_list: 'minorista', payment_method: 'mercadopago',
-            items: [{ product_id: null, description: 'Entrada al evento', qty: ev.attendees, unit_price: round2(ev.ticket * f) }],
+            items: [{ product_id: null, description: 'Entrada al evento', qty: ev.attendees, unit_price: ticketPrice(ev.ticket, d) }],
             discount: 0, shipping: 0, fee: null, due_date: null, event_id: ev.id, notes: 'Entradas vendidas', paid: true, account_id: mp,
           })
           counts.sales++

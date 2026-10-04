@@ -2,16 +2,17 @@
 // tocás la categoría (ya sabe si es fijo o variable), escribís qué fue y cuánto, y decís si ya lo pagaste.
 // Abajo se explica en criollo qué va a pasar al guardar.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Banknote, ChevronDown, Clock, Repeat, TrendingDown, Waves, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, Banknote, ChevronDown, Clock, Repeat, TrendingDown, Waves, type LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
-import { today } from '@shared/dates'
-import type { ExpenseCategorySetting, WineEvent } from '@shared/types'
+import { endOfMonth, startOfMonth, today } from '@shared/dates'
+import type { ExpenseCategorySetting, ExpenseWithStatus, WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
 import { eventStartDate } from '@/lib/eventPreset'
 import { date as fmtDate, dateShort, monthName } from '@/lib/format'
 import { useLocalState } from '@/lib/hooks'
-import { useAccounts, useApiMutation, useEvents, useSettings } from '@/lib/queries'
+import { useAccounts, useApi, useApiMutation, useEvents, useSettings } from '@/lib/queries'
+import { SettlementModal } from '@/components/forms/SettlementModal'
 import {
   AccountSelect,
   Button,
@@ -190,6 +191,19 @@ export function ExpenseFormModal({
   }
   const hasErrors = Object.values(errors).some(Boolean)
   const err = (k: keyof typeof errors) => (showErrors ? errors[k] : undefined)
+
+  // ¿Ya hay un gasto de esta categoría en el mismo mes? (típico: el alquiler generado desde «Gastos
+  // fijos del mes» espera como «por pagar» y la persona entra por «Pagué algo» → se duplicaría).
+  const monthOk = /^\d{4}-\d{2}-\d{2}$/.test(f.date)
+  const sameMonthQ = useApi<ExpenseWithStatus[]>(
+    '/expenses',
+    monthOk ? { from: startOfMonth(f.date), to: endOfMonth(f.date), category } : undefined,
+    { enabled: open && !isEdit && !!category && monthOk },
+  )
+  const sameMonth = !isEdit && category ? (sameMonthQ.data ?? []) : []
+  const pendingSame = sameMonth.filter((e) => e.balance > 0.009)
+  const paidFixedSame = sameMonth.filter((e) => e.balance <= 0.009 && e.recurring_id != null)
+  const [settleTarget, setSettleTarget] = useState<ExpenseWithStatus | null>(null)
 
   // Candado para no mandar dos veces el mismo formulario (dos Enter seguidos llegan antes de que se vuelva a dibujar).
   const submitting = useRef(false)
@@ -399,6 +413,40 @@ export function ExpenseFormModal({
           </Field>
         </div>
 
+        {(pendingSame.length > 0 || paidFixedSame.length > 0) && (
+          <div className="rounded-2xl border border-warn/50 bg-warn-soft px-4 py-3 text-[14px] text-ink" data-testid="duplicate-warning">
+            <p className="flex items-start gap-2 font-bold">
+              <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+              {pendingSame.length > 0
+                ? `Ojo: en ${monthName(f.date.slice(0, 7))} ya tenés ${pendingSame.length === 1 ? 'un gasto' : `${pendingSame.length} gastos`} de «${category}» esperando como «por pagar».`
+                : `Ojo: en ${monthName(f.date.slice(0, 7))} ya está cargado ${paidFixedSame.length === 1 ? 'un gasto fijo' : `${paidFixedSame.length} gastos fijos`} de «${category}».`}
+            </p>
+            <ul className="mt-2 space-y-2">
+              {pendingSame.map((e) => (
+                <li key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pl-6">
+                  <span className="min-w-0 flex-1">
+                    <b>{e.description}</b> · {money(e.balance)} {e.paid > 0.009 ? `(falta pagar, de ${money(e.amount)})` : ''} · {dateShort(e.date)}
+                    {e.recurring_id != null ? ' · se generó de tus gastos fijos' : ''}
+                  </span>
+                  <Button size="sm" variant="secondary" icon={Banknote} onClick={() => setSettleTarget(e)}>
+                    Registrar el pago de ese
+                  </Button>
+                </li>
+              ))}
+              {paidFixedSame.map((e) => (
+                <li key={e.id} className="pl-6">
+                  <b>{e.description}</b> · {money(e.amount)} · {dateShort(e.date)} · figura pagado (se generó de tus gastos fijos)
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 pl-6 text-[13px] text-ink-soft">
+              {pendingSame.length > 0
+                ? 'Si es ese mismo, no cargues otro (el gasto quedaría dos veces y el resultado bajaría de más): tocá «Registrar el pago de ese». Si es un gasto distinto, seguí cargando.'
+                : 'Si es el mismo pago, no hace falta cargarlo de nuevo (quedaría dos veces). Si es un gasto distinto, seguí cargando.'}
+            </p>
+          </div>
+        )}
+
         <div>
           <div className="mb-1.5 flex items-center gap-1.5">
             <span className="text-[14px] font-bold text-ink">¿Es fijo o variable?</span>
@@ -508,6 +556,21 @@ export function ExpenseFormModal({
         {/* Enter en cualquier campo guarda */}
         <button type="submit" hidden aria-hidden tabIndex={-1} />
       </form>
+      {settleTarget && (
+        <SettlementModal
+          kind="expense"
+          id={settleTarget.id}
+          balance={settleTarget.balance}
+          description={`${settleTarget.description} · ${fmtDate(settleTarget.date)}`}
+          defaultAccountId={f.accountId}
+          open
+          onClose={() => setSettleTarget(null)}
+          onDone={() => {
+            setSettleTarget(null)
+            onClose()
+          }}
+        />
+      )}
     </Modal>
   )
 }

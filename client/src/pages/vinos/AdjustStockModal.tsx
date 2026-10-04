@@ -2,6 +2,7 @@
 // El usuario elige qué pasó (en palabras simples) y cuántas botellas; el signo lo pone el sistema.
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { ClipboardCheck, Gift, GlassWater, Coffee, Undo2, Bomb } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import type { ManualStockKind } from '@shared/constants'
 import { today } from '@shared/dates'
 import { api } from '@/lib/api'
@@ -17,7 +18,6 @@ const OPTIONS: ChoiceOption<ManualStockKind>[] = [
   { value: 'degustacion', title: 'La abrí para degustar', description: 'Para que la prueben clientes (es costo de promoción).', icon: GlassWater },
   { value: 'regalo', title: 'La regalé / muestra', description: 'Regalo, sorteo, canje o muestra para un cliente.', icon: Gift },
   { value: 'consumo', title: 'Consumo interno', description: 'La tomaron ustedes o se usó para el negocio.', icon: Coffee },
-  { value: 'devolucion', title: 'Me la devolvió un cliente', description: 'Vuelve al stock, a costo promedio.', icon: Undo2 },
 ]
 
 const NOTE_PLACEHOLDER: Record<ManualStockKind, string> = {
@@ -26,7 +26,6 @@ const NOTE_PLACEHOLDER: Record<ManualStockKind, string> = {
   degustacion: 'Ej: degustación del sábado en el local',
   regalo: 'Ej: regalo de cumpleaños a cliente',
   consumo: 'Ej: cena del equipo',
-  devolucion: 'Ej: el cliente la cambió por otra',
 }
 
 export function AdjustStockModal({ product, open, onClose, minDate }: { product: ProductRow; open: boolean; onClose: () => void; minDate?: string | null }) {
@@ -119,8 +118,10 @@ export function AdjustStockModal({ product, open, onClose, minDate }: { product:
     ) : (
       <p>
         El sistema dice <b className="text-ink">{int(systemStock)}</b> {sysWhen} y contaste <b className="text-ink">{int(counted)}</b>: sobran <b className="text-ink">{bottles(diff)}</b>. Se suman al
-        stock, valorizadas al costo promedio ({money(cost)}).
+        stock, valorizadas al costo promedio ({money(cost)}). Es un <b className="text-ink">sobrante</b>: botellas que tenías y el sistema no sabía. En Reportes resta de las mermas (son{' '}
+        {money(diff * cost)} a costo que aparecieron), así que el resultado sube esa plata.
         {isPast && systemStock !== stock && <> El stock de hoy pasa de {int(stock)} a {int(stock + diff)}.</>}
+        {' '}Si la botella sobra porque un cliente te la devolvió, no la cargues acá: corregí esa venta.
       </p>
     )
   } else if (isOut && n > 0 && !error) {
@@ -128,13 +129,6 @@ export function AdjustStockModal({ product, open, onClose, minDate }: { product:
       <p>
         Salen <b className="text-ink">{bottles(n)}</b> y el stock queda en <b className="text-ink">{int(stock - n)}</b>. A costo son <b className="text-ink">{money(n * cost)}</b>: se cuentan en
         Reportes como «Mermas, degustaciones y regalos» (son costo aunque no sean ventas).
-      </p>
-    )
-  } else if (kind === 'devolucion' && n > 0) {
-    impact = (
-      <p>
-        Vuelven <b className="text-ink">{bottles(n)}</b> al stock (queda en {int(stock + n)}). Ojo: esto <b className="text-ink">no devuelve plata</b>. Si se anuló la venta entera, mejor editá o borrá
-        la venta en «Ventas», así se corrige también la caja.
       </p>
     )
   }
@@ -162,6 +156,16 @@ export function AdjustStockModal({ product, open, onClose, minDate }: { product:
           <p className="mb-2 text-[14px] font-bold text-ink">¿Qué pasó?</p>
           <ChoiceCards options={OPTIONS} value={kind} onChange={setKind} columns={2} />
           <p className="mt-2 text-[13px] text-muted">Las ventas y las compras no se cargan acá: el stock se mueve solo cuando las cargás en «Ventas» o «Compras de vino».</p>
+          <p className="mt-2 flex items-start gap-2 rounded-xl bg-sky-soft/70 px-3 py-2 text-[13.5px] text-ink">
+            <Undo2 size={16} className="mt-0.5 shrink-0 text-sky-deep" aria-hidden />
+            <span>
+              <b>¿Te devolvieron una botella?</b> Eso se carga en la venta: abrila en{' '}
+              <Link to="/ventas" className="font-bold text-sky-deep hover:underline" onClick={onClose}>
+                Ventas
+              </Link>
+              , tocá «Editar», sacá la botella (o bajá la cantidad) y guardá. Así vuelve al stock y se corrigen la venta y la ganancia; si le devolviste la plata, corregí también el cobro.
+            </span>
+          </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

@@ -21,6 +21,12 @@ export const WRITE_HEADERS: Record<string, string> = { 'X-VINOH': '1' }
 const NO_CONNECTION =
   'No hay conexión con el sistema. ¿Está abierta la ventana negra del programa? Si la cerraste, volvé a abrir VINOH!.'
 
+/** Mensaje cuando el servidor no mandó uno propio (ej. el programa se cerró y el proxy contesta 502). */
+function fallbackError(status: number): string {
+  if (status === 502 || status === 503 || status === 504) return NO_CONNECTION
+  return `Algo salió mal (código ${status}). Probá de nuevo; si sigue pasando, cerrá y volvé a abrir VINOH!.`
+}
+
 export type QueryParams = Record<string, string | number | boolean | null | undefined>
 
 function toQuery(params?: QueryParams): string {
@@ -62,8 +68,7 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
     }
   }
   if (!res.ok) {
-    const msg =
-      data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : `Error ${res.status}`
+    const msg = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : fallbackError(res.status)
     throw new ApiError(res.status, msg, (data as { details?: unknown })?.details)
   }
   return data as T
@@ -88,7 +93,7 @@ export const api = {
       throw new ApiError(0, NO_CONNECTION)
     }
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new ApiError(res.status, data?.error || `Error ${res.status}`, data?.details)
+    if (!res.ok) throw new ApiError(res.status, data?.error || fallbackError(res.status), data?.details)
     return data as T
   },
 }

@@ -232,7 +232,7 @@ describe('Alertas', () => {
     expect(week.text).toContain('Bodega Norte')
     // Caja en 0 y 10.500 por pagar → no alcanza.
     const cash = find(r.body.alerts, 'la caja no alcanza')
-    expect(cash).toMatchObject({ tone: 'bad', link: '/caja' })
+    expect(cash).toMatchObject({ tone: 'bad', link: '/caja?tab=pendientes' })
     expect(cash.text).toContain('$ 10.500')
   })
 
@@ -340,6 +340,10 @@ describe('Meta del mes y frases', () => {
     expect(ins.length).toBeGreaterThanOrEqual(2)
     expect(ins.length).toBeLessThanOrEqual(5)
     expect(ins.some((x) => x.includes('Tu vino estrella: Malbec Clásico (8 botellas'))).toBe(true)
+    // La parte se calcula sobre todo lo facturado en vinos (16.000 de 19.000), no "de tus 6 vinos top".
+    const star = ins.find((x) => x.includes('Tu vino estrella'))!
+    expect(star).toContain('84 % de lo que facturaste en vinos')
+    expect(star).not.toContain('vinos top')
     expect(ins.some((x) => x.startsWith('Vendiste 90 % más que el mes anterior'))).toBe(true)
     expect(ins.some((x) => x.includes('de tus ventas vino de «Local / Tienda»'))).toBe(true)
   })
@@ -422,6 +426,19 @@ describe('Comparación honesta', () => {
     expect(d2.cash.scheduled).toEqual({ out: 0, in: 0 })
     // El 25/03 ese pago ya salió de la caja: la diferencia de saldo es exactamente ese gasto.
     expect(Math.round((d.cash.total - d2.cash.total) * 100) / 100).toBe(7000)
+  })
+
+  it('la alerta de caja a 30 días y la de «esta semana» cuentan los pagos programados (generar los fijos no la hace desaparecer)', () => {
+    const malbec = wine('Malbec', 100, 1000)
+    sale('2025-03-02', malbec, 5, 2000) // 10.000 cobrados en efectivo → hay 10.000 en caja
+    expense('2025-03-14', 15000, 'fijo') // pagado, con débito el 14/03 (en 4 días)
+    const d = buildDashboard({ from: '2025-03-01', to: '2025-03-31' }, '2025-03-10')
+    expect(d.cash.total).toBe(10000)
+    const cash = d.alerts.find((a) => a.title.includes('la caja no alcanza'))!
+    expect(cash).toBeTruthy()
+    expect(cash.text.replace(/\u00a0/g, ' ')).toContain('$ 15.000 de pagos programados')
+    const week = d.alerts.find((a) => a.title.includes('pagos programados'))!
+    expect(week.title.replace(/\u00a0/g, ' ')).toBe('Esta semana salen $ 15.000 en pagos programados')
   })
 })
 

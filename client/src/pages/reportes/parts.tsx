@@ -143,15 +143,16 @@ export function Insights({ items, title = 'Lo que vemos en tus números', classN
 
 // ───────────────────────── Clase ABC ─────────────────────────
 
-export const ABC_INFO: Record<AbcClass | 'Q', { label: string; tone: 'good' | 'mustard' | 'neutral' | 'coral'; short: string }> = {
+export const ABC_INFO: Record<AbcClass | 'Q' | 'N', { label: string; tone: 'good' | 'mustard' | 'neutral' | 'coral'; short: string }> = {
   A: { label: 'A', tone: 'good', short: 'Los que más dejan' },
   B: { label: 'B', tone: 'mustard', short: 'Aportan' },
   C: { label: 'C', tone: 'neutral', short: 'Aportan poco' },
   Q: { label: 'Quieto', tone: 'coral', short: 'No se vendió' },
+  N: { label: 'Nuevo', tone: 'neutral', short: 'Lo cargaste hace menos de 90 días: todavía es pronto para decir que está parado' },
 }
 
-export function AbcBadge({ abc, idle }: { abc: AbcClass; idle?: boolean }) {
-  const k = idle ? 'Q' : abc
+export function AbcBadge({ abc, idle, isNew }: { abc: AbcClass; idle?: boolean; isNew?: boolean }) {
+  const k = idle ? (isNew ? 'N' : 'Q') : abc
   const info = ABC_INFO[k]
   return (
     <Badge tone={info.tone} className="min-w-[2rem] justify-center">

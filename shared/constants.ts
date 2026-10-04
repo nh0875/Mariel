@@ -114,7 +114,7 @@ export const EVENT_KIND_LABELS: Record<EventKind, string> = {
 /**
  * Tipos de movimiento de stock.
  * - Entradas con costo propio: inicial, compra.
- * - Entradas al costo promedio: ajuste (+), devolucion.
+ * - Entradas al costo promedio: ajuste (+), devolucion (solo datos viejos: ver MANUAL_STOCK_KINDS).
  * - Salidas (al costo promedio del momento): venta, ajuste (−), rotura, degustacion, regalo, consumo.
  * - revaluo: no mueve botellas, fija un costo nuevo desde esa fecha.
  */
@@ -140,14 +140,24 @@ export const STOCK_MOVEMENT_LABELS: Record<StockMovementKind, string> = {
   degustacion: 'Degustación (botella abierta)',
   regalo: 'Regalo / Muestra',
   consumo: 'Consumo interno',
-  devolucion: 'Devolución de cliente',
+  devolucion: 'Devolución de cliente (carga vieja)',
   revaluo: 'Cambio de costo',
 }
-/** Movimientos que el usuario puede cargar a mano desde "Ajustar stock". */
-export const MANUAL_STOCK_KINDS = ['ajuste', 'rotura', 'degustacion', 'regalo', 'consumo', 'devolucion'] as const
+/**
+ * Movimientos que el usuario puede cargar a mano desde "Ajustar stock".
+ * 'devolucion' ya no se carga a mano: una devolución se registra EDITANDO LA VENTA (se saca la
+ * botella), así vuelve al stock y también se corrigen la venta, su costo y, si hubo reintegro, la
+ * caja. El tipo queda solo para movimientos viejos (se pueden ver y borrar).
+ */
+export const MANUAL_STOCK_KINDS = ['ajuste', 'rotura', 'degustacion', 'regalo', 'consumo'] as const
 export type ManualStockKind = (typeof MANUAL_STOCK_KINDS)[number]
-/** Salidas de stock que NO son ventas: se informan como "Mermas, degustaciones y regalos". */
-export const SHRINKAGE_KINDS: StockMovementKind[] = ['ajuste', 'rotura', 'degustacion', 'regalo', 'consumo']
+/**
+ * Movimientos de stock que NO son ventas ni compras y van al resultado como "Mermas, degustaciones y
+ * regalos" (a costo). Las salidas suman merma; las entradas (un sobrante al contar, o una
+ * "devolución" vieja cargada a mano) restan merma: son botellas que aparecieron, una ganancia a costo.
+ * Así siempre cierra: stock al inicio + compras − costo de lo vendido − mermas = stock al final.
+ */
+export const SHRINKAGE_KINDS: StockMovementKind[] = ['ajuste', 'rotura', 'degustacion', 'regalo', 'consumo', 'devolucion']
 
 export const EXPENSE_NATURES = ['fijo', 'variable'] as const
 export type ExpenseNature = (typeof EXPENSE_NATURES)[number]

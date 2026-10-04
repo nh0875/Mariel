@@ -111,7 +111,9 @@ function PeriodNumbers({ d }: { d: DashboardResponse }) {
     s.sales <= 0 || !p100
       ? net < 0
         ? `Todavía no hay ventas en este período y ya hay ${money0(s.expenses + s.fees + s.shrinkage)} de gastos.`
-        : 'Todavía no hay ventas en este período.'
+        : net > 0.004 && s.shrinkage < 0
+          ? `Todavía no hay ventas: el resultado viene de botellas que aparecieron al contar el stock (${money0(-s.shrinkage)} a su costo). Mirá «Así se armó tu resultado».`
+          : 'Todavía no hay ventas en este período.'
       : net >= 0
         ? `Ganaste ${money0(net)}: de cada $ 100 que vendiste te quedaron $ ${p100.net} limpios.`
         : `Perdiste ${money0(-net)}: por cada $ 100 que vendiste se fueron $ ${100 + p100.net} entre el vino y los gastos.`
@@ -238,10 +240,12 @@ function MoneyToday({ d }: { d: DashboardResponse }) {
           hint={
             <>
               {accounts.length ? accounts.map((a) => `${a.name.replace(/\s*\(.*\)$/, '')} ${compact(a.balance)}`).join(' · ') : 'Todavía no hay cuentas.'}
-              {d.cash.scheduled.out > 0.5 && (
+              {(d.cash.scheduled.out > 0.5 || d.cash.scheduled.in > 0.5) && (
                 <span className="mt-1 block">
-                  Todavía no descuenta {money0(d.cash.scheduled.out)} de pagos cargados con fecha más adelante (por ejemplo, gastos fijos marcados como pagados): salen de la
-                  cuenta el día de su fecha.
+                  No incluye {d.cash.scheduled.out > 0.5 ? `${money0(d.cash.scheduled.out)} de pagos programados` : ''}
+                  {d.cash.scheduled.out > 0.5 && d.cash.scheduled.in > 0.5 ? ' ni ' : ''}
+                  {d.cash.scheduled.in > 0.5 ? `${money0(d.cash.scheduled.in)} de cobros programados` : ''} para más adelante (ya cargados con su fecha, como gastos fijos
+                  marcados como pagados). Con ellos quedaría en {money0(d.cash.total - d.cash.scheduled.out + d.cash.scheduled.in)}.
                 </span>
               )}
             </>
@@ -364,7 +368,7 @@ function Charts({ d }: { d: DashboardResponse }) {
               { key: 'sales', header: 'Ventas', align: 'right', format: moneyFmt },
               { key: 'share', header: '% del total', align: 'right', format: (v) => pct(Number(v), 0) },
               { key: 'count', header: 'Cantidad', align: 'right' },
-              { key: 'profit', header: 'Lo que te dejó', align: 'right', format: moneyFmt },
+              { key: 'profit', header: 'Te quedó', align: 'right', format: moneyFmt },
             ],
             rows: d.by_channel.map((c) => ({ ...c, share: safeDiv(c.sales, channelTotal) })),
           }}
@@ -372,7 +376,7 @@ function Charts({ d }: { d: DashboardResponse }) {
           <DonutChart data={d.by_channel.map((c) => ({ label: c.label, value: c.sales }))} />
           {d.by_channel.length > 0 && (
             <p className="mt-3 px-1 text-[13px] text-ink-soft">
-              «Lo que te dejó» cada canal (ventas − vino − comisiones) está en <b>Ver tabla</b>. Un canal puede vender mucho y dejar poco.
+              Lo que «te quedó» de cada canal (ventas − vino − comisiones) está en <b>Ver tabla</b>. Un canal puede vender mucho y dejar poco.
             </p>
           )}
         </ChartCard>
@@ -385,7 +389,7 @@ function Charts({ d }: { d: DashboardResponse }) {
               { key: 'bottles', header: 'Botellas', align: 'right' },
               { key: 'revenue', header: 'Facturado', align: 'right', format: moneyFmt },
               { key: 'profit', header: 'Ganancia bruta', align: 'right', format: moneyFmt },
-              { key: 'margin', header: 'Margen', align: 'right', format: (v) => pct(Number(v)) },
+              { key: 'margin', header: 'Margen bruto', align: 'right', format: (v) => pct(Number(v)) },
             ],
             rows: d.top_products as unknown as Record<string, unknown>[],
           }}

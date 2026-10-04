@@ -42,7 +42,7 @@ const saleStatusText = (s: SaleWithStatus) => (s.status === 'pagado' ? 'Cobrada'
 /** Primer nombre para saludar por WhatsApp ("Ana Pérez" → "Ana"; un restó se saluda entero). */
 const greetName = (name: string, kind: string) => (kind === 'consumidor' ? name.split(/\s+/)[0] : name)
 
-type Settle = { id: number; balance: number; description: string; account: number | null }
+type Settle = { id: number; balance: number; description: string; account: number | null; sale: { payment_method: string; total: number; fee: number; paid: number } }
 
 export default function ClienteDetailPage() {
   const { id: idParam } = useParams()
@@ -122,7 +122,8 @@ export default function ClienteDetailPage() {
     })
     if (ok) remove.mutate()
   }
-  const openSettle = (s: SaleWithStatus) => setSettle({ id: s.id, balance: s.balance, description: `Venta #${s.id} · ${c.name}`, account: accountFor(s.payment_method) })
+  const openSettle = (s: SaleWithStatus) =>
+    setSettle({ id: s.id, balance: s.balance, description: `Venta #${s.id} · ${c.name}`, account: accountFor(s.payment_method), sale: { payment_method: s.payment_method, total: s.total, fee: s.fee, paid: s.paid } })
 
   const saleCols: Column<SaleWithStatus>[] = [
     {
@@ -507,6 +508,7 @@ export default function ClienteDetailPage() {
           balance={settle.balance}
           description={settle.description}
           defaultAccountId={settle.account}
+          sale={settle.sale}
           onClose={() => setSettle(null)}
         />
       )}

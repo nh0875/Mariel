@@ -191,11 +191,14 @@ if (!fs.existsSync(distIndex) || fs.statSync(distIndex).mtimeMs < sourcesNewest)
   }
 }
 
-// 5) Arrancar (el servidor abre el navegador cuando está listo, una sola vez)
-say('🚀  Abriendo VINOH! en tu navegador…')
+// 5) Arrancar (el servidor abre el navegador cuando está listo, una sola vez).
+//    VINOH_OPEN_BROWSER=0 lo arranca sin abrir el navegador (pruebas, otra compu en la red local…).
+const openIt = process.env.VINOH_OPEN_BROWSER !== '0'
+say(openIt ? '🚀  Abriendo VINOH! en tu navegador…' : '🚀  Arrancando VINOH!…')
 const tsxCli = path.join(nodeModules, 'tsx', 'dist', 'cli.mjs')
+const env = { ...process.env, VINOH_OPEN_BROWSER: openIt ? '1' : '0' }
 const child = fs.existsSync(tsxCli)
-  ? spawn(process.execPath, [tsxCli, 'server/index.ts'], { stdio: 'inherit', env: { ...process.env, VINOH_OPEN_BROWSER: '1' } })
-  : spawn(isWin ? 'npx.cmd' : 'npx', ['tsx', 'server/index.ts'], { stdio: 'inherit', shell: isWin, env: { ...process.env, VINOH_OPEN_BROWSER: '1' } })
+  ? spawn(process.execPath, [tsxCli, 'server/index.ts'], { stdio: 'inherit', env })
+  : spawn(isWin ? 'npx.cmd' : 'npx', ['tsx', 'server/index.ts'], { stdio: 'inherit', shell: isWin, env })
 child.on('exit', (code) => process.exit(code ?? 0))
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig))

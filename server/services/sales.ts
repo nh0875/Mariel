@@ -11,7 +11,7 @@ import type { saleInput } from '../../shared/schemas'
 import type { SaleDetail, SaleWithStatus } from '../../shared/types'
 import { HttpError } from '../lib/http'
 import { addMovement, removeMovementsByRef } from './stock'
-import { addPayment, defaultAccountId, deletePaymentsByRef, paidFor, paymentsFor, syncSaleFees } from './payments'
+import { addPayment, addSettlement, defaultAccountId, deletePaymentsByRef, paidFor, paymentsFor, syncSaleFees } from './payments'
 import { feePctFor } from './settings'
 
 export type SaleData = z.output<typeof saleInput>
@@ -113,6 +113,31 @@ export function updateSale(id: number, data: SaleData) {
       deletePaymentsByRef('sale', id)
     }
     syncSaleFees(id)
+  })
+}
+
+/**
+ * Registra un cobro de una venta. Si viene `payment_method` distinto del de la venta y la venta todavía
+ * no tenía cobros, la venta pasa a ese medio y su comisión se recalcula con el % de ese medio (salvo que
+ * la comisión se hubiera puesto a mano). Ej: venta "a cuenta" cargada en efectivo que al final te pagan
+ * por Mercado Pago → se descuenta la comisión de MP. Con cobros previos no se cambia nada (la comisión
+ * es una sola por venta; si cambió el medio, se edita la venta).
+ * Devuelve si cambió el medio de pago.
+ */
+export function collectSale(id: number, s: { date: string; amount: number; account_id: number; description?: string | null; payment_method?: string | null }): { method_changed: boolean } {
+  return tx(() => {
+    const sale = get<{ total: number; fee: number; payment_method: string }>('SELECT total, fee, payment_method FROM sales WHERE id = ?', [id])
+    if (!sale) throw new HttpError(404, 'No encontramos esa venta.')
+    let changed = false
+    if (s.payment_method && s.payment_method !== sale.payment_method && paidFor('sale', id) <= 0.009) {
+      const autoOld = round2((sale.total * feePctFor(sale.payment_method)) / 100)
+      const feeWasAuto = Math.abs(sale.fee - autoOld) < 0.01
+      const fee = feeWasAuto ? round2((sale.total * feePctFor(s.payment_method)) / 100) : sale.fee
+      run('UPDATE sales SET payment_method = ?, fee = ? WHERE id = ?', [s.payment_method, fee, id])
+      changed = true
+    }
+    addSettlement('sale', id, { date: s.date, amount: s.amount, account_id: s.account_id, description: s.description ?? null })
+    return { method_changed: changed }
   })
 }
 

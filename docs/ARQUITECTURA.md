@@ -13,7 +13,7 @@ Decisiones y su porqué:
 | **Node.js + SQLite (`node:sqlite`)** | Un solo archivo de datos (`data/vinoh.db`), nada que compilar al instalar (viene con Node ≥ 22.13), funciona igual en Windows, Mac y Linux. |
 | **Express (API) + React/Vite (pantallas)** | Separación clara: la API calcula y valida, la interfaz muestra. |
 | **Lanzador de doble clic** (`INICIAR-VINOH-*.bat/.command`) | Los usuarios no son de sistemas: un clic instala lo necesario la primera vez, compila la interfaz si cambió y abre el navegador. |
-| **Copias de seguridad automáticas diarias** (`data/backups/`, últimas 30) | Un archivo local se puede borrar o romper; con esto siempre hay vuelta atrás. |
+| **Copias de seguridad automáticas diarias** (`data/backups/`: al arrancar y cada hora se revisa si ya hay la de hoy; 30 automáticas + 30 a mano/de seguridad, con cupos separados) | Un archivo local se puede borrar o romper; con esto siempre hay vuelta atrás. Restaurar revisa la copia (integridad, tablas, versión) antes de tocar nada y vuelve sola a la anterior si algo falla. |
 | **Todo en pesos, montos finales (con impuestos)** | Es lo que la gente ve en el ticket/factura. El dólar es solo referencia (Configuración). |
 | **Criterio devengado para el resultado, percibido para la caja** | Es lo correcto contablemente y se explica en Ayuda ("Resultado ≠ Caja"). |
 | **Costo promedio ponderado con recálculo histórico** | Método estándar para comercios (y aceptado por ARCA). Si se carga algo con fecha vieja o se edita, se recalcula todo el vino en orden y los números cierran. |
@@ -25,13 +25,13 @@ Decisiones y su porqué:
 client/            Interfaz (React + Vite + Tailwind v4)
   src/components/ui/      Kit de componentes (usar SIEMPRE estos)
   src/components/charts/  Gráficos (Recharts con estilo de la marca)
-  src/lib/                api.ts, queries.ts, format.ts, glossary.ts, period.tsx, nav.ts, hooks.ts, eventPreset.ts
+  src/lib/                api.ts, queries.ts, format.ts, glossary.ts, period.tsx, nav.ts, hooks.ts, eventPreset.ts, alta.ts, leaveGuard.ts
   src/pages/<modulo>/     Una carpeta por pantalla
   src/layout/             Menú lateral, barra superior
 server/            API (Express 5 + node:sqlite)
   db.ts                   Conexión, migraciones, helpers all/get/run/scalar/tx
-  lib/                    http.ts (errores/validación), excel.ts (exportar), backup.ts
-  services/               Lógica de negocio central (stock, pagos, ventas, compras, gastos, finanzas)
+  lib/                    http.ts (errores/validación), excel.ts (exportar/leer), backup.ts, guard.ts (solo localhost + X-VINOH)
+  services/               Lógica de negocio central (stock, pagos, ventas, compras, gastos, finanzas, cashProjection)
   routes/<modulo>.ts      Rutas de cada módulo (cada router define sus paths completos bajo /api)
   seed/demo.ts            Datos de ejemplo
   tests/                  Tests (vitest)
@@ -44,24 +44,28 @@ Comandos: `npm run dev` (API + Vite con recarga), `npm run build`, `npm start`, 
 
 ## 3. Modelo contable (el corazón)
 
-- **Stock** = suma de `stock_movements`. Tipos: `inicial`, `compra` (entran con su costo), `venta`, `rotura`, `degustacion`, `regalo`, `consumo`, `ajuste` (±), `devolucion` (+, al promedio), `revaluo` (fija costo, qty 0). Nunca escribir `products.stock` o `products.unit_cost` a mano: usar `services/stock.ts` (`addMovement`, `removeMovementsByRef`, `recalcProduct`).
+- **Stock** = suma de `stock_movements`. Tipos: `inicial`, `compra` (entran con su costo), `venta`, `rotura`, `degustacion`, `regalo`, `consumo`, `ajuste` (±), `devolucion` (+, al promedio; **ya no se carga a mano**: una devolución se registra editando la venta; el tipo queda para datos viejos), `revaluo` (fija costo, qty 0). Nunca escribir `products.stock` o `products.unit_cost` a mano: usar `services/stock.ts` (`addMovement`, `removeMovementsByRef`, `recalcProduct`). Orden de la historia de un vino (`movementOrderSql`, el mismo para el costo promedio y para el «saldo» de la ficha y los Excel): el alta primero, después por fecha y, dentro del mismo día, primero lo que entra y después lo que sale.
 - **Costo de lo vendido (CMV)** = Σ `sale_items.qty × sale_items.unit_cost`; `unit_cost` lo mantiene el recálculo de stock.
-- **Mermas** = salidas no-venta (`SHRINKAGE_KINDS`) valorizadas al costo.
-- **Caja** = tabla `payments` (in/out por cuenta). El saldo de una cuenta (`accountBalances(asOf = hoy)`) suma lo movido **hasta hoy**: un pago cargado con fecha futura (ej. un gasto fijo del día 20 marcado como pagado) sale de la caja ese día. Cobros de ventas (`ref_type='sale'`), pagos de compras/gastos, comisiones automáticas (`sale_fee`, proporcionales a cada cobro), transferencias (`transfer`, dos patas con `transfer_id`) y movimientos manuales (aporte, retiro, préstamos, ajuste…).
+- **Mermas** = movimientos no-venta (`SHRINKAGE_KINDS`: ajuste, rotura, degustación, regalo, consumo y las devoluciones viejas) valorizados al costo. Las salidas suman merma; las entradas (un **sobrante** al contar) la restan. Así siempre cierra: stock al inicio + compras − CMV − mermas = stock al final.
+- **Caja** = tabla `payments` (in/out por cuenta). El saldo de una cuenta (`accountBalances(asOf = hoy)`) suma lo movido **hasta hoy**: un pago cargado con fecha futura (ej. un gasto fijo del día 20 marcado como pagado) sale de la caja ese día. Esos movimientos son **programados** (`scheduledPayments(ref, until)`): su documento figura pagado, pero la proyección de caja a 30 días (`services/cashProjection.ts`, la usan Caja e Inicio), la alerta «la caja no alcanza», la de «esta semana» y las tarjetas de cuentas los muestran aparte. Cobros de ventas (`ref_type='sale'`), pagos de compras/gastos, comisiones automáticas (`sale_fee`, proporcionales a cada cobro), transferencias (`transfer`, dos patas con `transfer_id`) y movimientos manuales (aporte, retiro, préstamos, ajuste…).
 - **Estado de cobro/pago** se deriva: `paid = Σ payments`, `balance = total − paid`, `status ∈ pagado|parcial|pendiente`, `overdue` si hay `due_date` vencida.
 - **Resultado** (`services/finance.ts → periodSummary`): `Ventas − CMV − Comisiones − Mermas − Gastos`. Comprar vino NO es gasto.
-- Servicios listos para usar: `createSale/updateSale/deleteSale/listSales/getSaleDetail`, `createPurchase/...`, `createExpense/...`, `generateRecurringForMonth`, `addSettlement`, `deletePayment`, `addTransfer`, `accountBalances`, `periodSummary`, `monthlySeries`, `stockValue`, `receivables`, `payables`, `salesByProduct`, `salesByChannel`, `expensesByCategory`, `lowStock`.
+- **Vocabulario** (igual en todas las pantallas y Excel): *Ganancia bruta* = ventas − CMV; *Margen bruto* = ganancia bruta ÷ ventas; *Te quedó* = ventas − CMV − comisiones (Ventas, detalle de venta, Eventos, Canales, Clientes, «¿De dónde vienen las ventas?» de Inicio y sus Excel; nunca «te dejó»); *Margen después de IIBB y comisión* = el de la Calculadora.
+- **Punto de equilibrio** (`finance.breakEvenFrom` / `breakEvenLastMonths`): gastos fijos promedio ÷ margen de contribución, los dos sobre los **mismos meses completos**. Calculadora y Metas usan los últimos 3 meses completos; Reportes, los meses completos del período elegido (si no hay ninguno, los últimos 3, y lo dice). Los meses parciales (recortados por el período o en curso: `shared/dates → monthPart`) se rotulan («feb 26 (15 al 28)», «en curso») y no entran en promedios.
+- **Ritmo de venta de un vino**: vendidas en los últimos 90 días ÷ 90, o ÷ los días que lleva en el sistema si es más nuevo (`shared/calc → salesWindowDays`). Un vino con menos de 90 días (`is_new`) no se marca como «quieto / plata parada».
+- Servicios listos para usar: `createSale/updateSale/deleteSale/collectSale/listSales/getSaleDetail`, `pendingLists/projection` (cashProjection), `scheduledPayments/scheduledTotals`, `breakEvenFrom/breakEvenLastMonths`, `createPurchase/...`, `createExpense/...`, `generateRecurringForMonth`, `addSettlement`, `deletePayment`, `addTransfer`, `accountBalances`, `periodSummary`, `monthlySeries`, `stockValue`, `receivables`, `payables`, `salesByProduct`, `salesByChannel`, `expensesByCategory`, `lowStock`.
 
 ## 4. Convenciones de la API
 
-- Todo bajo `/api`. JSON. Fechas `YYYY-MM-DD`. Plata como número en pesos.
+- Todo bajo `/api`. JSON. Fechas `YYYY-MM-DD` (que existan: usar el esquema `date` de `shared/schemas.ts`). Plata como número en pesos.
+- **Seguridad local** (`server/lib/guard.ts`): solo se atienden pedidos con `Host` localhost/127.0.0.1/[::1] (403 si no), y todo lo que no sea GET/HEAD tiene que traer `X-VINOH: 1` (403 si no; los OPTIONS se rechazan). `client/src/lib/api.ts` y `server/tests/helpers.ts` lo mandan solos; cualquier script que escriba en la API tiene que agregarlo.
 - Validar el body con los esquemas de `shared/schemas.ts` usando `validate(schema, req.body)` (tira 400 con mensaje en castellano).
 - Errores: `throw new HttpError(status, 'mensaje para el usuario')` / `notFound('el vino')`. El manejador global responde `{ error }`.
 - Filtros de período: `parsePeriod(req)` → `{from, to}` (default: mes actual). Query helpers `qs(req,'x')`, `qn(req,'x')`.
 - Crear (`POST`) devuelve el registro creado (incluye `id`). Editar (`PUT`) devuelve el registro actualizado. Borrar (`DELETE`) devuelve `{ ok: true }`.
 - Si algo tiene movimientos y no se puede borrar → 409 con sugerencia de desactivar.
 - Excel: `sendWorkbook(res, excelFilename('ventas'), [{ name, title, subtitle: periodSubtitle(from,to), columns, rows, notes }])`. Columnas tipadas (`money`, `int`, `percent`, `date`, `text`); fila de totales automática; agregar `notes` explicando cómo leer la planilla.
-- Subidas de archivos (Excel/backup): el cliente manda el binario crudo (`api.upload`); en la ruta usar `express.raw({ type: () => true, limit: '50mb' })`.
+- Subidas de archivos (Excel/backup): el cliente manda el binario crudo (`api.upload`); en la ruta usar `express.raw({ type: () => true, limit })` con un límite acorde (importar vinos: 5 MB). Para leer un Excel subido usar `readSheetRows(buffer, { maxRows })` de `lib/excel.ts` (lee en streaming y corta apenas se pasa del máximo).
 - Archivos de ruta: `server/routes/<modulo>.ts` exporta `default` un `Router()`; ya están registrados en `routes/index.ts`.
 
 ### Endpoints por módulo
@@ -72,7 +76,8 @@ Reglas comunes: los listados de ventas, compras y gastos aceptan `from`/`to` **o
 - `GET /products?active=1|0` → `ProductWithStats[]` = `Product` + `sold_90d`, `days_of_stock` (null si no vendió), `margin_retail`, `margin_wholesale` (0..1), `stock_value`.
 - `GET /products/:id` → `{ product, movements (últimos 300, con saldo), stats, monthly (12 meses) }`. `stats`: `sold_total, revenue_total, cost_total, profit_total, sold_90d, days_of_stock, last_sale_date, last_purchase_date, last_purchase_cost, last_purchase_supplier, shrinkage_bottles, shrinkage_cost, reorder_suggestion, first_movement_date`.
 - `POST /products` (`productInput`; crea el movimiento `inicial` con `initial_stock` y `unit_cost`) · `PUT /products/:id` (mezcla con lo guardado) · `DELETE /products/:id` (409 si tiene ventas/compras o movimientos: sugerir desactivar).
-- `POST /products/:id/adjust` (`stockAdjustInput`; con `kind:'ajuste'` acepta `counted` = botellas contadas ese día y calcula la diferencia contra el stock **a esa fecha**) · `GET /products/:id/stock-at?date` → `{ date, stock }` · `POST /products/:id/cost` (`costChangeInput`). Ajustes y cambios de costo con fecha anterior al primer movimiento del vino → 400. Devuelven el `Product`.
+- `GET /products` también trae `alta_date` (día del stock inicial), `first_date`, `rate_days` (días con que se mide el ritmo de venta) e `is_new` (< 90 días).
+- `POST /products/:id/adjust` (`stockAdjustInput`; con `kind:'ajuste'` acepta `counted` = botellas contadas ese día y calcula la diferencia contra el stock **a esa fecha**; `kind:'devolucion'` → 400 explicando que se corrige la venta) · `GET /products/:id/stock-at?date` → `{ date, stock }` · `POST /products/:id/cost` (`costChangeInput`). Ajustes y cambios de costo con fecha anterior al primer movimiento del vino → 400. Devuelven el `Product`.
 - `GET /stock/movements?from&to&product_id&kind` → `MovementRow[]` · `DELETE /stock/movements/:id` (solo manuales; los de ventas/compras se cambian desde su documento).
 - `POST /products/bulk-price[?preview=1]` (`bulkPriceInput`) → `{ updated, matched, preview, examples[] }` (las bajas redondean hacia abajo).
 - Excel: `GET /products/export?active=1` · `GET /products/price-list?list=minorista|mayorista` · `GET /products/import-template[?con_vinos=1]` · `POST /products/import` (binario) → `{ created, updated, errors[{row,message}], notes, total }` · `GET /stock/export?from&to&product_id` (con `product_id` y sin fechas: toda su historia).
@@ -81,7 +86,7 @@ Reglas comunes: los listados de ventas, compras y gastos aceptan `from`/`to` **o
 - `GET /sales?from&to&channel&client_id&event_id&product_id&status` (`status`: `pagado|parcial|pendiente|por_cobrar|vencida`) → `SaleWithStatus[]` + `items_preview[{name, qty, is_wine}]`.
 - `GET /sales/summary?from&to` → `{ from, to, count, total, bottles, cost, fees, profit, margin, avg_ticket, pending, pending_count, overdue, overdue_count, receivables, first_sale_date, by_channel[], by_payment_method[], by_day[] }`.
 - `GET /sales/:id` → `SaleDetail` · `POST /sales` (`saleInput`) · `PUT /sales/:id` (si el total y la cuenta no cambian, conserva los cobros y sus fechas) · `DELETE /sales/:id`.
-- `POST /sales/:id/payments` → `SaleDetail` · `GET /sales/:id/receipt[?print=1]` (comprobante HTML imprimible, no es factura) · `GET /sales/export` (mismos filtros).
+- `POST /sales/:id/payments` (`saleSettlementInput`: además `payment_method` opcional; si la venta no tenía cobros y cambia el medio, la venta pasa a ese medio y su comisión se recalcula) → `SaleDetail` · `GET /sales/:id/receipt[?print=1]` (comprobante HTML imprimible, no es factura) · `GET /sales/export` (mismos filtros).
 
 **Compras + Proveedores** (`routes/purchases.ts`, `routes/suppliers.ts`)
 - `GET /purchases?from&to&supplier_id&product_id&status` (`status`: `pagado|parcial|pendiente|por_pagar|vencida`) → `PurchaseWithStatus[]` + `items_preview[{name, qty}]`.
@@ -98,17 +103,17 @@ Reglas comunes: los listados de ventas, compras y gastos aceptan `from`/`to` **o
 - `GET/POST/PUT/DELETE /recurring-expenses[/:id]` · `GET /recurring-expenses/status?month` → `{ month, label, templates, generated, missing, missing_amount, monthly_total, items[] }` · `POST /recurring-expenses/generate { month }` → `{ month, label, created, skipped, status }` (no duplica).
 
 **Caja + Clientes** (`routes/accounts.ts`, `routes/clients.ts`)
-- `GET /accounts[?as_of]` → `AccountWithBalance` + `month_in, month_out, movements_count, last_movement`. Los saldos cuentan los movimientos **hasta hoy** (o `as_of`): un pago cargado con fecha futura todavía no descuenta. `POST/PUT/DELETE /accounts[/:id]` (siempre queda al menos una activa) · `POST /accounts/:id/reconcile { date, counted }` (arqueo: registra el ajuste por la diferencia).
+- `GET /accounts[?as_of]` → `AccountWithBalance` + `month_in, month_out` (del mes, hasta hoy), `month_scheduled_in, month_scheduled_out` (lo ya cargado para lo que queda del mes), `movements_count, last_movement`. Los saldos cuentan los movimientos **hasta hoy** (o `as_of`): un pago cargado con fecha futura todavía no descuenta. `POST/PUT/DELETE /accounts[/:id]` (siempre queda al menos una activa) · `POST /accounts/:id/reconcile { date, counted }` (arqueo: registra el ajuste por la diferencia).
 - `GET /movements?from&to&account_id&direction&ref_type` (`ref_type` admite lista separada por comas y `manual`) → `{ from, to, account_id, rows[], summary{total_in,total_out,net,count,opening_balance,closing_balance,transfers} }` · `POST /movements` (`manualCashInput`) · `PUT /movements/:id` (solo manuales) · `POST /transfers` · `DELETE /payments/:id` (genérico) · `GET /movements/export`.
-- `GET /pending` → `{ receivables[], payables[], totals, projection }` (proyección a 30 días) · `GET /pending/export` · `GET /cashflow?from&to` (default: últimos 12 meses) → `{ months[], by_kind[], totals, projection }` · `GET /cashflow/export`.
+- `GET /pending` → `{ receivables[], payables[], totals, projection }` (proyección a 30 días; `in_breakdown`/`out_breakdown` traen `scheduled` y `projection.scheduled_items[]` el detalle de lo programado) · `GET /pending/export` · `GET /cashflow?from&to` (default: últimos 12 meses) → `{ months[], by_kind[], totals, projection }` · `GET /cashflow/export`.
 - `GET /clients` → `Client` + `total_bought, bottles, purchases_count, first_purchase, last_purchase, balance, overdue, pending_count, year_total, profit` · `GET /clients/:id` → `{ client, sales, stats{…, favorite_wines}, monthly }` · `POST/PUT/DELETE` · `GET /clients/export`.
 
 **Inicio + Metas** (`routes/dashboard.ts`, `routes/goals.ts`)
 - `GET /dashboard?from&to` → `{ period, today, period_label, period_phrase, summary, previous, same_days_previous, comparison{mode, label, detail, current, previous, partial, data_since, after_today}, series (12 meses), cash{total, accounts, scheduled{out,in}}, stock, receivables, payables, low_stock, top_products, by_channel, goal_month, goal, alerts[], insights[], setup }`. `cash.scheduled` = movimientos ya cargados con fecha posterior a hoy (todavía no están en el saldo). `GET /dashboard/export`.
-- `GET /goals?year` → 12 × `GoalMonth` (meta + `actual`, `progress`, `status: past|current|future`…) · `PUT /goals/:month` (`goalInput` sin `month`) · `DELETE /goals/:month` · `GET /goals/suggest?month` → `{ break_even_sales, last_year_plus_inflation, avg_last_3_months, suggestion, basis, explanation, steps[], … }` · `GET /goals/export?year`.
+- `GET /goals?year` → 12 × `GoalMonth` (el Excel trae «¿Cumplida?» y el avance por debajo de la meta se redondea para abajo) (meta + `actual`, `progress`, `status: past|current|future`…) · `PUT /goals/:month` (`goalInput` sin `month`) · `DELETE /goals/:month` · `GET /goals/suggest?month` → `{ break_even_sales, last_year_plus_inflation, avg_last_3_months, suggestion, basis, explanation, steps[], … }` · `GET /goals/export?year`.
 
 **Reportes** (`routes/reports.ts`)
-- `GET /reports/pnl|channels|clients|expenses|inflation?from&to` (default: últimos 12 meses) → `{ period: { from, to, requested, trimmed }, … }`: el período se recorta a los meses con datos (sin meses vacíos al principio ni futuros). `GET /reports/products` devuelve un **array** (`ProductReportRow[]`, análisis ABC). Cada uno tiene `/export`; `GET /reports/full/export` = todas las hojas + índice.
+- `GET /reports/pnl|channels|clients|expenses|inflation?from&to` (default: últimos 12 meses) → `{ period: { from, to, requested, trimmed }, … }`: el período se recorta a los meses con datos (sin meses vacíos al principio ni futuros). Los meses de `pnl`, `expenses.by_month` e `inflation` traen `partial` + `partial_note`; `expenses` trae `avg_months`, `avg_basis: 'period'|'last_3'`, `avg_sales` y el equilibrio con esos meses. `products[]` trae `is_new`. `GET /reports/products` devuelve un **array** (`ProductReportRow[]`, análisis ABC). Cada uno tiene `/export`; `GET /reports/full/export` = todas las hojas + índice.
 - `GET /inflation` · `PUT /inflation/:month { rate }` · `DELETE /inflation/:month`.
 
 **Calculadora** (`routes/calculator.ts`, fórmulas en `shared/pricing.ts`)
@@ -124,7 +129,7 @@ Reglas comunes: los listados de ventas, compras y gastos aceptan `from`/`to` **o
 - `GET /settings` · `PUT /settings` (`settingsInput`, parcial: mezcla lo que viene; `payment_methods` se mezcla por `key` y rechaza cuentas inexistentes o desactivadas; acepta `category_renames: [{from, to}]`, que renombra los gastos fijos, no los gastos ya cargados).
 - `GET /settings/category-usage` → `{ categories[{name, nature, expenses, amount, recurring, last_date}], others[] }` · `GET /system` → `{ version, node, platform, in_memory, db_path, data_dir, backup_dir, db_size, counts[], last_backup, backups_count }`.
 - `GET /backups` → `{ available, message, data_dir, db_path, backup_dir, keep, backups[{file, size, created_at, kind, label}] }` · `POST /backups` · `GET /backups/:file/download` · `POST /backups/:file/restore` · `POST /backups/restore-upload` (binario). Antes de restaurar, cargar el ejemplo o borrar todo se hace una copia automática.
-- `GET /export/all` (todo en un Excel) · `POST /demo/load` → `{ ok, sales, purchases, expenses }` · `POST /data/reset { restart_onboarding? }` (borra los datos, mantiene la configuración).
+- `GET /export/all` (todo en un Excel) · `POST /demo/load` → `{ ok, sales, purchases, expenses }` (guarda los datos del negocio y el dólar de antes en la clave interna `_before_demo`) · `POST /data/reset { restart_onboarding? }` (borra los datos, mantiene la configuración; si lo que se borra es el ejemplo, devuelve los datos del negocio y el dólar de antes).
 
 ## 5. Convenciones de la interfaz
 
@@ -136,6 +141,8 @@ Reglas comunes: los listados de ventas, compras y gastos aceptan `from`/`to` **o
 - Datos: `useApi<T>(path, params)` para leer; `useApiMutation(fn, { success: 'Venta guardada' })` para escribir (refresca todo y avisa con un toast).
 - Período: `usePeriod()` (compartido entre pantallas) + `<PeriodPicker/>`.
 - Plata: `money()`, `moneyCompact()`, `<Money/>`; porcentajes `pct()`; fechas `date()`, `dateShort()`.
+- Formularios: un renglón con datos (cantidad/precio) pero sin vino **nunca** se descarta en silencio: se marca y no deja guardar. Fechas anteriores al alta de un vino → aviso (`lib/alta.ts`), no bloqueo. Pantallas con cambios sin guardar → `useLeaveGuard(activo, textos)` (`lib/leaveGuard.ts`): pregunta antes de salir por el menú o los botones `data-nav-to`.
+- Errores: cada pantalla está dentro de un `ErrorBoundary` (en `AppLayout`, se reinicia al cambiar de ruta); si falla la carga de una pantalla (programa cerrado o actualizado) lo explica y, si el servidor contesta, recarga una vez. El período guardado se valida (`parseStoredPeriod`) y los presets se recalculan si cambia el día (`useToday`).
 - Formularios en `Modal`. Campos: `Field` + `TextInput` / `MoneyInput` / `IntInput` / `DateInput` / `Select` / `ChoiceCards` / `ProductSelect` / `ClientSelect` / `SupplierSelect` / `AccountSelect` / `EventSelect`. `Field` une solo su etiqueta con el campo del kit que tiene adentro (no hace falta `htmlFor`/`id`; si pasás `htmlFor`, manda el tuyo). `MoneyInput` muestra los centavos completos ("18.586,20").
 - Tarjetas de números: `StatTile` (`term` del glosario o `info={{ title, text }}` propio). Pestañas: `Tabs` (si no entran en una línea, bajan a la siguiente).
 - Listas: `DataTable` (búsqueda, orden, paginado, totales) con `EmptyState` cuando no hay nada (y botón para cargar el primero).

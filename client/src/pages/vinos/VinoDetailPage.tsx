@@ -125,7 +125,7 @@ export default function VinoDetailPage() {
 
   const { product: p, stats, monthly, movements } = data
   const level = stockLevel(p)
-  const verdict = daysOfStockVerdict(p.days_of_stock, p.stock)
+  const verdict = daysOfStockVerdict(p.days_of_stock, p.stock, p.rate_days ?? 90)
   const gain = p.price_retail - p.unit_cost
   const soldInYear = monthly.reduce((s, m) => s + m.bottles, 0)
 
@@ -197,8 +197,11 @@ export default function VinoDetailPage() {
     if (ok) removeMovement.mutate(m.id)
   }
 
+  // Dentro de un mismo día se respeta el orden que manda el sistema (primero lo que entra, después lo que sale),
+  // que es el mismo con el que se calculan el costo y el saldo. Ordenar por número de movimiento lo desarmaría.
+  const order = new Map(movements.map((m, i) => [m.id, movements.length - i]))
   const columns: Column<MovementRow>[] = [
-    { key: 'date', header: 'Fecha', hideBelow: 'sm', value: (m) => `${m.date} ${String(m.id).padStart(9, '0')}`, cell: (m) => <span className="whitespace-nowrap">{date(m.date)}</span> },
+    { key: 'date', header: 'Fecha', hideBelow: 'sm', value: (m) => `${m.date} ${String(order.get(m.id) ?? 0).padStart(6, '0')}`, cell: (m) => <span className="whitespace-nowrap">{date(m.date)}</span> },
     {
       key: 'kind',
       header: 'Movimiento',
@@ -350,13 +353,24 @@ export default function VinoDetailPage() {
         />
         <StatTile label="Precio minorista" tone="sky" value={p.price_retail ? money(p.price_retail) : '—'} hint={`mayorista: ${p.price_wholesale ? money(p.price_wholesale) : 'sin cargar'}`} />
         <StatTile
-          label="Margen"
+          label="Margen bruto"
           term="margen_bruto"
           tone="sky"
           value={p.price_retail ? <span className={marginTone(p.margin_retail, target) === 'bad' ? 'text-bad' : undefined}>{pct(p.margin_retail, 0)}</span> : '—'}
           hint={p.price_retail ? (gain >= 0 ? `te quedan ${money(gain)} por botella` : `perdés ${money(-gain)} por botella`) : 'cargá el precio'}
         />
-        <StatTile label="Vendidas (90 días)" tone="sky" value={int(p.sold_90d)} hint={p.sold_90d ? `≈ ${int(Math.round(p.sold_90d / 3))} por mes` : 'no se vendió en 90 días'} />
+        <StatTile
+          label={p.is_new ? `Vendidas (${p.rate_days === 1 ? 'hoy' : `${p.rate_days} días`})` : 'Vendidas (90 días)'}
+          tone="sky"
+          value={int(p.sold_90d)}
+          hint={
+            p.is_new
+              ? `Es nuevo: lo medimos con los días que lleva en el sistema${p.sold_90d ? ` (≈ ${int(Math.round((p.sold_90d / p.rate_days) * 30))} por mes a este ritmo)` : ', todavía sin ventas'}.`
+              : p.sold_90d
+                ? `≈ ${int(Math.round(p.sold_90d / 3))} por mes`
+                : 'no se vendió en 90 días'
+          }
+        />
         <StatTile
           label="Días de stock"
           term="rotacion"

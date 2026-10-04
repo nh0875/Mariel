@@ -129,10 +129,10 @@ export function ChannelsTab({ period }: { period: Period }) {
             footer: money0(d.total_count ? d.total_sales / d.total_count : 0),
           },
           { key: 'fees', header: 'Comisiones', align: 'right', hideBelow: 'lg', cell: (c) => money0(c.fees), footer: money0(totalFees) },
-          { key: 'profit', header: 'Te dejó', align: 'right', hideBelow: 'sm', cell: (c) => <b className={c.profit < 0 ? 'text-bad' : undefined}>{money0(c.profit)}</b>, footer: money0(totalProfit) },
+          { key: 'profit', header: 'Te quedó', align: 'right', hideBelow: 'sm', cell: (c) => <b className={c.profit < 0 ? 'text-bad' : undefined}>{money0(c.profit)}</b>, footer: money0(totalProfit) },
           {
             key: 'margin',
-            header: 'Margen',
+            header: '% que te quedó',
             align: 'right',
             cell: (c) => <span className={c.margin < 0 ? 'text-bad' : undefined}>{pct(c.margin, 0)}</span>,
             footer: pct(d.total_sales ? totalProfit / d.total_sales : 0, 0),
@@ -171,13 +171,13 @@ export function ChannelsTab({ period }: { period: Period }) {
                   <span className="inline-flex items-center gap-1.5">
                     ¿Cuánto te deja cada canal?
                     <InfoTip
-                      title="Lo que te dejó cada canal"
-                      text="Ventas − costo del vino vendido − comisiones de cobro de ese canal. Es antes de los gastos generales (alquiler, sueldos…), que son de todo el negocio. Margen = lo que te dejó ÷ ventas."
+                      title="Lo que te quedó de cada canal"
+                      text="Ventas − costo del vino vendido − comisiones de cobro de ese canal. Es antes de los gastos generales (alquiler, sueldos…), que son de todo el negocio. Margen = lo que te quedó ÷ ventas."
                     />
                   </span>
                 }
               >
-                «Te dejó» = ventas − costo del vino − comisiones (antes de los gastos generales).
+                «Te quedó» = ventas − costo del vino − comisiones (antes de los gastos generales).
               </BlockTitle>
               <DataTable rows={d.channels} columns={chCols} rowKey={(c) => c.channel} searchable={false} dense />
             </section>

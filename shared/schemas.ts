@@ -43,7 +43,8 @@ export function isRealDate(s: string): boolean {
   const dt = new Date(y, m - 1, d)
   return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d
 }
-const date = z
+/** Fecha 'AAAA-MM-DD' que exista de verdad (rechaza 2026-02-30). Usala en todo lo que se guarda. */
+export const date = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'tiene que ser una fecha válida')
   .refine(isRealDate, 'esa fecha no existe (revisá el día y el mes)')
@@ -237,6 +238,16 @@ export const settlementInput = z.object({
   description: optText(200),
 })
 export type SettlementInput = z.input<typeof settlementInput>
+
+/**
+ * Cobro de una venta: además, cómo te pagó. Si la venta todavía no tenía cobros y te pagó por otro
+ * medio (ej. la cargaste "a cuenta" con efectivo y al final te pagó por Mercado Pago), la venta pasa a
+ * ese medio y su comisión se recalcula (es un costo de la venta).
+ */
+export const saleSettlementInput = settlementInput.extend({
+  payment_method: z.enum(PAYMENT_METHODS).nullish(),
+})
+export type SaleSettlementInput = z.input<typeof saleSettlementInput>
 
 export const manualCashInput = z.object({
   date,

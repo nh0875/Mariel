@@ -4,7 +4,7 @@
 // Toda la lógica contable vive en services/sales.ts (stock, costo congelado, cobros y comisiones)
 // y services/finance.ts (números del período). Acá solo se valida, se filtra y se arma la respuesta.
 import { Router, type Request } from 'express'
-import { saleInput, settlementInput } from '../../shared/schemas'
+import { saleInput, saleSettlementInput } from '../../shared/schemas'
 import {
   PAYMENT_METHOD_LABELS,
   SALE_CHANNEL_LABELS,
@@ -18,8 +18,8 @@ import { all, get, scalar, tx } from '../db'
 import { badRequest, notFound, parseId, parsePeriod, qn, qs, validate } from '../lib/http'
 import { fmtDate, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
 import { endOfMonth, startOfMonth } from '../../shared/dates'
-import { createSale, deleteSale, getSaleDetail, listSales, updateSale, type SalesFilter } from '../services/sales'
-import { addPayment, addSettlement, deletePaymentsByRef, paidFor, paymentsFor, syncSaleFees } from '../services/payments'
+import { collectSale, createSale, deleteSale, getSaleDetail, listSales, updateSale, type SalesFilter } from '../services/sales'
+import { addPayment, deletePaymentsByRef, paidFor, paymentsFor, syncSaleFees } from '../services/payments'
 import { periodSummary, receivables, salesByChannel } from '../services/finance'
 import { getSettings } from '../services/settings'
 
@@ -253,8 +253,8 @@ router.get('/sales/export', async (req, res) => {
     { header: 'Total', key: 'total', type: 'money' },
     { header: 'Comisión', key: 'fee', type: 'money' },
     { header: 'Costo de las botellas', key: 'cost', type: 'money' },
-    { header: 'Ganancia', key: 'profit', type: 'money' },
-    { header: 'Margen', key: 'margin', value: (s) => safeDiv(s.profit, s.total), type: 'percent', total: false, width: 10 },
+    { header: 'Te quedó (después de comisiones)', key: 'profit', type: 'money' },
+    { header: '% que te quedó', key: 'margin', value: (s) => safeDiv(s.profit, s.total), type: 'percent', total: false, width: 10 },
     { header: 'Cobrado', key: 'paid', type: 'money' },
     { header: 'Saldo por cobrar', key: 'balance', type: 'money' },
     { header: 'Estado', key: 'status', value: statusLabel, width: 15 },
@@ -275,8 +275,8 @@ router.get('/sales/export', async (req, res) => {
     { header: 'Subtotal', key: 'line_total', value: (i) => round2(i.qty * i.unit_price), type: 'money' },
     { header: 'Costo unitario', key: 'unit_cost', type: 'money', total: false },
     { header: 'Costo total', key: 'line_cost', value: (i) => round2(i.qty * i.unit_cost), type: 'money' },
-    { header: 'Ganancia del renglón', key: 'line_profit', value: (i) => round2(i.qty * (i.unit_price - i.unit_cost)), type: 'money' },
-    { header: 'Margen', key: 'margin', value: (i) => safeDiv(i.unit_price - i.unit_cost, i.unit_price), type: 'percent', total: false, width: 10 },
+    { header: 'Ganancia bruta del renglón', key: 'line_profit', value: (i) => round2(i.qty * (i.unit_price - i.unit_cost)), type: 'money' },
+    { header: 'Margen bruto', key: 'margin', value: (i) => safeDiv(i.unit_price - i.unit_cost, i.unit_price), type: 'percent', total: false, width: 10 },
   ]
 
   // Si se exportó con filtros, se aclara en el subtítulo (así nadie confunde una lista filtrada con el total).
@@ -310,7 +310,7 @@ router.get('/sales/export', async (req, res) => {
         'Una fila por venta. Total = subtotal (vinos × precio) − descuento + envío cobrado: es lo que paga el cliente.',
         'Comisión = lo que se queda el medio de pago (Mercado Pago, tarjetas) según el % de Configuración → Medios de pago.',
         'Costo de las botellas = lo que te costó cada botella el día de la venta (costo promedio ponderado). Queda "congelado" en la venta.',
-        'Ganancia = total − comisión − costo de las botellas. Todavía NO descuenta gastos fijos (alquiler, sueldos…): el resultado final está en Reportes.',
+        'Te quedó = total − comisión − costo de las botellas (es la ganancia bruta menos las comisiones). Todavía NO descuenta gastos fijos (alquiler, sueldos…): el resultado final está en Reportes.',
         'Cobrado / Saldo por cobrar: lo que ya entró a tus cuentas y lo que falta. Estado: Cobrada, Cobro parcial, Por cobrar o Vencida (pasó la fecha de vencimiento).',
       ],
     },
@@ -400,8 +400,8 @@ router.delete('/sales/:id', (req, res) => {
 router.post('/sales/:id/payments', (req, res) => {
   const id = parseId(req.params.id, 'esa venta')
   if (!get('SELECT id FROM sales WHERE id = ?', [id])) throw notFound('esa venta')
-  const s = validate(settlementInput, req.body)
-  addSettlement('sale', id, s)
+  const s = validate(saleSettlementInput, req.body)
+  collectSale(id, s)
   res.status(201).json(getSaleDetail(id))
 })
 

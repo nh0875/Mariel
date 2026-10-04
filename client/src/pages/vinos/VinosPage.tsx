@@ -51,7 +51,7 @@ function ReorderCard({ low }: { low: ProductRow[] }) {
                   <p className="truncate font-bold text-ink">{p.name}</p>
                   <p className="truncate text-[12.5px] text-muted">{wineSubtitle(p) || WINE_TYPE_LABELS[p.wine_type]}</p>
                   <p className="mt-1 text-[13px] text-ink-soft">
-                    Mínimo {int(p.min_stock)} · {daysOfStockText(p.days_of_stock, p.stock)}
+                    Mínimo {int(p.min_stock)} · {daysOfStockText(p.days_of_stock, p.stock, p.is_new)}
                   </p>
                   {sug > 0 && (
                     <p className="text-[13px] text-ink-soft">
@@ -158,14 +158,14 @@ export default function VinosPage() {
       cell: (p) => (
         <span className="inline-flex flex-col items-end gap-0.5">
           <StockBadge product={p} />
-          <span className="text-[12px] text-muted">{daysOfStockText(p.days_of_stock, p.stock)}</span>
+          <span className="text-[12px] text-muted">{daysOfStockText(p.days_of_stock, p.stock, p.is_new)}</span>
         </span>
       ),
       footer: int(rows.reduce((s, p) => s + Math.max(p.stock, 0), 0)),
     },
     { key: 'unit_cost', header: 'Costo', align: 'right', hideBelow: 'md', cell: (p) => money(p.unit_cost, { decimals: 0 }) },
     { key: 'price_retail', header: 'Precio', align: 'right', hideBelow: 'sm', cell: (p) => (p.price_retail ? money(p.price_retail) : <span className="text-muted">—</span>) },
-    { key: 'margin_retail', header: 'Margen', align: 'right', hideBelow: 'sm', cell: (p) => <MarginChip margin={p.margin_retail} price={p.price_retail} target={target} /> },
+    { key: 'margin_retail', header: 'Margen bruto', align: 'right', hideBelow: 'sm', cell: (p) => <MarginChip margin={p.margin_retail} price={p.price_retail} target={target} /> },
     { key: 'price_wholesale', header: 'Mayorista', align: 'right', hideBelow: 'lg', cell: (p) => (p.price_wholesale ? money(p.price_wholesale) : <span className="text-muted">—</span>) },
     {
       key: 'stock_value',
@@ -277,7 +277,7 @@ export default function VinosPage() {
               hint={kpi.low.length ? (kpi.low.length === 1 ? 'vino llegó al mínimo' : 'vinos llegaron al mínimo') : 'ninguno llegó al mínimo'}
             />
             <StatTile
-              label="Margen medio"
+              label="Margen bruto medio"
               term="margen_bruto"
               tone="sky"
               value={pct(kpi.avgMargin, 0)}

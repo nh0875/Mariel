@@ -21,6 +21,29 @@ function openBrowser(url: string) {
   })
 }
 
+/** ¿Lo que está en ese puerto es VINOH!? */
+async function isVinohRunning(): Promise<boolean> {
+  try {
+    const r = await fetch(`http://${HOST}:${PORT}/api/health`, { signal: AbortSignal.timeout(2000) })
+    const body = (await r.json()) as { app?: string }
+    return body?.app === 'VINOH! Finanzas'
+  } catch {
+    return false
+  }
+}
+
+function alreadyOpen() {
+  say()
+  say(`🍷  VINOH! ya estaba abierto. Te lo abro en el navegador: ${URL}`)
+  say('    (Esta ventana se puede cerrar: el programa sigue andando en la otra.)')
+  say()
+  openBrowser(URL)
+  process.exit(0)
+}
+
+// Si ya está abierto, no tocamos nada (ni limpieza ni copias): solo abrimos el navegador.
+if (await isVinohRunning()) alreadyOpen()
+
 cleanupLeftovers()
 
 let app: ReturnType<typeof createApp>
@@ -48,17 +71,6 @@ try {
 autoBackup()
 startAutoBackupTimer() // si queda abierto varios días, igual hace la copia diaria
 
-/** ¿Lo que está en ese puerto es VINOH!? */
-async function isVinohRunning(): Promise<boolean> {
-  try {
-    const r = await fetch(`http://${HOST}:${PORT}/api/health`, { signal: AbortSignal.timeout(2000) })
-    const body = (await r.json()) as { app?: string }
-    return body?.app === 'VINOH! Finanzas'
-  } catch {
-    return false
-  }
-}
-
 const server = app.listen(PORT, HOST)
 
 server.once('listening', () => {
@@ -74,13 +86,7 @@ server.once('listening', () => {
 server.on('error', async (err: NodeJS.ErrnoException) => {
   say()
   if (err.code === 'EADDRINUSE') {
-    if (await isVinohRunning()) {
-      say(`🍷  VINOH! ya estaba abierto. Te lo abro en el navegador: ${URL}`)
-      say('    (Esta ventana se puede cerrar: el programa sigue andando en la otra.)')
-      say()
-      openBrowser(URL)
-      process.exit(0)
-    }
+    if (await isVinohRunning()) alreadyOpen()
     say(`❌  Otro programa está usando el puerto ${PORT}, así que VINOH! no puede arrancar.`)
     say('    Cerrá ese programa y volvé a abrir VINOH!, o reiniciá la computadora.')
     say(`    (Quien sepa de sistemas puede elegir otro puerto con la variable PORT, por ejemplo PORT=3031.)`)

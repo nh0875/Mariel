@@ -3,8 +3,12 @@ import type { AccountKind, ManualCashKind, PaymentRefType } from '@shared/consta
 import type { AccountWithBalance, Client, Payment, SaleWithStatus } from '@shared/types'
 
 export type AccountRow = AccountWithBalance & {
+  /** Entró/salió en el mes hasta hoy. */
   month_in: number
   month_out: number
+  /** Ya cargado para lo que queda del mes (fecha posterior a hoy): todavía no está en el saldo. */
+  month_scheduled_in: number
+  month_scheduled_out: number
   movements_count: number
   last_movement: string | null
 }
@@ -63,9 +67,23 @@ export interface Projection {
   next_30_days_in: number
   next_30_days_out: number
   expected_balance: number
-  in_breakdown: { overdue: number; upcoming: number; no_date: number; later: number }
-  out_breakdown: { overdue: number; upcoming: number; no_date: number; later: number; fixed: number }
+  /** scheduled: ya cargado (figura pagado/cobrado) con fecha entre mañana y `until`; el saldo de hoy no lo cuenta. */
+  in_breakdown: { overdue: number; upcoming: number; no_date: number; later: number; scheduled: number }
+  out_breakdown: { overdue: number; upcoming: number; no_date: number; later: number; fixed: number; scheduled: number }
   fixed_items: { id: number; description: string; category: string; amount: number; date: string }[]
+  scheduled_items: ScheduledItem[]
+}
+
+export interface ScheduledItem {
+  id: number
+  date: string
+  direction: 'in' | 'out'
+  amount: number
+  account_id: number
+  account_name: string
+  ref_type: PaymentRefType
+  ref_id: number | null
+  label: string
 }
 
 export interface PendingResult {

@@ -57,10 +57,30 @@ export function roundUpTo(n: number, multiple: number): number {
  * últimos 90 días) o el doble del stock mínimo, lo que sea mayor, redondeado a cajas cerradas.
  * La usan la API (ficha del vino y Excel de reposición) y la pantalla «Vinos y stock».
  */
-export function reorderSuggestion(p: { sold_90d: number; min_stock: number; stock: number; units_per_box: number }): number {
-  const target = Math.max(p.min_stock * 2, Math.ceil((p.sold_90d / 90) * 45))
+export function reorderSuggestion(p: { sold_90d: number; min_stock: number; stock: number; units_per_box: number; rate_days?: number }): number {
+  const target = Math.max(p.min_stock * 2, Math.ceil((p.sold_90d / Math.max(1, p.rate_days ?? SALES_WINDOW_DAYS)) * 45))
   const need = target - Math.max(p.stock, 0)
   if (need <= 0) return 0
   const box = Math.max(1, p.units_per_box)
   return Math.ceil(need / box) * box
+}
+
+/** Días con los que se mide el ritmo de venta de un vino ("vendidas en 90 días"). */
+export const SALES_WINDOW_DAYS = 90
+
+/**
+ * Días que se usan para medir el ritmo de venta de un vino: los últimos 90, o menos si el vino está
+ * en el sistema hace menos (si no, un vino cargado hace una semana parecería "parado" o con stock
+ * para años). `firstDate` = su primer movimiento de stock (alta o primera compra).
+ */
+export function salesWindowDays(firstDate: string | null, ref: string): number {
+  if (!firstDate || firstDate > ref) return firstDate ? 1 : SALES_WINDOW_DAYS
+  const days = Math.round((Date.parse(`${ref}T00:00:00Z`) - Date.parse(`${firstDate}T00:00:00Z`)) / 86_400_000) + 1
+  return Math.max(1, Math.min(SALES_WINDOW_DAYS, days))
+}
+
+/** Para cuántos días alcanza el stock al ritmo de venta (null si no vendió en la ventana). */
+export function daysOfStock(stock: number, sold: number, windowDays: number = SALES_WINDOW_DAYS): number | null {
+  if (!(sold > 0)) return null
+  return Math.max(0, Math.round(stock / (sold / Math.max(1, windowDays))))
 }

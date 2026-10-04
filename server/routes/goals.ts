@@ -5,14 +5,14 @@
 // La sugerencia de meta se explica paso a paso: punto de equilibrio (el piso para no perder)
 // y lo que vendiste el año pasado ajustado por inflación (para no achicarte en términos reales).
 import { Router } from 'express'
-import { roundUpTo, round2, safeDiv } from '../../shared/calc'
+import { roundUpTo, round2 } from '../../shared/calc'
 import { goalInput } from '../../shared/schemas'
 import { addMonths, endOfMonth, monthKey, monthLabel, monthLabelLong, monthsBetween, startOfMonth, today } from '../../shared/dates'
 import type { Goal, MonthlyPoint } from '../../shared/types'
 import { all, get, run } from '../db'
 import { badRequest, HttpError, notFound, qs, validate } from '../lib/http'
 import { excelFilename, periodSubtitle, sendWorkbook } from '../lib/excel'
-import { monthlySeries } from '../services/finance'
+import { breakEvenFrom, monthlySeries } from '../services/finance'
 
 const router = Router()
 
@@ -72,7 +72,7 @@ const ASSUMED_MONTHLY_INFLATION = 2
 
 const nf0 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 const nf1 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 })
-const nf3 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 3 })
+const nf4 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 4 })
 const $ = (n: number) => `$\u00a0${nf0.format(Math.round(n))}`
 const pctTxt = (ratio: number) => `${nf1.format(ratio * 100)} %`
 
@@ -164,13 +164,13 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
   const last3 = monthlySeries(addMonths(windowEnd, -2), endOfMonth(windowEnd))
   const active = last3.filter((m) => m.sales > 0 || m.expenses > 0)
   const withSales = last3.filter((m) => m.sales > 0)
-  const totSales = active.reduce((s, m) => s + m.sales, 0)
-  const totVariable = active.reduce((s, m) => s + m.cogs + m.fees + m.shrinkage + m.expenses_variable, 0)
   const totBottles = active.reduce((s, m) => s + m.bottles_sold, 0)
-  const fixedAvg = active.length ? round2(active.reduce((s, m) => s + m.expenses_fixed, 0) / active.length) : null
-  // Redondeado a 3 decimales: es el número que mostramos en la cuenta ("÷ 0,28"), así se puede verificar con la calculadora.
-  const contribution = totSales > 0 ? Math.round(((totSales - totVariable) / totSales) * 1000) / 1000 : null
-  const breakEven = fixedAvg != null && fixedAvg > 0 && contribution != null && contribution > 0 ? round2(fixedAvg / contribution) : null
+  // El mismo cálculo que Calculadora y Reportes (services/finance → breakEvenFrom): sin redondear el
+  // margen, así los tres muestran el mismo punto de equilibrio.
+  const be = breakEvenFrom(last3)
+  const fixedAvg = active.length ? be.fixed_avg : null
+  const contribution = be.contribution_margin
+  const breakEven = be.break_even
   const monthsTxt = active.map((m) => monthLabelLong(m.month).split(' ')[0]).join(', ')
 
   if (breakEven != null) {
@@ -179,7 +179,7 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
         Math.round(contribution! * 100),
       )} después de pagar el vino, las comisiones, las mermas y los gastos variables (margen de contribución ${pctTxt(contribution!)}). Para cubrir los fijos necesitás vender ${$(
         fixedAvg!,
-      )} ÷ ${nf3.format(contribution!)} = ${$(breakEven)}. Ese es tu piso: vendiendo eso no ganás ni perdés. Con un 15 % de colchón para que quede ganancia: ${$(breakEven * 1.15)}.`,
+      )} ÷ ${nf4.format(contribution!)} = ${$(breakEven)}. Ese es tu piso: vendiendo eso no ganás ni perdés. Con un 15 % de colchón para que quede ganancia: ${$(breakEven * 1.15)}.`,
     )
   } else if (!active.length) {
     steps.push('Punto de equilibrio: todavía no hay ventas ni gastos cargados en los 3 meses anteriores, así que no lo podemos calcular.')
@@ -250,7 +250,7 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
   }
 
   // Botellas y presupuesto de gastos
-  const avgPrice = totBottles > 0 ? totSales / totBottles : 0
+  const avgPrice = totBottles > 0 ? be.sales / totBottles : 0
   const suggestedBottles = suggestion != null && avgPrice > 0 ? Math.max(1, Math.round(suggestion / avgPrice / 5) * 5) : null
   if (suggestedBottles != null) steps.push(`En botellas: con un precio promedio de ${$(avgPrice)} por botella, son unas ${nf0.format(suggestedBottles)} botellas.`)
   const expAvg = active.length ? active.reduce((s, m) => s + m.expenses, 0) / active.length : null
@@ -300,7 +300,10 @@ router.get('/goals/export', async (req, res) => {
       status: STATUS[r.status],
       sales_target: r.sales_target,
       sales: future ? null : r.actual.sales,
-      progress: future ? null : r.progress,
+      // El Excel muestra 1 decimal: 99,98 % se vería "100,0 %" aunque la meta no se cumplió. Por debajo
+      // de la meta, se redondea hacia abajo (99,9 %), igual que en la pantalla.
+      progress: future || r.progress == null ? null : r.progress < 1 ? Math.floor(r.progress * 1000) / 1000 : r.progress,
+      reached: future || !r.sales_target ? null : r.actual.sales >= r.sales_target ? 'Sí' : r.status === 'current' ? 'Todavía no' : 'No',
       bottles_target: r.bottles_target,
       bottles: future ? null : r.actual.bottles,
       expense_budget: r.expense_budget,
@@ -321,6 +324,7 @@ router.get('/goals/export', async (req, res) => {
         { header: 'Meta de ventas', key: 'sales_target', type: 'money' },
         { header: 'Ventas reales', key: 'sales', type: 'money' },
         { header: 'Avance de la meta', key: 'progress', type: 'percent', total: false },
+        { header: '¿Cumplida?', key: 'reached', width: 12 },
         { header: 'Meta de botellas', key: 'bottles_target', type: 'int' },
         { header: 'Botellas vendidas', key: 'bottles', type: 'int' },
         { header: 'Presupuesto de gastos', key: 'expense_budget', type: 'money' },
@@ -331,7 +335,7 @@ router.get('/goals/export', async (req, res) => {
       ],
       rows,
       notes: [
-        'Avance de la meta = ventas reales ÷ meta de ventas. 100 % o más = meta cumplida.',
+        'Avance de la meta = ventas reales ÷ meta de ventas. 100 % o más = meta cumplida (si te faltó aunque sea un peso, dice 99,9 % y «¿Cumplida?» = No).',
         'Uso del presupuesto = gastos reales ÷ presupuesto. Más de 100 % = te pasaste del presupuesto.',
         'Las ventas y los gastos cuentan en su fecha (aunque se cobren o paguen después), igual que en Inicio y Reportes.',
         'El mes "En curso" todavía no terminó: compará su avance con cuánto del mes ya pasó. Los meses que no empezaron quedan vacíos.',

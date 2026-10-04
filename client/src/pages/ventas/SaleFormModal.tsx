@@ -22,6 +22,7 @@ import type { Product, SaleDetail, WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
 import { eventStartDate, ticketLine } from '@/lib/eventPreset'
 import { bottles as fmtBottles, date as fmtDate, dateShort, money, pct } from '@/lib/format'
+import { beforeAltaText, winesBeforeAlta } from '@/lib/alta'
 import { useAccounts, useApiMutation, useClients, useEvents, useProducts, useSettings } from '@/lib/queries'
 import {
   AccountSelect,
@@ -83,6 +84,8 @@ let rowSeq = 0
 const newRow = (kind: RowKind = 'wine'): Row => ({ key: ++rowSeq, kind, productId: null, description: '', qty: 1, price: null, autoPrice: true })
 const priceFor = (p: Product, list: PriceList) => (list === 'mayorista' ? p.price_wholesale : p.price_retail)
 const isEmptyRow = (r: Row) => (r.kind === 'wine' ? r.productId == null : !r.description.trim())
+/** ¿Le cargaron algo (precio o una cantidad distinta de la que viene puesta)? Así no se descarta en silencio. */
+const hasRowData = (r: Row) => r.price != null || (r.qty != null && r.qty !== 1)
 const WHOLESALE_KINDS: ClientKind[] = ['restaurante', 'vinoteca', 'distribuidor']
 
 function buildInitial(
@@ -300,6 +303,15 @@ export function SaleFormModal({
   }, [focusRow, open])
 
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products])
+  // Aviso (no bloquea): venta con fecha anterior al alta de algún vino elegido.
+  const beforeAlta = beforeAltaText(
+    winesBeforeAlta(
+      products,
+      f.rows.filter((r) => r.kind === 'wine').map((r) => r.productId),
+      f.date,
+    ),
+    'venta',
+  )
   // Al editar, las botellas de esta venta ya salieron del stock: se suman a lo disponible.
   const originalQty = useMemo(() => {
     const m = new Map<number, number>()
@@ -340,7 +352,16 @@ export function SaleFormModal({
   const errors = useMemo(() => {
     const e: Record<string, string> = {}
     if (!f.date) e.date = 'Poné la fecha de la venta.'
-    if (!filled.length) e.items = 'Elegí al menos un vino (o agregá un ítem que no sea vino).'
+    // Un renglón con precio o cantidad pero sin vino (o sin descripción) nunca se descarta en silencio.
+    for (const r of f.rows) {
+      if (isEmptyRow(r) && hasRowData(r)) {
+        e[`what-${r.key}`] =
+          r.kind === 'wine'
+            ? 'Este renglón tiene cantidad o precio pero no dice qué vino es: elegí el vino o borralo con el tachito.'
+            : 'Este renglón tiene cantidad o precio pero no dice qué es: escribí qué vendiste o borralo con el tachito.'
+      }
+    }
+    if (!filled.length && !Object.keys(e).some((k) => k.startsWith('what-'))) e.items = 'Elegí al menos un vino (o agregá un ítem que no sea vino).'
     for (const r of filled) {
       if (!r.qty || r.qty < 1) e[`qty-${r.key}`] = 'La cantidad tiene que ser 1 o más.'
       else if (r.qty > 1_000_000) e[`qty-${r.key}`] = 'Esa cantidad es demasiado grande. Revisala.'
@@ -598,7 +619,8 @@ export function SaleFormModal({
                   const cost = r.productId ? calc.unitCost(r.productId) : 0
                   const qtyErr = shownErrors[`qty-${r.key}`]
                   const priceErr = shownErrors[`price-${r.key}`]
-                  const emptyErr = submitted && shownErrors.items && idx === 0
+                  const whatErr = shownErrors[`what-${r.key}`]
+                  const emptyErr = (submitted && shownErrors.items && idx === 0) || !!whatErr
                   const inactiveName = r.productId && !p ? originalItem.get(r.productId)?.product_name : null
                   return (
                     <li key={r.key} data-row={r.key} data-error={!!(qtyErr || priceErr || emptyErr)} className="rounded-2xl border border-line bg-paper p-3 sm:border-0 sm:bg-transparent sm:p-0">
@@ -672,6 +694,7 @@ export function SaleFormModal({
                             <span className="sm:hidden"> Subtotal {money(rowSub)}</span>
                           </p>
                         )}
+                        {whatErr && <p className="font-semibold text-bad">{whatErr}</p>}
                         {qtyErr && <p className="font-semibold text-bad">{qtyErr}</p>}
                         {priceErr && <p className="font-semibold text-bad">{priceErr}</p>}
                       </div>
@@ -703,11 +726,17 @@ export function SaleFormModal({
                   required
                   error={shownErrors.date}
                   hint={
-                    f.date > today()
-                      ? 'Ojo: es una fecha futura. Si la venta ya se hizo, poné el día que vendiste.'
-                      : dateEvent
-                        ? `Es el día del evento «${dateEvent.name}» (${dateShort(dateEvent.date)}). Si vendiste otro día, cambiala.`
-                        : 'Si la cargás tarde, poné el día que vendiste.'
+                    beforeAlta ? (
+                      <span className="font-semibold text-warn" data-testid="before-alta">
+                        {beforeAlta}
+                      </span>
+                    ) : f.date > today() ? (
+                      'Ojo: es una fecha futura. Si la venta ya se hizo, poné el día que vendiste.'
+                    ) : dateEvent ? (
+                      `Es el día del evento «${dateEvent.name}» (${dateShort(dateEvent.date)}). Si vendiste otro día, cambiala.`
+                    ) : (
+                      'Si la cargás tarde, poné el día que vendiste.'
+                    )
                   }
                 >
                   <DateInput value={f.date} onChange={(v) => set({ date: v })} max="2100-12-31" />
@@ -772,7 +801,10 @@ export function SaleFormModal({
             <section>
               <SectionTitle n={4}>¿Cómo te paga?</SectionTitle>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Medio de pago">
+                <Field
+                  label="Medio de pago"
+                  hint={f.paid === 'no' ? 'Cómo te va a pagar. Si todavía no sabés, dejalo: cuando registres el cobro elegís el medio real y se descuenta su comisión.' : undefined}
+                >
                   <Select
                     value={f.method}
                     onChange={(v) => set({ method: v as PaymentMethod })}
@@ -928,7 +960,7 @@ export function SaleFormModal({
                   </span>
                 </div>
                 <p className="text-[13px] text-ink-soft">
-                  Margen <b className="text-ink">{calc.total > 0 ? pct(calc.margin) : '—'}</b>
+                  {calc.total > 0 ? <>Es el <b className="text-ink">{pct(calc.margin)}</b> del total</> : '—'}
                 </p>
               </div>
               <p className="mt-2.5 text-[12.5px] leading-snug text-muted">

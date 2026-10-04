@@ -45,10 +45,11 @@ En todas las pantallas vas a ver un **💡 "¿Para qué sirve esta pantalla?"** 
 ## 💾 Tus datos y las copias de seguridad
 
 - Todo se guarda en la carpeta **`data/`** (archivo `vinoh.db`).
-- **Cada día que abrís el programa se hace una copia de seguridad automática** en `data/backups/` (se guardan las últimas 30).
+- **Todos los días se hace una copia de seguridad automática** en `data/backups/`: al abrir el programa y, si lo dejás abierto varios días, igual una por día. Se guardan las automáticas de los últimos 30 días y, aparte, hasta 30 copias hechas a mano o «de seguridad» (antes de borrar todo, cargar el ejemplo o restaurar).
 - Desde **Configuración → Copias de seguridad** podés hacer una copia en el momento, descargarla o volver a una copia anterior.
 - Recomendación: una vez por semana descargá una copia y guardala en un pendrive o en tu nube (Google Drive, Dropbox…).
-- Para pasar el sistema a otra computadora: copiá la carpeta completa de VINOH! (incluida `data/`), o instalalo de nuevo y restaurá una copia.
+- Antes de restaurar, el programa revisa que la copia esté sana (si está dañada o es de una versión más nueva, no la usa y tus datos no se tocan).
+- Para pasar el sistema a otra computadora: **primero cerrá VINOH!** (la ventanita negra, así se guarda todo en `vinoh.db`) y copiá la carpeta completa (incluida `data/`). La primera vez que lo abras en la otra computadora, VINOH! se da cuenta de que viene de otra máquina y reinstala lo necesario para esa (hace falta internet esa vez). Otra opción: instalalo de nuevo, descargá una copia en la computadora vieja (**Configuración → Copias de seguridad → Descargar**) y en la nueva usá **«Restaurar desde un archivo»**.
 - Desde **Configuración → Datos** podés descargar **todo en un Excel**.
 
 ## 🧮 ¿Cómo hace las cuentas?
@@ -68,5 +69,6 @@ Todo esto está explicado con ejemplos en **Ayuda** dentro del programa.
 - Requisitos: Node.js ≥ 22.13 (usa `node:sqlite`, no hay que compilar nada).
 - `npm install` · `npm run dev` (API en :3030 + interfaz con recarga en :5173) · `npm run build` · `npm start` · `npm test` · `npm run typecheck` · `npm run demo` (carga datos de ejemplo en `data/`).
 - Variables: `PORT` (default 3030), `VINOH_DATA_DIR` (default `./data`; `:memory:` para tests), `VINOH_OPEN_BROWSER=1`.
-- El servidor escucha solo en `127.0.0.1`.
+- El servidor escucha solo en `127.0.0.1` y solo atiende pedidos dirigidos a `localhost`/`127.0.0.1`; todo lo que cambia datos (POST/PUT/DELETE) tiene que traer el encabezado `X-VINOH: 1` (lo manda `client/src/lib/api.ts`). Así una página web de afuera no puede borrar ni leer los datos (ver `server/lib/guard.ts`). Si escribís scripts contra la API, agregá ese encabezado.
+- El lanzador (`scripts/iniciar.mjs`) guarda en `node_modules/.vinoh-platform` para qué sistema se instaló y prueba que los módulos nativos (esbuild, rolldown, lightningcss, tailwind) carguen; si la carpeta vino de otra computadora, reinstala solo.
 - Arquitectura, modelo contable y contratos de la API: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).

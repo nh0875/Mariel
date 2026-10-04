@@ -10,7 +10,7 @@ import { int } from '@/lib/format'
 import { money0, per100Map } from './fmt'
 import { Card, EmptyState, InfoTip } from '@/components/ui'
 
-type StepKind = 'start' | 'minus' | 'subtotal' | 'total'
+type StepKind = 'start' | 'minus' | 'plus' | 'subtotal' | 'total'
 
 interface Step {
   key: string
@@ -45,6 +45,11 @@ function buildSteps(s: PeriodSummary): Step[] {
     if (!always && Math.abs(amount) < 0.005) return
     const before = running
     running = before - amount
+    // Un monto negativo (ej. merma negativa = sobrante al contar) suma: la barra va hacia arriba.
+    if (amount < 0) {
+      steps.push({ key, label, term, amount, kind: 'plus', color: CHART_COLORS.ganancia, from: before, to: running, note })
+      return
+    }
     steps.push({ key, label, term, amount, kind: 'minus', color, from: running, to: before, note })
   }
   minus('cogs', 'Costo del vino vendido', 'cmv', s.cogs, CHART_COLORS.costo, 'Lo que te habían costado esas botellas', true)
@@ -60,7 +65,17 @@ function buildSteps(s: PeriodSummary): Step[] {
     to: Math.max(0, s.gross_profit),
   })
   minus('fees', 'Comisiones de cobro', 'comisiones', s.fees, CHART_COLORS.gastos, 'Mercado Pago, tarjetas, posnet', true)
-  minus('shrinkage', 'Mermas', 'mermas', s.shrinkage, CHART_COLORS.gastos, 'Botellas rotas, abiertas para degustar o regaladas', true)
+  minus(
+    'shrinkage',
+    s.shrinkage < 0 ? 'Mermas (sobrante)' : 'Mermas',
+    'mermas',
+    s.shrinkage,
+    CHART_COLORS.gastos,
+    s.shrinkage < 0
+      ? 'Al contar aparecieron botellas que el sistema no tenía: valen su costo y suman al resultado'
+      : 'Botellas rotas, abiertas para degustar, regaladas o que faltaron al contar',
+    true,
+  )
   minus('fixed', 'Gastos fijos', 'gastos_fijos', s.expenses_fixed, CHART_COLORS.gastos, 'Alquiler, sueldos, servicios…', true)
   minus('variable', 'Gastos variables', 'gastos_variables', s.expenses_variable, CHART_COLORS.gastos, 'Envíos, packaging, publicidad…', true)
   const net = s.net_result
@@ -83,7 +98,8 @@ const GRID = 'sm:grid-cols-[190px_minmax(0,1fr)_140px]'
 
 export function ResultWaterfall({ summary, periodPhrase, className }: { summary: PeriodSummary; periodPhrase: string; className?: string }) {
   const s = summary
-  const hasData = s.sales > 0 || s.expenses > 0 || s.shrinkage > 0
+  // Cualquier componente distinto de cero (también un resultado hecho solo de ajustes de stock) se explica.
+  const hasData = [s.sales, s.cogs, s.fees, s.shrinkage, s.expenses].some((v) => Math.abs(v) > 0.004)
   const steps = buildSteps(s)
   const lo = Math.min(0, ...steps.map((x) => x.from))
   const hi = Math.max(0, ...steps.map((x) => x.to))
@@ -117,18 +133,18 @@ export function ResultWaterfall({ summary, periodPhrase, className }: { summary:
           </div>
           <ol className="relative">
             {steps.map((st, i) => {
-              const strong = st.kind !== 'minus'
+              const strong = st.kind !== 'minus' && st.kind !== 'plus'
               const left = pos(st.from)
               const width = Math.max(pos(st.to) - pos(st.from), Math.abs(st.amount) > 0 ? 0.6 : 0)
               const p100 = p100s ? p100s[st.key] : null
-              const sign = st.kind === 'minus' ? '−' : st.kind === 'start' ? '' : '='
+              const sign = st.kind === 'minus' ? '−' : st.kind === 'plus' ? '+' : st.kind === 'start' ? '' : '='
               return (
                 <li
                   key={st.key}
                   className={clsx(
                     'grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1.5 py-2.5',
                     GRID,
-                    i > 0 && st.kind !== 'minus' && 'mt-1 border-t border-line pt-3.5',
+                    i > 0 && st.kind !== 'minus' && st.kind !== 'plus' && 'mt-1 border-t border-line pt-3.5',
                     st.kind === 'total' && (lost ? 'rounded-b-xl bg-coral-soft/40' : 'rounded-b-xl bg-good-soft/40'),
                     st.kind === 'total' && '-mx-3 px-3',
                   )}
@@ -136,7 +152,7 @@ export function ResultWaterfall({ summary, periodPhrase, className }: { summary:
                   {/* Concepto */}
                   <div className="min-w-0">
                     <div className="flex items-start gap-1.5">
-                      <span className={clsx('w-3 shrink-0 text-center leading-snug font-extrabold', st.kind === 'minus' ? 'text-coral-deep' : 'text-ink-soft')} aria-hidden>
+                      <span className={clsx('w-3 shrink-0 text-center leading-snug font-extrabold', st.kind === 'minus' ? 'text-coral-deep' : st.kind === 'plus' ? 'text-good' : 'text-ink-soft')} aria-hidden>
                         {sign}
                       </span>
                       <span className={clsx('min-w-0 text-[14.5px] leading-snug text-ink', strong ? 'font-extrabold' : 'font-semibold')}>
@@ -155,7 +171,7 @@ export function ResultWaterfall({ summary, periodPhrase, className }: { summary:
                         st.kind === 'total' && (lost ? 'text-bad' : 'text-good'),
                       )}
                     >
-                      {st.kind === 'minus' || st.amount < 0 ? `−\u00a0${money0(Math.abs(st.amount))}` : money0(st.amount)}
+                      {st.kind === 'plus' ? `+\u00a0${money0(Math.abs(st.amount))}` : st.kind === 'minus' || st.amount < 0 ? `−\u00a0${money0(Math.abs(st.amount))}` : money0(st.amount)}
                     </span>
                     {p100 != null && (
                       <span className="vh-num block text-[12px] text-muted">{st.kind === 'start' ? 'base: $\u00a0100' : `$\u00a0${p100} de cada $\u00a0100`}</span>
@@ -164,7 +180,7 @@ export function ResultWaterfall({ summary, periodPhrase, className }: { summary:
 
                   {/* Barra flotante */}
                   <div className="col-span-2 sm:col-span-1">
-                    <div className="relative h-4 rounded-full bg-cream-deep/70" title={`${st.label}: ${st.kind === 'minus' ? '−' : ''}${money0(st.amount)}`}>
+                    <div className="relative h-4 rounded-full bg-cream-deep/70" title={`${st.label}: ${st.kind === 'minus' ? '−' : st.kind === 'plus' ? '+' : ''}${money0(Math.abs(st.amount))}`}>
                       {lo < 0 && <span className="absolute inset-y-[-3px] w-px bg-ink-soft/50" style={{ left: `${zeroAt}%` }} aria-hidden />}
                       {width > 0 && (
                         <span
@@ -186,7 +202,17 @@ export function ResultWaterfall({ summary, periodPhrase, className }: { summary:
           <p className="mt-4 rounded-xl bg-cream px-4 py-3 text-[14.5px] leading-relaxed text-ink-soft">
             <b className="text-ink">En criollo:</b> vendiste <b className="text-ink">{money0(s.sales)}</b>. Esas botellas te habían costado {money0(s.cogs)}, así que te quedaron{' '}
             {money0(s.gross_profit)} de ganancia bruta
-            {p100s && ` ($\u00a0${p100s.gross} de cada $\u00a0100)`}. De ahí se fueron {money0(s.fees + s.shrinkage)} en comisiones y mermas y {money0(s.expenses)} en gastos.{' '}
+            {p100s && ` ($\u00a0${p100s.gross} de cada $\u00a0100)`}.{' '}
+            {s.shrinkage < -0.004 ? (
+              <>
+                De ahí se fueron {money0(s.fees)} en comisiones y {money0(s.expenses)} en gastos, y al contar el stock aparecieron botellas por {money0(-s.shrinkage)} (a su costo) que
+                suman.{' '}
+              </>
+            ) : (
+              <>
+                De ahí se fueron {money0(s.fees + s.shrinkage)} en comisiones y mermas y {money0(s.expenses)} en gastos.{' '}
+              </>
+            )}
             {lost ? (
               <>
                 No alcanzó: <b className="text-bad">perdiste {money0(-s.net_result)}</b>.

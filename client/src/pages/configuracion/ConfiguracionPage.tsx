@@ -6,6 +6,7 @@ import type { BackupRow } from './types'
 import { api } from '@/lib/api'
 import { bytes, SectionIndex, useDirtyRegistry, useHashScroll, type IndexItem } from './parts'
 import { useApiMutation, useSettings } from '@/lib/queries'
+import { useLeaveGuard } from '@/lib/leaveGuard'
 import { Button, ErrorState, ExportButton, HelpBox, Loading, PageHeader } from '@/components/ui'
 import { AccountsSection, BusinessSection, CategoriesSection, PaymentMethodsSection, PricingSection, StockDefaultsSection, UsdSection } from './sections'
 import { BackupsSection, DataSection } from './data'
@@ -24,7 +25,15 @@ const INDEX: IndexItem[] = [
 
 export default function ConfiguracionPage() {
   const settings = useSettings()
-  const { dirty, onDirty } = useDirtyRegistry()
+  const { dirty, onDirty, any } = useDirtyRegistry()
+  // Cambios sin guardar: si tocás otra opción del menú, preguntamos antes de salir (no se pierden en silencio).
+  const pending = INDEX.filter((i) => dirty[i.id]).map((i) => `«${i.label}»`)
+  useLeaveGuard(any, {
+    title: '¿Salís sin guardar?',
+    message: `Tenés cambios sin guardar en ${pending.length > 1 ? `${pending.slice(0, -1).join(', ')} y ${pending[pending.length - 1]}` : (pending[0] ?? 'esta pantalla')}. Si salís ahora, se pierden. Para no perderlos, quedate y tocá «Guardar» en cada sección.`,
+    confirmText: 'Salir sin guardar',
+    cancelText: 'Quedarme y guardar',
+  })
   useHashScroll(!!settings.data)
   const backup = useApiMutation(() => api.post<BackupRow>('/backups'), { success: (b) => `Listo, copia guardada (${bytes(b.size)}). La ves en «Copias de seguridad».` })
 

@@ -74,7 +74,8 @@ describe('GET /reports/pnl', () => {
     loadQuarter()
     const r = await t.get(`/reports/pnl?from=${Q.from}&to=${Q.to}`)
     expect(r.status).toBe(200)
-    expect(r.body.months).toEqual(monthlySeries(Q.from, Q.to))
+    expect(r.body.months.map(({ partial, partial_note, ...m }: any) => m)).toEqual(monthlySeries(Q.from, Q.to))
+    expect(r.body.months.every((m: any) => m.partial === false && m.partial_note === '')).toBe(true)
     expect(r.body.total).toEqual(periodSummary(Q.from, Q.to))
     expect(r.body.months.map((m: any) => m.month)).toEqual(['2025-01', '2025-02', '2025-03'])
 
@@ -352,6 +353,60 @@ describe('GET /reports/expenses', () => {
     expect(sumAvg).toBeCloseTo(d.fixed_avg, 2)
   })
 
+  it('un período que toma medio mes lo marca como parcial y no lo usa para promedios ni equilibrio', async () => {
+    loadQuarter()
+    // 15/01 al 20/03: enero y marzo quedan recortados, solo febrero está completo.
+    const r = await t.get('/reports/expenses?from=2025-01-15&to=2025-03-20')
+    const d = r.body
+    expect(d.by_month.map((m: any) => [m.month, m.partial, m.partial_note])).toEqual([
+      ['2025-01', true, '15 al 31'],
+      ['2025-02', false, ''],
+      ['2025-03', true, '1 al 20'],
+    ])
+    expect(d.avg_basis).toBe('period')
+    expect(d.avg_months).toEqual(['2025-02'])
+    expect(d.months_for_avg).toBe(1)
+    const feb = monthlySeries('2025-02-01', '2025-02-28')[0]
+    expect(d.fixed_avg).toBe(feb.expenses_fixed)
+    expect(d.avg_sales).toBe(feb.sales)
+    const cm = (feb.sales - feb.cogs - feb.fees - feb.shrinkage - feb.expenses_variable) / feb.sales
+    expect(d.contribution_margin).toBeCloseTo(cm, 10)
+    expect(d.break_even_monthly).toBe(Math.round((feb.expenses_fixed / cm) * 100) / 100)
+    // El estado de resultados también rotula esas columnas, en pantalla y en el Excel.
+    const pnl = (await t.get('/reports/pnl?from=2025-01-15&to=2025-03-20')).body
+    expect(pnl.months.map((m: any) => m.partial_note)).toEqual(['15 al 31', '', '1 al 20'])
+    const x = await t.raw('/reports/pnl/export?from=2025-01-15&to=2025-03-20')
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await x.arrayBuffer())
+    const headers: string[] = []
+    wb.worksheets.forEach((w) => w.eachRow((row) => row.eachCell((c) => headers.push(String(c.value)))))
+    expect(headers).toContain('ene 25 (15 al 31)')
+    expect(headers).toContain('mar 25 (1 al 20)')
+  })
+
+  it('sin ningún mes completo (ej. «Este mes») usa los últimos 3 meses completos, igual que Calculadora y Metas', async () => {
+    const cur = startOfMonth(today())
+    const m = wine('Malbec', 500, 1000)
+    for (const k of [-3, -2, -1]) {
+      const d0 = addMonths(cur, k)
+      sale(d0, m, 10, 3000)
+      expense(d0, 9000, 'fijo')
+    }
+    expense(cur, 500, 'fijo') // lo cargado en el mes en curso no es "lo fijo por mes"
+    const r = await t.get(`/reports/expenses?from=${cur}&to=${endOfMonth(cur)}`)
+    const d = r.body
+    if (today() < endOfMonth(today())) {
+      expect(d.avg_basis).toBe('last_3')
+      expect(d.avg_months).toEqual([-3, -2, -1].map((k) => monthKey(addMonths(cur, k))))
+      expect(d.fixed_avg).toBe(9000)
+      const goals = (await t.get(`/goals/suggest?month=${monthKey(cur)}`)).body
+      expect(d.break_even_monthly).toBe(goals.break_even_sales)
+      const calc = (await t.get('/calculator/context')).body
+      expect(calc.avg_fixed_expenses).toBe(d.fixed_avg)
+      expect(calc.months_used).toEqual(d.avg_months)
+    }
+  })
+
   it('si no queda margen para cubrir los fijos, el punto de equilibrio es null', async () => {
     const m = wine('Caro', 10, 3000)
     sale('2025-03-02', m, 1, 2000) // vendido abajo del costo
@@ -425,7 +480,7 @@ describe('GET /reports/inflation — mes en curso', () => {
       expect(last.partial).toBe(true)
       expect(last.real_growth_vs_prev).toBeNull()
       expect(last.nominal_growth_vs_prev).toBeNull()
-      expect(r.body.explanation).toMatch(/El mes en curso no se compara/)
+      expect(r.body.explanation).toMatch(/Los meses incompletos \(el mes en curso o los que el período toma solo en parte\) no se comparan/)
       expect(r.body.explanation).toMatch(/El mes en curso todavía no tiene inflación cargada/)
       expect(r.body.explanation).not.toMatch(/Faltan cargar/)
     } else {

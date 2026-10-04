@@ -37,7 +37,8 @@ export const GLOSSARY = {
   ganancia_bruta: {
     group: 'Resultados',
     title: 'Ganancia bruta',
-    short: 'Ventas menos lo que te costaron los vinos vendidos.',
+    short: 'Ventas menos lo que te costaron los vinos vendidos (antes de comisiones y gastos).',
+    long: 'Se llama igual en Inicio, Reportes y Vinos. Si además le restás las comisiones de cobro, es lo que en Ventas figura como «Te quedó».',
     formula: 'Ventas − CMV',
     example: 'Vendiste $150.000 en vinos que te costaron $90.000 → ganancia bruta $60.000.',
     why: 'Es la plata que te queda para pagar alquiler, sueldos, envíos… y ganar.',
@@ -49,6 +50,15 @@ export const GLOSSARY = {
     formula: '(Ventas − CMV) ÷ Ventas × 100',
     example: 'Margen 40 % → de cada $100 vendidos, $40 quedan para gastos y ganancia.',
     why: 'En vinotecas suele andar entre 30 % y 50 %. Si baja mes a mes, revisá precios: probablemente subió el costo y no lo trasladaste.',
+  },
+  te_quedo: {
+    group: 'Resultados',
+    title: 'Te quedó (después de comisiones)',
+    short: 'Lo que te dejaron las ventas después de pagar el vino y la comisión del medio de cobro. Todavía sin gastos fijos ni variables.',
+    long: 'Es la ganancia bruta menos las comisiones (Mercado Pago, tarjetas). Lo vas a ver en Ventas, en el detalle de cada venta, en cada evento y en Reportes → Canales y Clientes. No es el resultado final: a esto todavía le faltan las mermas y los gastos (eso está en Inicio y en Reportes → Estado de resultados).',
+    formula: 'Ventas − costo del vino − comisiones',
+    example: 'Venta de $10.000 por Mercado Pago, el vino te costó $6.000 y MP se queda $629 → te quedaron $3.371.',
+    why: 'Sirve para comparar canales y medios de cobro: una venta con comisión alta te deja menos aunque el precio sea el mismo.',
   },
   gastos: {
     group: 'Resultados',
@@ -83,9 +93,9 @@ export const GLOSSARY = {
   mermas: {
     group: 'Stock',
     title: 'Mermas, degustaciones y regalos',
-    short: 'Botellas que salieron sin venderse: rotas, abiertas para degustar, regaladas o que faltan.',
-    formula: 'Botellas × costo promedio',
-    why: 'Son costo puro. Las degustaciones pueden ser una inversión en ventas; las roturas y faltantes, no.',
+    short: 'Botellas que salieron sin venderse: rotas, abiertas para degustar, regaladas o que faltan al contar. Si al contar sobran (un «sobrante»), restan.',
+    formula: 'Botellas × costo promedio (los sobrantes, en negativo)',
+    why: 'Son costo puro. Las degustaciones pueden ser una inversión en ventas; las roturas y faltantes, no. Un sobrante son botellas que tenías y el sistema no sabía: suma al resultado a su costo.',
   },
   resultado: {
     group: 'Resultados',

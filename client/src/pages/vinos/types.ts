@@ -12,6 +12,14 @@ export interface ProductRow extends Product {
   margin_wholesale: number
   /** Botellas × costo promedio. */
   stock_value: number
+  /** Día del alta (stock inicial). Lo de antes ya está incluido en ese stock. */
+  alta_date: string | null
+  /** Primer movimiento de stock. */
+  first_date: string | null
+  /** Días con los que se mide el ritmo de venta (90, o los que lleva si es más nuevo). */
+  rate_days: number
+  /** Está hace menos de 90 días en el sistema. */
+  is_new: boolean
 }
 
 export interface MovementRow extends StockMovement {

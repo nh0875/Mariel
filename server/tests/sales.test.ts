@@ -269,6 +269,26 @@ describe('cobros de una venta', () => {
     expect(again.body.error).toMatch(/ya está saldada/)
   })
 
+  it('venta a cuenta cargada en efectivo y cobrada después por Mercado Pago: se descuenta la comisión de MP', async () => {
+    const p = wine('Malbec')
+    const sale = (await t.post('/sales', { date: '2026-02-01', paid: false, payment_method: 'efectivo', items: [{ product_id: p, qty: 5, unit_price: 2000 }] })).body
+    expect(sale.fee).toBe(0)
+    const mp = account('Mercado Pago')
+    const r = await t.post(`/sales/${sale.id}/payments`, { date: '2026-02-05', amount: 10000, account_id: mp.id, payment_method: 'mercadopago' })
+    expect(r.status).toBe(201)
+    expect(r.body).toMatchObject({ payment_method: 'mercadopago', fee: 629, status: 'pagado' })
+    expect(feePayments(sale.id)).toBe(629)
+    // Con un cobro previo, no se cambia el medio ni la comisión (es una sola por venta: se edita la venta).
+    const other = (await t.post('/sales', { date: '2026-02-01', paid: false, payment_method: 'efectivo', items: [{ product_id: p, qty: 5, unit_price: 2000 }] })).body
+    await t.post(`/sales/${other.id}/payments`, { date: '2026-02-05', amount: 4000, account_id: account('Caja').id })
+    const r2 = await t.post(`/sales/${other.id}/payments`, { date: '2026-02-06', amount: 6000, account_id: mp.id, payment_method: 'mercadopago' })
+    expect(r2.body).toMatchObject({ payment_method: 'efectivo', fee: 0, status: 'pagado' })
+    // Una comisión puesta a mano se respeta aunque cambie el medio.
+    const manual = (await t.post('/sales', { date: '2026-02-01', paid: false, payment_method: 'credito', fee: 100, items: [{ product_id: p, qty: 1, unit_price: 2000 }] })).body
+    const r3 = await t.post(`/sales/${manual.id}/payments`, { date: '2026-02-05', amount: 2000, account_id: mp.id, payment_method: 'mercadopago' })
+    expect(r3.body).toMatchObject({ payment_method: 'mercadopago', fee: 100 })
+  })
+
   it('valida el cobro y responde 404 si la venta no existe', async () => {
     const p = wine('Malbec')
     const sale = (await t.post('/sales', { date: '2026-02-01', paid: false, items: [{ product_id: p, qty: 1, unit_price: 1000 }] })).body

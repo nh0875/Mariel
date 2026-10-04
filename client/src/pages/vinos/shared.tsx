@@ -38,18 +38,24 @@ export function StockBadge({ product }: { product: Pick<ProductRow, 'stock' | 'm
 }
 
 /** "≈ 37 días" o una explicación cuando no se puede calcular. */
-export function daysOfStockText(days: number | null, stock: number): string {
+export function daysOfStockText(days: number | null, stock: number, isNew = false): string {
   if (stock <= 0) return 'reponé'
-  if (days == null) return 'sin ventas en 90 días'
+  if (days == null) return isNew ? 'nuevo: todavía sin ventas' : 'sin ventas en 90 días'
   if (days > 365) return 'más de un año'
   if (days < 1) return 'menos de 1 día'
   return `≈ ${int(days)} ${days === 1 ? 'día' : 'días'}`
 }
 
-/** Qué significa la cobertura, en palabras. */
-export function daysOfStockVerdict(days: number | null, stock: number): { text: string; tone: Tone } {
+/**
+ * Qué significa la cobertura, en palabras. `rateDays` < 90 = vino nuevo: se mide con los días que
+ * lleva, y si todavía no se vendió no se lo trata como «parado».
+ */
+export function daysOfStockVerdict(days: number | null, stock: number, rateDays = 90): { text: string; tone: Tone } {
+  const isNew = rateDays < 90
   if (stock <= 0) return { text: 'Sin botellas: reponé si lo seguís vendiendo.', tone: 'bad' }
+  if (days == null && isNew) return { text: `Es nuevo (lo cargaste hace ${rateDays === 1 ? '1 día' : `${rateDays} días`}): todavía no hay ventas suficientes para medir cuánto te dura.`, tone: 'neutral' }
   if (days == null) return { text: 'No se vendió en los últimos 90 días: está parado.', tone: 'neutral' }
+  if (isNew && days > 180) return { text: `Es nuevo: lo medimos con los ${rateDays} días que lleva, todavía es pronto para decir que sobra stock.`, tone: 'neutral' }
   if (days < 15) return { text: 'Te alcanza para menos de 2 semanas: reponé pronto.', tone: 'bad' }
   if (days <= 60) return { text: 'Cobertura sana.', tone: 'good' }
   if (days <= 180) return { text: 'Tenés para varios meses: no hace falta comprar.', tone: 'sky' }

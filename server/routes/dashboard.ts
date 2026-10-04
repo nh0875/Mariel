@@ -37,7 +37,8 @@ import {
   type ChannelSales,
   type ProductSales,
 } from '../services/finance'
-import { accountBalances } from '../services/payments'
+import { accountBalances, scheduledPayments, scheduledTotals } from '../services/payments'
+import { projection } from '../services/cashProjection'
 import { getSettings } from '../services/settings'
 
 const router = Router()
@@ -187,13 +188,8 @@ export function periodPhrase(p: Period, dataSince: string | null): string {
 
 /** Pagos y cobros ya cargados con fecha posterior a hoy (el saldo de hoy todavía no los cuenta). */
 function scheduledCash(ref: string): { out: number; in: number } {
-  const r = get<{ cout: number; cin: number }>(
-    `SELECT COALESCE(SUM(CASE WHEN direction = 'out' THEN amount ELSE 0 END), 0) AS cout,
-            COALESCE(SUM(CASE WHEN direction = 'in' THEN amount ELSE 0 END), 0) AS cin
-     FROM payments WHERE ref_type <> 'transfer' AND date > ?`,
-    [ref],
-  )
-  return { out: round2(r?.cout ?? 0), in: round2(r?.cin ?? 0) }
+  const t = scheduledTotals(ref)
+  return { out: t.out, in: t.in }
 }
 
 /** Primer día con algo cargado (venta o gasto). */
@@ -401,37 +397,57 @@ function buildAlerts(ctx: AlertContext): DashboardAlert[] {
   }
   const in7 = addDays(ref, 7)
   const soon = pay.filter((p) => p.due_date && p.due_date >= ref && p.due_date <= in7).sort((a, b) => (a.due_date! < b.due_date! ? -1 : 1))
-  if (soon.length) {
-    const first = soon[0]
+  // Pagos programados: ya figuran como pagados (ej. débitos automáticos de gastos fijos), pero la
+  // plata sale de la cuenta en estos días.
+  const sched7 = scheduledPayments(ref, in7).filter((p) => p.direction === 'out')
+  const sched7Total = round2(sched7.reduce((s, p) => s + p.amount, 0))
+  if (soon.length || sched7.length) {
+    const total = round2(sum(soon) + sched7Total)
+    const parts: string[] = []
+    if (soon.length) {
+      const first = soon[0]
+      parts.push(`${plural(soon.length, 'pago vence', 'pagos vencen')} en los próximos 7 días. El primero: ${first.who} por ${$(first.balance)} el ${fmtDate(first.due_date!)}.`)
+    }
+    if (sched7.length) {
+      const first = sched7[0]
+      parts.push(
+        `${soon.length ? 'Además, ' : ''}${plural(sched7.length, 'pago programado sale', 'pagos programados salen')} de tus cuentas por ${$(sched7Total)} (ya los cargaste como pagados; el primero: ${first.label}, ${$(first.amount)} el ${fmtDate(first.date)}).`,
+      )
+    }
     out.push({
       tone: 'warn',
-      title: `Esta semana vencen ${$(sum(soon))} en pagos`,
-      text: `${plural(soon.length, 'pago vence', 'pagos vencen')} en los próximos 7 días. El primero: ${first.who} por ${$(first.balance)} el ${fmtDate(first.due_date!)}. Fijate que haya plata en la cuenta.`,
+      title: soon.length ? `Esta semana vencen ${$(total)} en pagos` : `Esta semana salen ${$(total)} en pagos programados`,
+      text: `${parts.join(' ')} Fijate que haya plata en la cuenta.`,
       link: '/caja?tab=pendientes',
       link_label: 'Ver vencimientos',
     })
   }
 
-  // 3) ¿La caja alcanza para lo que hay que pagar en 30 días?
-  const in30 = addDays(ref, 30)
-  const due30 = pay.filter((p) => !p.due_date || p.due_date <= in30)
-  const toPay30 = sum(due30)
+  // 3) ¿La caja alcanza para lo que hay que pagar en 30 días? Usa la MISMA proyección que Caja → Por
+  //    cobrar y por pagar (incluye gastos fijos sin generar y lo programado: ya cargado como pagado o
+  //    cobrado con fecha más adelante, que el saldo de hoy todavía no cuenta).
+  const pr = projection(undefined, 30, ref)
+  const toPay30 = pr.next_30_days_out
   if (toPay30 > 0 && toPay30 > ctx.cashTotal) {
-    const toCollect30 = sum(recv.filter((r) => !r.due_date || r.due_date <= in30))
+    const toCollect30 = pr.next_30_days_in
     const gap = round2(toPay30 - ctx.cashTotal)
-    const covers = ctx.cashTotal + toCollect30 >= toPay30
+    const covers = pr.expected_balance >= 0
+    const includes = [
+      pr.out_breakdown.scheduled > 0.5 ? `${$(pr.out_breakdown.scheduled)} de pagos programados que todavía no salieron de la cuenta` : null,
+      pr.out_breakdown.fixed > 0.5 ? `${$(pr.out_breakdown.fixed)} de gastos fijos que todavía no cargaste` : null,
+    ].filter(Boolean)
     out.push({
       tone: 'bad',
       title: 'Ojo: la caja no alcanza para lo que viene',
-      text: `En los próximos 30 días tenés que pagar ${$(toPay30)} y hoy tenés ${$(ctx.cashTotal)} en tus cuentas: te faltan ${$(gap)}. ${
+      text: `En los próximos 30 días tenés que pagar ${$(toPay30)}${includes.length ? ` (incluye ${includes.join(' y ')})` : ''} y hoy tenés ${$(ctx.cashTotal)} en tus cuentas: te faltan ${$(gap)}. ${
         toCollect30 > 0
           ? covers
             ? `Si cobrás lo que te deben (${$(toCollect30)}), te alcanza: priorizá esos cobros.`
             : `Aunque cobres lo que te deben (${$(toCollect30)}), no alcanza: pensá en negociar plazos o en vender stock.`
           : 'Priorizá las ventas de contado o negociá plazos con los proveedores.'
       }`,
-      link: '/caja',
-      link_label: 'Ver caja y bancos',
+      link: '/caja?tab=pendientes',
+      link_label: 'Ver la proyección de caja',
     })
   }
 
@@ -558,6 +574,8 @@ function buildInsights(ctx: {
   summary: PeriodSummary
   comparison: DashboardComparison
   top: ProductSales[]
+  /** Lo facturado en vinos en el período (todos los vinos, no solo los top). */
+  wineRevenue: number
   channels: (ChannelSales & { label: string })[]
   goal: DashboardGoal | null
   earlyMonth: boolean
@@ -596,9 +614,10 @@ function buildInsights(ctx: {
   // Vino estrella
   if (ctx.top.length) {
     const star = ctx.top[0]
-    const share = safeDiv(star.revenue, ctx.top.reduce((a, p) => a + p.revenue, 0))
+    // Su parte sobre TODO lo facturado en vinos (no sobre "los 6 top", que pueden ser menos).
+    const share = safeDiv(star.revenue, ctx.wineRevenue)
     out.push(
-      `Tu vino estrella: ${star.name} (${plural(star.bottles, 'botella', 'botellas')}, ${$(star.revenue)}${ctx.top.length > 1 && share > 0.25 ? `, ${pctTxt(share)} de lo que facturaron tus 6 vinos top` : ''}).`,
+      `Tu vino estrella: ${star.name} (${plural(star.bottles, 'botella', 'botellas')}, ${$(star.revenue)}${ctx.top.length > 1 && share > 0.25 ? `, ${pctTxt(share)} de lo que facturaste en vinos` : ''}).`,
     )
   }
 
@@ -672,7 +691,9 @@ export function buildDashboard(period: Period, ref: string = today()): Dashboard
   const cashTotal = round2(accounts.reduce((s, a) => s + a.balance, 0))
 
   const low = lowStock()
-  const top = salesByProduct(from, to).slice(0, 6)
+  const byProduct = salesByProduct(from, to)
+  const top = byProduct.slice(0, 6)
+  const wineRevenue = round2(byProduct.reduce((a, p) => a + p.revenue, 0))
   const channels = salesByChannel(from, to).map((c) => ({
     ...c,
     label: (SALE_CHANNEL_LABELS[c.channel as SaleChannel] ?? c.channel).replace(/\s*\(.*\)\s*$/, ''),
@@ -685,7 +706,7 @@ export function buildDashboard(period: Period, ref: string = today()): Dashboard
 
   const ctx = { ref, period, summary, comparison, cashTotal, low, goal, earlyMonth }
   const alerts = buildAlerts(ctx)
-  const insights = buildInsights({ ...ctx, top, channels })
+  const insights = buildInsights({ ...ctx, top, wineRevenue, channels })
 
   const count = (table: string) => scalar<number>(`SELECT COUNT(*) FROM ${table}`) ?? 0
   return {
@@ -758,6 +779,13 @@ router.get('/dashboard/export', async (req, res) => {
   ]
   const snapshot = [
     { concept: 'Plata disponible (todas las cuentas)', value: d.cash.total },
+    ...(d.cash.scheduled.out > 0.5 || d.cash.scheduled.in > 0.5
+      ? [
+          { concept: '   Pagos programados (ya cargados, salen más adelante)', value: -d.cash.scheduled.out },
+          { concept: '   Cobros programados (ya cargados, entran más adelante)', value: d.cash.scheduled.in },
+          { concept: '   Plata disponible cuando se muevan los programados', value: round2(d.cash.total - d.cash.scheduled.out + d.cash.scheduled.in) },
+        ]
+      : []),
     { concept: 'Te deben (ventas sin cobrar)', value: d.receivables.total },
     { concept: 'Debés (compras y gastos sin pagar)', value: d.payables.total },
     { concept: 'Stock valorizado al costo', value: d.stock.value },
@@ -835,7 +863,7 @@ router.get('/dashboard/export', async (req, res) => {
         { header: 'Facturado', key: 'revenue', type: 'money' },
         { header: 'Costo', key: 'cost', type: 'money' },
         { header: 'Ganancia bruta', key: 'profit', type: 'money' },
-        { header: 'Margen', key: 'margin', type: 'percent' },
+        { header: 'Margen bruto', key: 'margin', type: 'percent' },
       ],
       rows: salesByProduct(period.from, period.to),
       notes: ['Facturado = cantidad × precio de cada renglón (sin repartir descuentos ni envíos). Ganancia bruta = facturado − costo de esas botellas.'],
@@ -850,10 +878,10 @@ router.get('/dashboard/export', async (req, res) => {
         { header: 'Cantidad de ventas', key: 'count', type: 'int' },
         { header: 'Costo del vino', key: 'cost', type: 'money' },
         { header: 'Comisiones', key: 'fees', type: 'money' },
-        { header: 'Lo que te dejó', key: 'profit', type: 'money' },
+        { header: 'Te quedó (después de comisiones)', key: 'profit', type: 'money' },
       ],
       rows: d.by_channel,
-      notes: ['"Lo que te dejó" = ventas − costo del vino − comisiones de cobro de ese canal (antes de los gastos generales).'],
+      notes: ['"Te quedó" = ventas − costo del vino − comisiones de cobro de ese canal (antes de los gastos generales).'],
     },
     {
       name: 'Alertas',

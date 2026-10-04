@@ -12,6 +12,7 @@ import { addDays, today } from '@shared/dates'
 import type { AccountWithBalance, Product } from '@shared/types'
 import { api } from '@/lib/api'
 import { boxes, bottles as fmtBottles, date as fmtDate, dateShort, int, money, pct } from '@/lib/format'
+import { beforeAltaText, winesBeforeAlta } from '@/lib/alta'
 import { useApi, useApiMutation, useSettings } from '@/lib/queries'
 import {
   AccountSelect,
@@ -138,6 +139,15 @@ export function PurchaseFormModal({
   }, [open, purchase?.id])
 
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products])
+  // Aviso (no bloquea): compra con fecha anterior al alta de algún vino elegido.
+  const beforeAlta = beforeAltaText(
+    winesBeforeAlta(
+      products,
+      f.rows.map((r) => r.productId),
+      f.date,
+    ),
+    'compra',
+  )
   const originalItem = useMemo(() => new Map((purchase?.items ?? []).map((i) => [i.product_id, i])), [purchase])
 
   // Precio sugerido para cada vino: el de su última factura (mejor si es del mismo proveedor).
@@ -208,7 +218,13 @@ export function PurchaseFormModal({
   const errors = useMemo(() => {
     const e: Record<string, string> = {}
     if (!f.date) e.date = 'Poné la fecha de la compra (la de la factura o el día que llegó el vino).'
-    if (!filled.length) e.items = 'Elegí al menos un vino.'
+    // Un renglón con botellas o precio pero sin vino nunca se descarta en silencio (el stock y la deuda quedarían mal).
+    for (const r of f.rows) {
+      if (r.productId == null && (r.qty != null || r.cost != null)) {
+        e[`wine-${r.key}`] = 'Este renglón tiene botellas o precio pero no dice qué vino es: elegí el vino o borralo con el tachito.'
+      }
+    }
+    if (!filled.length && !Object.keys(e).some((k) => k.startsWith('wine-'))) e.items = 'Elegí al menos un vino.'
     for (const r of filled) {
       if (!r.qty || r.qty < 1) e[`qty-${r.key}`] = 'Poné cuántas botellas entraron (1 o más).'
       if (r.cost == null) e[`cost-${r.key}`] = 'Poné el precio por botella de la factura (puede ser $ 0 si vino bonificado).'
@@ -361,7 +377,20 @@ export function PurchaseFormModal({
                 <Field className="sm:col-span-2" label="Proveedor" hint="La bodega o distribuidora. Si es nueva, escribí el nombre y tocá «Agregar proveedor».">
                   <SupplierSelect value={f.supplierId} onChange={(id) => set({ supplierId: id })} placeholder="Elegí o escribí un proveedor…" />
                 </Field>
-                <Field label="Fecha" required error={shownErrors.date} hint="La de la factura o el día que llegó el vino.">
+                <Field
+                  label="Fecha"
+                  required
+                  error={shownErrors.date}
+                  hint={
+                    beforeAlta ? (
+                      <span className="font-semibold text-warn" data-testid="before-alta">
+                        {beforeAlta}
+                      </span>
+                    ) : (
+                      'La de la factura o el día que llegó el vino.'
+                    )
+                  }
+                >
                   <div data-error={!!shownErrors.date}>
                     <DateInput value={f.date} onChange={(v) => set({ date: v })} max="2100-12-31" aria-invalid={!!shownErrors.date || undefined} />
                   </div>
@@ -407,7 +436,8 @@ export function PurchaseFormModal({
                       const rowSub = round2((r.qty ?? 0) * (r.cost ?? 0))
                       const qtyErr = shownErrors[`qty-${r.key}`]
                       const costErr = shownErrors[`cost-${r.key}`]
-                      const emptyErr = !!shownErrors.items && idx === 0
+                      const wineErr = shownErrors[`wine-${r.key}`]
+                      const emptyErr = (!!shownErrors.items && idx === 0) || !!wineErr
                       const inactiveName = r.productId && !p ? originalItem.get(r.productId)?.product_name : null
                       return (
                         <li key={r.key} data-error={!!(qtyErr || costErr || emptyErr)} className="rounded-2xl border border-line bg-paper p-3 sm:border-0 sm:bg-transparent sm:p-0">
@@ -489,6 +519,7 @@ export function PurchaseFormModal({
                           {r.cost === 0 && r.productId != null && (
                             <p className="mt-0.5 px-0.5 text-[12.5px] text-muted">Va sin cargo (bonificado): solo le toca su parte del flete.</p>
                           )}
+                          {wineErr && <p className="mt-0.5 px-0.5 text-[13px] font-semibold text-bad">{wineErr}</p>}
                           {qtyErr && <p className="mt-0.5 px-0.5 text-[13px] font-semibold text-bad">{qtyErr}</p>}
                           {costErr && <p className="mt-0.5 px-0.5 text-[13px] font-semibold text-bad">{costErr}</p>}
                         </li>

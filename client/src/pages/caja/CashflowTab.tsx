@@ -162,10 +162,10 @@ export function CashflowTab({ range, setRange, onNew }: { range: FlowRange; setR
                   {totals.net < 0 ? '−' : '+'}
                   {moneyCompact(Math.abs(totals.net))}
                 </span>
-                <SignedMoney value={totals.net} strong={false} className="hidden sm:inline" />
+                <SignedMoney value={totals.net} strong={false} decimals={0} className="hidden sm:inline" />
               </>
             ) : (
-              <SignedMoney value={totals.net} strong={false} />
+              <SignedMoney value={totals.net} strong={false} decimals={0} />
             )
           }
           title={money(totals.net)}

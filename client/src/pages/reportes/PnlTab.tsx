@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronDown, Receipt, Store } from 'lucide-react'
 import { CHART_COLORS } from '@shared/constants'
-import { endOfMonth, monthKey, today, type Period } from '@shared/dates'
+import { monthKey, today, type Period } from '@shared/dates'
 import type { MonthlyPoint } from '@shared/types'
 import type { GlossaryKey } from '@/lib/glossary'
 import { int, pct } from '@/lib/format'
@@ -86,7 +86,6 @@ const LINES: Line[] = [
   },
 ]
 
-const isPartial = (month: string) => month === monthKey(today()) && today() < endOfMonth(today())
 const totalOut = (m: Pick<MonthlyPoint, 'cogs' | 'fees' | 'shrinkage' | 'expenses'>) => m.cogs + m.fees + m.shrinkage + m.expenses
 
 // ───────────────────────── Frases ─────────────────────────
@@ -125,7 +124,7 @@ function pnlInsights(d: PnlReport): Insight[] {
       ),
     })
   }
-  const current = d.months.find((m) => isPartial(m.month))
+  const current = d.months.find((m) => m.partial && m.month === monthKey(today()))
   const day = Number(today().slice(8, 10))
   if (current && day <= 10 && current.net_result < 0 && current.expenses_fixed > 0) {
     out.push({
@@ -138,7 +137,7 @@ function pnlInsights(d: PnlReport): Insight[] {
       ),
     })
   }
-  const complete = d.months.filter((m) => !isPartial(m.month) && (m.sales > 0 || m.expenses > 0))
+  const complete = d.months.filter((m) => !m.partial && (m.sales > 0 || m.expenses > 0))
   if (complete.length >= 2) {
     const best = complete.reduce((a, b) => (b.net_result > a.net_result ? b : a))
     const worst = complete.reduce((a, b) => (b.net_result < a.net_result ? b : a))
@@ -214,7 +213,7 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
   const fmt = (v: number) => (full ? money0(v) : compact(v))
   const value = (line: Line, v: number, sales: number) => (line.pct ? (sales > 0 ? pct(v, 1) : '—') : fmt(v))
   const tone = (line: Line, v: number) => (line.signed && v < -0.004 ? 'text-bad' : line.key === 'net_result' && v > 0.004 ? 'text-good' : line.pct ? 'text-ink-soft' : 'text-ink')
-  const anyPartial = months.some((m) => isPartial(m.month))
+  const anyPartial = months.some((m) => m.partial)
   const showTotal = months.length > 1
   // Arranca mostrando los meses más recientes (a la derecha); se desliza para ver los anteriores.
   const scroller = useRef<HTMLDivElement>(null)
@@ -272,7 +271,11 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
                   )}
                 >
                   {m.label}
-                  {isPartial(m.month) && <span title="Mes en curso">*</span>}
+                  {m.partial && (
+                    <span className="block text-[11px] font-bold tracking-normal text-muted normal-case" title="Mes incompleto: no es un mes entero">
+                      {m.partial_note}
+                    </span>
+                  )}
                 </th>
               ))}
               {showTotal && (
@@ -353,7 +356,8 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
         {full ? 'Montos en pesos, sin centavos.' : 'Montos abreviados ("mil" = miles, "M" = millones).'}
         {!full && <span className="print:hidden"> Prendé «Montos completos» para verlos enteros.</span>} Los que te restan van sin signo en su columna.
         {scrollable && <span className="print:hidden"> Deslizá la tabla hacia los costados para ver los demás meses (arranca en los más recientes).</span>}
-        {anyPartial && ' * Mes en curso: todavía no terminó, así que sus números van a seguir cambiando.'}
+        {anyPartial &&
+          ' Los meses con una aclaración debajo están incompletos: «en curso» todavía no terminó (sus números van a seguir cambiando) y «15 al 28», por ejemplo, es que el período toma solo esos días. No los compares con un mes entero.'}
       </p>
     </>
   )
@@ -404,7 +408,7 @@ export function PnlTab({ period }: { period: Period }) {
           )
         }
         const rows = d.months.map((m) => ({
-          label: isPartial(m.month) ? `${m.label}*` : m.label,
+          label: m.partial ? `${m.label}*` : m.label,
           resultado: m.net_result,
           ventas: m.sales,
           salio: Math.round(totalOut(m)),
@@ -588,7 +592,7 @@ export function PnlTab({ period }: { period: Period }) {
             )}
             <p className="mt-3 text-[12.5px] text-muted">
               {int(d.months.length)} {d.months.length === 1 ? 'mes' : 'meses'}
-              {d.months.length > 1 && d.months.some((m) => isPartial(m.month)) && ' (* mes en curso: es normal que dé más bajo, todavía no terminó)'} · Comprar vino no es gasto: se vuelve costo recién
+              {d.months.length > 1 && d.months.some((m) => m.partial) && ` (* mes incompleto: ${d.months.filter((m) => m.partial).map((m) => `${m.label}, ${m.partial_note}`).join('; ')}. Es normal que dé más bajo)`} · Comprar vino no es gasto: se vuelve costo recién
               cuando vendés la botella. Por eso las compras no aparecen acá.
             </p>
           </>

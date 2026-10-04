@@ -17,9 +17,12 @@ export interface ExpenseCategoryByMonth {
   months: Record<string, number>
 }
 
+/** Mes del estado de resultados. `partial_note`: "15 al 28" / "en curso" si el mes está incompleto. */
+export type PnlMonth = MonthlyPoint & { partial: boolean; partial_note: string }
+
 export interface PnlReport {
   period: ReportPeriod
-  months: MonthlyPoint[]
+  months: PnlMonth[]
   total: PeriodSummary
   expenses_by_category: ExpenseCategoryByMonth[]
 }
@@ -47,6 +50,8 @@ export interface ProductReportRow {
   cumulative_share: number
   abc: AbcClass
   idle: boolean
+  /** Está en el sistema hace menos de 90 días: si no se vendió, no es «quieto» todavía. */
+  is_new: boolean
   last_sale: string | null
 }
 
@@ -119,10 +124,15 @@ export interface ClientsReport {
 export interface ExpensesReport {
   period: ReportPeriod
   by_category: { category: string; nature: string; total: number; count: number; share: number; monthly_avg: number }[]
-  by_month: { month: string; label: string; fixed: number; variable: number; total: number; sales: number; pct_of_sales: number | null; partial: boolean }[]
+  by_month: { month: string; label: string; fixed: number; variable: number; total: number; sales: number; pct_of_sales: number | null; partial: boolean; partial_note: string }[]
   totals: { total: number; fixed: number; variable: number; sales: number }
+  /** Promedios y equilibrio: con los meses completos (avg_months). */
   fixed_avg: number
   months_for_avg: number
+  avg_months: string[]
+  /** 'last_3': el período no tiene meses completos → últimos 3 meses completos (como Calculadora y Metas). */
+  avg_basis: 'period' | 'last_3'
+  avg_sales: number
   variable_pct_of_sales: number
   contribution_margin: number
   break_even_monthly: number | null
@@ -139,6 +149,7 @@ export interface InflationMonthRow {
   real_growth_vs_prev: number | null
   nominal_growth_vs_prev: number | null
   partial: boolean
+  partial_note: string
 }
 
 export interface InflationReport {

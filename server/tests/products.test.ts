@@ -123,6 +123,25 @@ describe('catálogo', () => {
     expect(row.days_of_stock).toBe(195)
   })
 
+  it('un vino nuevo se mide con los días que lleva (no aparece como «parado» ni con stock para años)', async () => {
+    const nuevo = await newWine({ initial_stock: 60 }) // alta hoy
+    const quieto = await newWine({ name: 'Viejo sin ventas', initial_stock: 10 })
+    run("UPDATE stock_movements SET date = ? WHERE product_id = ? AND kind = 'inicial'", [addDays(today(), -200), quieto.id])
+    createSale(saleInput.parse({ date: today(), items: [{ product_id: nuevo.id, qty: 3, unit_price: 12500 }] }))
+    const rows = (await s.get('/products')).body
+    const n = rows.find((r: any) => r.id === nuevo.id)
+    expect(n).toMatchObject({ is_new: true, rate_days: 1, alta_date: today(), first_date: today(), sold_90d: 3 })
+    // 57 botellas ÷ 3 por día = 19 días (y no 57 ÷ (3/90) = 1.710 días de «plata parada»).
+    expect(n.days_of_stock).toBe(19)
+    const q = rows.find((r: any) => r.id === quieto.id)
+    expect(q).toMatchObject({ is_new: false, rate_days: 90, days_of_stock: null })
+    // En Reportes, el que no se vendió y es viejo es «quieto»; uno nuevo sin ventas queda marcado como nuevo.
+    const sinVentas = await newWine({ name: 'Recién llegado', initial_stock: 12 })
+    const rep = (await s.get(`/reports/products?from=${addDays(today(), -30)}&to=${today()}`)).body
+    expect(rep.find((r: any) => r.product_id === quieto.id)).toMatchObject({ idle: true, is_new: false })
+    expect(rep.find((r: any) => r.product_id === sinVentas.id)).toMatchObject({ idle: true, is_new: true })
+  })
+
   it('editar no toca el costo ni el stock', async () => {
     const p = await newWine()
     const r = await s.put(`/products/${p.id}`, { ...base, name: 'Malbec Clásico 2024', price_retail: 13000, unit_cost: 1, initial_stock: 999, min_stock: 10 })
@@ -167,9 +186,8 @@ describe('ajustes de stock y costo', () => {
       ['degustacion', 1, 17],
       ['regalo', 3, 14],
       ['consumo', 1, 13],
-      ['devolucion', 2, 15],
-      ['ajuste', -4, 11],
-      ['ajuste', 1, 12],
+      ['ajuste', -4, 9],
+      ['ajuste', 1, 10],
     ]
     for (const [kind, qty, expected] of cases) {
       const r = await s.post(`/products/${p.id}/adjust`, { date: today(), kind, qty })
@@ -177,10 +195,36 @@ describe('ajustes de stock y costo', () => {
       expect(r.body.stock, kind).toBe(expected)
     }
     const qtys = all<{ kind: string; qty: number }>("SELECT kind, qty FROM stock_movements WHERE product_id = ? AND kind <> 'inicial' ORDER BY id", [p.id])
-    expect(qtys.map((m) => m.qty)).toEqual([-2, -1, -3, -1, 2, -4, 1])
+    expect(qtys.map((m) => m.qty)).toEqual([-2, -1, -3, -1, -4, 1])
     // Aunque el usuario mande negativo en una rotura, sale igual (no suma).
     const neg = await s.post(`/products/${p.id}/adjust`, { date: today(), kind: 'rotura', qty: -1 })
-    expect(neg.body.stock).toBe(11)
+    expect(neg.body.stock).toBe(9)
+  })
+
+  it('una devolución no se carga a mano: explica que se corrige la venta (así no queda stock sin su contrapartida)', async () => {
+    const p = await newWine({ initial_stock: 5 })
+    const r = await s.post(`/products/${p.id}/adjust`, { date: today(), kind: 'devolucion', qty: 1 })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toContain('Las devoluciones de clientes se cargan desde la venta')
+    expect(get<{ stock: number }>('SELECT stock FROM products WHERE id = ?', [p.id])!.stock).toBe(5)
+  })
+
+  it('las devoluciones viejas (cargadas a mano antes) cuentan como merma negativa: el stock a costo cierra con el resultado', async () => {
+    const p = await newWine({ initial_stock: 10 }) // 10 × 7.200 = 72.000
+    const T = today()
+    // Movimiento viejo: entra 1 botella sin venta asociada.
+    run("INSERT INTO stock_movements (product_id, date, kind, qty, unit_cost) VALUES (?, ?, 'devolucion', 1, 0)", [p.id, T])
+    const { recalcProduct } = await import('../services/stock')
+    recalcProduct(p.id)
+    const { periodSummary, stockValue } = await import('../services/finance')
+    const sum = periodSummary(T, T)
+    // Entró 1 botella a costo (7.200): es un sobrante, así que la merma del día es −7.200 y el resultado +7.200.
+    expect(sum.shrinkage).toBe(-7200)
+    // stock inicial (72.000) + compras (0) − costo vendido (0) − mermas (−7.200) = stock final (79.200).
+    expect(stockValue().value).toBe(72000 - sum.cogs - sum.shrinkage)
+    // Se puede ver y borrar desde la ficha del vino.
+    const mv = get<{ id: number }>("SELECT id FROM stock_movements WHERE product_id = ? AND kind = 'devolucion'", [p.id])!
+    expect((await s.del(`/stock/movements/${mv.id}`)).status).toBe(200)
   })
 
   it('conteo: la diferencia (contadas − sistema) deja el stock en lo contado', async () => {
@@ -251,6 +295,20 @@ describe('ajustes de stock y costo', () => {
 })
 
 describe('ficha del vino y movimientos', () => {
+  it('el saldo del historial sigue el mismo orden que el costo (en el día, primero lo que entra)', async () => {
+    const p = await newWine({ initial_stock: 10, unit_cost: 1000 })
+    // La venta se carga ANTES que la compra del mismo día: igual, el costo y el saldo la ponen después.
+    const saleId = createSale(saleInput.parse({ date: today(), items: [{ product_id: p.id, qty: 2, unit_price: 3000 }] }))
+    createPurchase(purchaseInput.parse({ date: today(), items: [{ product_id: p.id, qty: 10, unit_cost: 2000 }], paid: false }))
+    expect(get<{ unit_cost: number }>('SELECT unit_cost FROM sale_items WHERE sale_id = ?', [saleId])!.unit_cost).toBe(1500)
+    const d = (await s.get(`/products/${p.id}`)).body
+    expect(d.movements.map((m: { kind: string; saldo: number }) => [m.kind, m.saldo])).toEqual([
+      ['venta', 18],
+      ['compra', 20],
+      ['inicial', 10],
+    ])
+  })
+
   it('devuelve kardex con saldo, referencias, estadísticas y 12 meses', async () => {
     const p = await newWine({ initial_stock: 10, unit_cost: 1000 })
     const client = run("INSERT INTO clients (name) VALUES ('Bistró La Esquina')").lastInsertRowid
@@ -340,6 +398,15 @@ describe('aumento de precios masivo', () => {
 })
 
 describe('importar desde Excel', () => {
+  it('un Excel con más de 3.000 filas se corta enseguida con un mensaje claro (no se carga nada)', async () => {
+    const rows: unknown[][] = [['Nombre', 'Precio minorista']]
+    for (let i = 0; i < 3001; i++) rows.push([`Vino ${i}`, 1000])
+    const r = await upload(await xlsxBuffer(rows))
+    expect(r.status).toBe(400)
+    expect(r.body.error).toContain('Son demasiadas filas')
+    expect(all('SELECT id FROM products')).toHaveLength(0)
+  })
+
   it('crea vinos nuevos, actualiza existentes y reporta errores por fila', async () => {
     const existing = await newWine({ name: 'Torrontés Dulce', sku: 'VH-9', price_retail: 9000, unit_cost: 5000, initial_stock: 6 })
     const malbec = await newWine({ name: 'Malbec Reserva', price_retail: 20000, unit_cost: 12000 })

@@ -1,4 +1,4 @@
-// Detalle de una venta: qué se llevó, cuánto te costó, cuánto te dejó y qué falta cobrar.
+// Detalle de una venta: qué se llevó, cuánto te costó, cuánto te quedó y qué falta cobrar.
 // Desde acá se registra un cobro, se edita, se borra o se imprime el comprobante.
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -203,7 +203,7 @@ export function SaleDetailModal({
                 Qué se llevó
                 <InfoTip
                   title="Costo y ganancia por vino"
-                  text="El costo es el de cada botella el día de la venta (costo promedio de tus compras). Queda congelado: si después el vino aumenta, esta venta conserva su ganancia real. La ganancia de cada renglón es (precio − costo) × cantidad, antes del descuento, el envío y la comisión de toda la venta (esos van abajo, en «Cuánto te dejó»)."
+                  text="El costo es el de cada botella el día de la venta (costo promedio de tus compras). Queda congelado: si después el vino aumenta, esta venta conserva su ganancia real. La ganancia de cada renglón es (precio − costo) × cantidad, antes del descuento, el envío y la comisión de toda la venta (esos van abajo, en «Cuánto te quedó»)."
                 />
               </h3>
               <div className="vh-scroll overflow-x-auto rounded-2xl border border-line bg-paper">
@@ -215,7 +215,9 @@ export function SaleDetailModal({
                       <th className="hidden px-3 py-2 text-right sm:table-cell">Precio</th>
                       <th className="hidden px-3 py-2 text-right sm:table-cell">Costo</th>
                       <th className="px-3 py-2 text-right">Subtotal</th>
-                      <th className="hidden px-3 py-2 text-right sm:table-cell">Ganancia</th>
+                      <th className="hidden px-3 py-2 text-right sm:table-cell" title="Precio − costo de cada botella (antes de la comisión)">
+                        Ganancia bruta
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -266,7 +268,7 @@ export function SaleDetailModal({
             <div className="grid gap-6 sm:grid-cols-2">
               {/* Cuentas de la venta */}
               <section>
-                <h3 className="mb-1 text-[16px] font-extrabold text-ink">Cuánto te dejó</h3>
+                <h3 className="mb-1 text-[16px] font-extrabold text-ink">Cuánto te quedó</h3>
                 <Row label="Vinos e ítems" value={money(s.subtotal)} />
                 {s.discount > 0 && <Row label="Descuento" value={`− ${money(s.discount)}`} />}
                 {s.shipping > 0 && <Row label="Envío cobrado" value={`+ ${money(s.shipping)}`} />}
@@ -293,13 +295,13 @@ export function SaleDetailModal({
                     label={
                       <>
                         Te quedó
-                        <InfoTip title="Ganancia de la venta" text="Total − costo de las botellas − comisión. Todavía no descuenta gastos fijos (alquiler, sueldos): el resultado final está en Reportes." />
+                        <InfoTip term="te_quedo" />
                       </>
                     }
                     value={money(s.profit)}
                     tone={s.profit < 0 ? 'bad' : 'good'}
                   />
-                  <p className="text-right text-[13px] text-muted">Margen {pct(margin)}</p>
+                  <p className="text-right text-[13px] text-muted">Es el {pct(margin)} del total</p>
                 </div>
               </section>
 
@@ -359,6 +361,7 @@ export function SaleDetailModal({
           balance={s.balance}
           description={`Venta #${s.id} · ${s.client_name || 'Consumidor final'}`}
           defaultAccountId={defaultAccount}
+          sale={{ payment_method: s.payment_method, total: s.total, fee: s.fee, paid: s.paid }}
           open={settling}
           onClose={() => setSettling(false)}
         />

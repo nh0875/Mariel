@@ -236,7 +236,7 @@ export default function VentasPage() {
     },
     {
       key: 'profit',
-      header: 'Ganancia',
+      header: 'Te quedó',
       align: 'right',
       hideBelow: 'md',
       cell: (r) => <Money value={r.profit} decimals={0} tone={r.profit < 0 ? 'auto' : 'none'} className="text-ink-soft" />,
@@ -354,14 +354,14 @@ export default function VentasPage() {
               hint={s.bottles >= 6 ? `≈ ${boxes(s.bottles)}` : s.count ? `${fmtBottles(s.bottles)}` : '—'}
             />
             <KpiTile
-              label="Ganancia"
+              label="Te quedó"
               className="md:col-span-3 min-[87.5rem]:col-span-1"
               tone="orange"
               info={{
-                title: 'Ganancia de las ventas',
+                title: 'Te quedó (después de comisiones)',
                 text: (
                   <>
-                    <p>Lo que te dejaron las ventas después de pagar el vino y las comisiones.</p>
+                    <p>Lo que te dejaron las ventas después de pagar el vino y las comisiones. Es la «ganancia bruta» de Inicio y Reportes menos las comisiones de cobro.</p>
                     <p className="mt-2 rounded-lg bg-cream-deep px-2.5 py-1.5 font-semibold text-ink">Ventas − costo de las botellas − comisiones</p>
                     <p className="mt-2">
                       Este período: {money(s.total)} − {money(s.cost)} − {money(s.fees)}. Todavía no descuenta los gastos fijos (alquiler, sueldos…): el resultado final está en
@@ -378,7 +378,7 @@ export default function VentasPage() {
               hint={
                 s.total ? (
                   <>
-                    <span className="whitespace-nowrap">Margen {pct(s.margin)}</span> · comisiones <M n={s.fees} />
+                    <span className="whitespace-nowrap">{pct(s.margin)} de lo vendido</span> · comisiones <M n={s.fees} />
                   </>
                 ) : (
                   '—'
@@ -447,7 +447,7 @@ export default function VentasPage() {
                     { key: 'label', header: 'Canal' },
                     { key: 'count', header: 'Ventas', align: 'right', format: (v) => int(Number(v)) },
                     { key: 'total', header: 'Total', align: 'right', format: (v) => money(Number(v)) },
-                    { key: 'profit', header: 'Te dejó', align: 'right', format: (v) => money(Number(v)) },
+                    { key: 'profit', header: 'Te quedó', align: 'right', format: (v) => money(Number(v)) },
                   ],
                   rows: s.by_channel,
                 }}

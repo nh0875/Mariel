@@ -336,7 +336,7 @@ function YourData() {
       body: (
         <ol className="ml-4 list-decimal space-y-1 marker:font-bold marker:text-brown">
           <li>
-            <b>La más fácil:</b> cerrá el programa y copiá la carpeta completa de VINOH! (con la carpeta data adentro) a un pendrive. En la otra compu, pegala y abrí el archivo «INICIAR-VINOH» (el de Windows o el de Mac, según la compu).
+            <b>La más fácil:</b> cerrá el programa (la ventana negra) y copiá la carpeta completa de VINOH! (con la carpeta data adentro) a un pendrive. En la otra compu, pegala y abrí el archivo «INICIAR-VINOH» (el de Windows o el de Mac, según la compu). La primera vez se da cuenta de que es otra computadora y reinstala lo necesario (hace falta internet esa vez).
           </li>
           <li>
             <b>Con una copia:</b> en esta compu, Configuración → Copias de seguridad → «Hacer una copia ahora» y «Descargar». En la otra (con VINOH! ya instalado), «Restaurar desde un archivo».

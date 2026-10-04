@@ -274,6 +274,14 @@ describe('Arqueo', () => {
     expect(r.body.error).toMatch(/no puede ser futura/)
     expect(get('SELECT COUNT(*) AS n FROM payments')).toEqual({ n: 0 })
   })
+
+  it('no acepta un arqueo con una fecha que no existe (30 de febrero)', async () => {
+    const caja = acc('Caja').id
+    const r = await t.post(`/accounts/${caja}/reconcile`, { date: '2026-02-30', counted: 5 })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toMatch(/esa fecha no existe/)
+    expect(get('SELECT COUNT(*) AS n FROM payments')).toEqual({ n: 0 })
+  })
 })
 
 describe('GET /movements', () => {
@@ -445,13 +453,54 @@ describe('GET /pending', () => {
     expect(r.expected_balance).toBe(100000 + 10000 - r.next_30_days_out)
   })
 
+  it('suma aparte lo programado: pagos ya cargados como pagados con fecha más adelante (ej. gastos fijos generados)', async () => {
+    const banco = acc('Banco').id
+    await t.post('/movements', { date: T, kind: 'aporte', amount: 500000, account_id: banco })
+    const before = (await t.get('/pending')).body.projection
+    // Gasto fijo "pagado" con débito dentro de 5 días: el documento figura pagado, la plata todavía no salió.
+    expense({ date: addDays(T, 5), amount: 120000, paid: true, account_id: banco, description: 'Alquiler (débito)' })
+    // Un cobro programado (ej. un cheque a depositar) y uno fuera de la ventana de 30 días.
+    await t.post('/movements', { date: addDays(T, 3), kind: 'otro_ingreso', amount: 20000, account_id: banco, description: 'Cheque a depositar' })
+    expense({ date: addDays(T, 45), amount: 9999, paid: true, account_id: banco, description: 'Lejano' })
+    const r = (await t.get('/pending')).body
+    const pr = r.projection
+    // Ya no está en lo que debés (figura pagado) ni en la plata de hoy…
+    expect(r.totals.payables).toBe(0)
+    expect(pr.cash_now).toBe(500000)
+    // …pero la proyección lo resta igual, así que no "mejora" por haberlo generado.
+    expect(pr.out_breakdown.scheduled).toBe(120000)
+    expect(pr.in_breakdown.scheduled).toBe(20000)
+    expect(pr.next_30_days_out).toBe(before.next_30_days_out + 120000)
+    expect(pr.expected_balance).toBe(500000 + 20000 - 120000)
+    expect(pr.scheduled_items.map((x: any) => [x.label, x.direction, x.amount])).toEqual([
+      ['Cheque a depositar', 'in', 20000],
+      ['Alquiler (débito)', 'out', 120000],
+    ])
+    // Las tarjetas de cuentas: "este mes" hasta hoy, lo programado aparte (sin contar lo de otro mes).
+    const b = (await t.get('/accounts')).body.find((a: any) => a.id === banco)
+    expect(b.balance).toBe(500000)
+    expect(b.month_out).toBe(0)
+    const sameMonth = (d: string) => d.slice(0, 7) === T.slice(0, 7)
+    expect(b.month_scheduled_out).toBe(sameMonth(addDays(T, 5)) ? 120000 : 0)
+    expect(b.month_scheduled_in).toBe(sameMonth(addDays(T, 3)) ? 20000 : 0)
+    // El Excel lo muestra en la proyección y en su propia hoja.
+    const res = await t.raw('/pending/export')
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await res.arrayBuffer())
+    const proj = wb.getWorksheet('Próximos 30 días')!
+    const labels: string[] = []
+    proj.eachRow((row) => labels.push(String(row.getCell(1).value ?? '')))
+    expect(labels.some((l) => l.startsWith('− Pagos programados'))).toBe(true)
+    expect(wb.getWorksheet('Programados')!.rowCount).toBeGreaterThan(3)
+  })
+
   it('exporta por cobrar, por pagar y la proyección a Excel', async () => {
     sale({ paid: false })
     const res = await t.raw('/pending/export')
     expect(res.status).toBe(200)
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(await res.arrayBuffer())
-    expect(wb.worksheets.map((w) => w.name)).toEqual(['Por cobrar', 'Por pagar', 'Próximos 30 días'])
+    expect(wb.worksheets.map((w) => w.name)).toEqual(['Por cobrar', 'Por pagar', 'Próximos 30 días', 'Programados'])
     expect(wb.getWorksheet('Por cobrar')!.getRow(5).getCell(8).value).toBe(5000)
   })
 })

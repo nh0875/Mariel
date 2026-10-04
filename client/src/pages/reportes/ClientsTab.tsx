@@ -107,7 +107,7 @@ export function ClientsTab({ period }: { period: Period }) {
           { key: 'share', header: '% de tus ventas', align: 'right', hideBelow: 'sm', cell: (r) => pct(r.share, 1) },
           { key: 'count', header: 'Compras', align: 'right', hideBelow: 'md', cell: (r) => int(r.count) },
           { key: 'bottles', header: 'Botellas', align: 'right', hideBelow: 'lg', cell: (r) => int(r.bottles) },
-          { key: 'profit', header: 'Te dejó', align: 'right', hideBelow: 'lg', cell: (r) => <span className={r.profit < 0 ? 'text-bad' : undefined}>{money0(r.profit)}</span> },
+          { key: 'profit', header: 'Te quedó', align: 'right', hideBelow: 'lg', cell: (r) => <span className={r.profit < 0 ? 'text-bad' : undefined}>{money0(r.profit)}</span> },
           {
             key: 'last_purchase',
             header: 'Última compra',
@@ -213,7 +213,7 @@ export function ClientsTab({ period }: { period: Period }) {
                 }
               />
               <p className="mt-2 text-[12.5px] text-muted">
-                «Te dejó» = lo que compró − costo del vino − comisiones de cobro. «Última compra» es la más reciente de toda la historia, no solo del período.
+                «Te quedó» = lo que compró − costo del vino − comisiones de cobro. «Última compra» es la más reciente de toda la historia, no solo del período.
               </p>
             </section>
           </>

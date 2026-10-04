@@ -78,9 +78,30 @@ export const FAQ: FaqItem[] = [
             Para corregirla tocá <b>«Editar»</b>; para anularla del todo, <b>«Borrar»</b>.
           </li>
         </Steps>
-        Al borrarla, las botellas vuelven al stock y se borran sus cobros y comisiones. Si el cliente te devolvió solo algunas botellas, editá la venta o cargá una «Devolución de cliente» desde la
-        ficha del vino → «Ajustar stock».
+        Al borrarla, las botellas vuelven al stock y se borran sus cobros y comisiones. Si el cliente te devolvió solo algunas botellas, mirá{' '}
+        <L to="/ayuda#faq-devolucion">cómo cargo una devolución</L>.
         <Why>Todo se recalcula solo (stock, costo, caja y reportes), así los números siempre cierran aunque te hayas equivocado.</Why>
+      </>
+    ),
+  },
+  {
+    id: 'faq-devolucion',
+    q: '¿Cómo cargo que un cliente me devolvió una botella?',
+    keywords: 'devolución devolver cambio cliente reintegro botella vuelve stock',
+    a: (
+      <>
+        <Steps>
+          <li>
+            En <L to="/ventas">Ventas</L>, buscá la venta de esa botella y abrila.
+          </li>
+          <li>
+            Tocá <b>«Editar»</b>, sacá la botella devuelta (o bajá la cantidad) y guardá. Si te devolvió todo, podés <b>«Borrar»</b> la venta.
+          </li>
+          <li>Si le devolviste la plata, en el detalle de la venta borrá o corregí el cobro (o cargá el reintegro como movimiento en Caja).</li>
+          <li>Si fue un cambio por otro vino, agregá el vino nuevo en esa misma venta.</li>
+        </Steps>
+        No se carga en «Ajustar stock»: ahí la botella volvería al stock pero la venta seguiría contando como vendida.
+        <Why>Corrigiendo la venta, todo queda en su lugar: la botella vuelve al stock, la venta y su ganancia bajan, y la caja coincide con lo que pasó de verdad.</Why>
       </>
     ),
   },
@@ -137,7 +158,8 @@ export const FAQ: FaqItem[] = [
           </li>
           <li>Escribí cuántas contaste: el sistema calcula la diferencia y la registra.</li>
         </Steps>
-        Si faltan botellas, cuentan como merma (a su costo); si sobran, vuelven al stock.
+        Si faltan botellas, cuentan como merma (a su costo). Si sobran, vuelven al stock y son un <b>sobrante</b>: restan de las mermas (a costo), así que el resultado sube un poco. Ojo: si
+        sobra porque un cliente te la devolvió, eso se carga corrigiendo la venta, no acá.
         <Why>Un stock que no coincide con la realidad te hace pedir de más o quedarte sin vino. Contar una vez por mes alcanza para tenerlo al día.</Why>
       </>
     ),

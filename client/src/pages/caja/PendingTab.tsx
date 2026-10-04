@@ -10,7 +10,7 @@ import { useApi, useSettings } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, InfoTip, Loading, type Column } from '@/components/ui'
 import { SettlementModal } from '@/components/forms/SettlementModal'
 import { SummaryLine, nb } from './parts'
-import type { PayableRow, PendingResult, Projection, ReceivableRow } from './types'
+import type { PayableRow, PendingResult, Projection, ReceivableRow, ScheduledItem } from './types'
 
 /** "Vencida hace 12 días" / "Vence en 5 días" / "Sin fecha". */
 function DueBadge({ due, overdue, daysOverdue }: { due: string | null; overdue: boolean; daysOverdue: number }) {
@@ -53,6 +53,36 @@ const Op = ({ icon: Icon }: { icon: typeof Plus }) => (
   </span>
 )
 
+/** Detalle de los movimientos programados (máx. 8 renglones, el resto se resume). */
+function ScheduledLines({ items }: { items: ScheduledItem[] }) {
+  if (!items.length) return null
+  const shown = items.slice(0, 8)
+  const rest = items.slice(8)
+  return (
+    <>
+      {shown.map((r) => (
+        <SummaryLine
+          key={r.id}
+          muted
+          label={
+            <span className="truncate pl-3 text-[13.5px]">
+              {r.label} · {dateShort(r.date)} · {r.account_name}
+            </span>
+          }
+          value={<span className="text-[13.5px]">{money(r.amount)}</span>}
+        />
+      ))}
+      {rest.length > 0 && (
+        <SummaryLine
+          muted
+          label={<span className="truncate pl-3 text-[13.5px]">y {rest.length} más</span>}
+          value={<span className="text-[13.5px]">{money(rest.reduce((s, r) => s + r.amount, 0))}</span>}
+        />
+      )}
+    </>
+  )
+}
+
 function ProjectionCard({ p }: { p: Projection }) {
   const [open, setOpen] = useState(false)
   const short = p.expected_balance < 0
@@ -69,7 +99,9 @@ function ProjectionCard({ p }: { p: Projection }) {
             text={
               <>
                 Una cuenta simple: la plata que tenés hoy, más lo que te tienen que pagar (lo vencido, lo que vence en los próximos 30 días y las ventas a cuenta sin fecha), menos lo que tenés
-                que pagar (lo mismo) y los gastos fijos del mes que todavía no cargaste. No incluye ventas ni compras que todavía no hiciste.
+                que pagar (lo mismo) y los gastos fijos del mes que todavía no cargaste. También suma y resta lo <b>programado</b>: pagos y cobros que ya cargaste con una fecha que todavía
+                no llegó (por ejemplo, gastos fijos generados como pagados para el día 20). Figuran como pagados, pero la plata se mueve ese día, así que la plata de hoy todavía no los
+                descuenta. No incluye ventas ni compras que todavía no hiciste.
               </>
             }
           />
@@ -86,7 +118,14 @@ function ProjectionCard({ p }: { p: Projection }) {
           label="Tenés que pagar"
           value={p.next_30_days_out}
           tone="out"
-          sub={p.out_breakdown.fixed > 0 ? `Incluye ${nb(money(p.out_breakdown.fixed, { decimals: 0 }))} de gastos fijos` : undefined}
+          sub={
+            [
+              p.out_breakdown.scheduled > 0 ? `${nb(money(p.out_breakdown.scheduled, { decimals: 0 }))} programado` : null,
+              p.out_breakdown.fixed > 0 ? `${nb(money(p.out_breakdown.fixed, { decimals: 0 }))} de gastos fijos sin cargar` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ') || undefined
+          }
         />
         <Op icon={Equal} />
         <EquationBox label="Te quedarían" value={p.expected_balance} tone="result" />
@@ -131,6 +170,8 @@ function ProjectionCard({ p }: { p: Projection }) {
             <SummaryLine label="Ventas ya vencidas" value={money(p.in_breakdown.overdue)} />
             <SummaryLine label="Vencen en los próximos 30 días" value={money(p.in_breakdown.upcoming)} />
             <SummaryLine label="Ventas a cuenta sin fecha" value={money(p.in_breakdown.no_date)} />
+            {p.in_breakdown.scheduled > 0 && <SummaryLine label="Cobros programados (ya cargados, entran más adelante)" value={money(p.in_breakdown.scheduled)} />}
+            <ScheduledLines items={p.scheduled_items.filter((r) => r.direction === 'in')} />
             <SummaryLine label="Total" value={money(p.next_30_days_in)} strong />
             {p.in_breakdown.later > 0 && <p className="text-[12.5px] text-muted">No cuenta {money(p.in_breakdown.later)} que vence más adelante.</p>}
           </div>
@@ -139,6 +180,8 @@ function ProjectionCard({ p }: { p: Projection }) {
             <SummaryLine label="Deudas ya vencidas" value={money(p.out_breakdown.overdue)} />
             <SummaryLine label="Vencen en los próximos 30 días" value={money(p.out_breakdown.upcoming)} />
             <SummaryLine label="Deudas sin fecha" value={money(p.out_breakdown.no_date)} />
+            {p.out_breakdown.scheduled > 0 && <SummaryLine label="Pagos programados (ya figuran pagados, salen más adelante)" value={money(p.out_breakdown.scheduled)} />}
+            <ScheduledLines items={p.scheduled_items.filter((r) => r.direction === 'out')} />
             <SummaryLine label="Gastos fijos que todavía no cargaste" value={money(p.out_breakdown.fixed)} />
             {p.fixed_items.map((f) => (
               <SummaryLine
@@ -207,7 +250,7 @@ function ListCard({
 }
 
 type Settle =
-  | { kind: 'sale'; id: number; balance: number; description: string; account: number | null }
+  | { kind: 'sale'; id: number; balance: number; description: string; account: number | null; sale: { payment_method: string; total: number; fee: number; paid: number } }
   | { kind: 'purchase' | 'expense'; id: number; balance: number; description: string; account: number | null }
 
 export function PendingTab() {
@@ -222,7 +265,14 @@ export function PendingTab() {
   const { receivables, payables, totals, projection } = q.data
 
   const collect = (s: ReceivableRow) =>
-    setSettle({ kind: 'sale', id: s.id, balance: s.balance, description: `Venta #${s.id}${s.client_name ? ` · ${s.client_name}` : ''}`, account: accountFor(s.payment_method) })
+    setSettle({
+      kind: 'sale',
+      id: s.id,
+      balance: s.balance,
+      description: `Venta #${s.id}${s.client_name ? ` · ${s.client_name}` : ''}`,
+      account: accountFor(s.payment_method),
+      sale: { payment_method: s.payment_method, total: s.total, fee: s.fee, paid: s.paid },
+    })
   const pay = (p: PayableRow) =>
     setSettle({ kind: p.type, id: p.id, balance: p.balance, description: `${p.type === 'purchase' ? p.detail : 'Gasto'} · ${p.name}`, account: accountFor('transferencia') })
   /** En el celular el botón va debajo del monto (si no, la tabla no entra a lo ancho). */
@@ -399,6 +449,7 @@ export function PendingTab() {
           balance={settle.balance}
           description={settle.description}
           defaultAccountId={settle.account}
+          sale={settle.kind === 'sale' ? settle.sale : undefined}
           onClose={() => setSettle(null)}
         />
       )}

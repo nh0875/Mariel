@@ -95,6 +95,38 @@ export function monthLabelLong(month: string): string {
   return `${MONTHS_LONG[m - 1]} ${y}`
 }
 
+/**
+ * ¿Un mes de una serie (con su from/to dentro del período elegido) está completo? Un mes es
+ * PARCIAL si el período toma solo algunos días ("recortado", ej. 15 al 28 de febrero) o si es el
+ * mes en curso y todavía no terminó. Los meses parciales no entran en los promedios por mes (un
+ * medio mes daría promedios falsamente bajos) y se marcan en tablas y Excel.
+ * `note`: "15 al 28" / "en curso" / "1 al 4, en curso" / "todavía no llegó" ('' si está completo).
+ */
+export function monthPart(m: { month: string; from: string; to: string }, ref: string = today()): { partial: boolean; clipped: boolean; running: boolean; note: string } {
+  const start = `${m.month}-01`
+  const end = endOfMonth(start)
+  const clipped = m.from > start || m.to < end
+  const future = start > ref
+  const running = !future && ref < end && m.to >= ref
+  const notes: string[] = []
+  if (clipped) notes.push(`${Number(m.from.slice(8, 10))} al ${Number(m.to.slice(8, 10))}`)
+  if (running) notes.push('en curso')
+  if (future) notes.push('todavía no llegó')
+  return { partial: clipped || running || future, clipped, running, note: notes.join(', ') }
+}
+
+/** "feb 26" → "feb 26 (15 al 28)" si el mes es parcial. */
+export function monthLabelWithPart(m: { month: string; from: string; to: string }, ref: string = today()): string {
+  const p = monthPart(m, ref)
+  return p.partial ? `${monthLabel(m.month)} (${p.note})` : monthLabel(m.month)
+}
+
+/** Los últimos `n` meses completos antes del mes de `ref` (ej: ref 15/10 y n=3 → julio, agosto, septiembre). */
+export function lastCompleteMonths(ref: string = today(), n = 3): { from: string; to: string } {
+  const lastFull = addMonths(startOfMonth(ref), -1)
+  return { from: addMonths(lastFull, -(n - 1)), to: endOfMonth(lastFull) }
+}
+
 /** Cantidad de días entre dos fechas (b − a). */
 export function daysBetween(a: string, b: string): number {
   return Math.round((parseISODate(b).getTime() - parseISODate(a).getTime()) / 86_400_000)

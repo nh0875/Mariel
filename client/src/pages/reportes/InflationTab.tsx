@@ -34,7 +34,7 @@ function realSummary(d: InflationReport): { value: number | null; label: string 
   if (last) {
     const [y, mm] = last.month.split('-')
     const yearAgo = d.months.find((m) => m.month === `${Number(y) - 1}-${mm}`)
-    if (yearAgo && yearAgo.sales_today_pesos > 0) {
+    if (yearAgo && !yearAgo.partial && yearAgo.sales_today_pesos > 0) {
       return { value: last.sales_today_pesos / yearAgo.sales_today_pesos - 1, label: `${last.label} vs. ${yearAgo.label} · mismo mes del año anterior` }
     }
   }
@@ -92,11 +92,11 @@ function inflationInsights(d: InflationReport): Insight[] {
   return out
 }
 
-/** Mes que todavía no terminó: no se compara con el anterior (sus ventas están incompletas). */
-function InProgress() {
+/** Mes incompleto (en curso o tomado solo en parte): no se compara con el anterior (sus ventas están incompletas). */
+function InProgress({ note }: { note: string }) {
   return (
-    <span className="text-[12.5px] text-muted" title="El mes todavía no terminó: compararlo con un mes completo daría una caída que no es real.">
-      en curso
+    <span className="text-[12.5px] text-muted" title="El mes está incompleto: compararlo con un mes entero daría una caída que no es real.">
+      {note || 'incompleto'}
     </span>
   )
 }
@@ -208,8 +208,9 @@ export function InflationTab({ period }: { period: Period }) {
         const real = realSummary(d)
         const chartRows = d.months.map((m) => ({ label: m.partial ? `${m.label}*` : m.label, nominal: m.sales, hoy: m.sales_today_pesos }))
         const base = d.base_month ? monthTitle(d.base_month).toLowerCase() : 'hoy'
-        const missingPast = d.missing_months.filter((m) => !d.months.find((x) => x.month === m)?.partial)
-        const missingCurrent = d.missing_months.filter((m) => d.months.find((x) => x.month === m)?.partial)
+        const isRunning = (month: string) => !!d.months.find((x) => x.month === month)?.partial_note.includes('en curso')
+        const missingPast = d.missing_months.filter((m) => !isRunning(m))
+        const missingCurrent = d.missing_months.filter((m) => isRunning(m))
 
         const cols: Column<InflationMonthRow>[] = [
           {
@@ -219,7 +220,7 @@ export function InflationTab({ period }: { period: Period }) {
             cell: (m) => (
               <span className="block min-w-[92px]">
                 <span className="font-bold text-ink">{monthTitle(m.month)}</span>
-                {m.partial && <span className="block text-[12px] text-muted">Mes en curso</span>}
+                {m.partial && <span className="block text-[12px] text-muted">{m.partial_note.includes('en curso') ? 'Mes en curso' : `Solo del ${m.partial_note}`}</span>}
                 {d.months[0].month === m.month && d.months.length > 1 && <span className="block text-[12px] text-muted">Base del índice</span>}
               </span>
             ),
@@ -250,8 +251,8 @@ export function InflationTab({ period }: { period: Period }) {
             ),
           },
           { key: 'sales_today_pesos', header: `En pesos de ${base}`, align: 'right', hideBelow: 'sm', sortable: false, cell: (m) => <b>{money0(m.sales_today_pesos)}</b> },
-          { key: 'nominal', header: 'En pesos', align: 'right', hideBelow: 'lg', sortable: false, cell: (m) => (m.partial ? <InProgress /> : <Growth value={m.nominal_growth_vs_prev} />) },
-          { key: 'real', header: 'Real', align: 'right', hideBelow: 'sm', sortable: false, cell: (m) => (m.partial ? <InProgress /> : <Growth value={m.real_growth_vs_prev} />) },
+          { key: 'nominal', header: 'En pesos', align: 'right', hideBelow: 'lg', sortable: false, cell: (m) => (m.partial ? <InProgress note={m.partial_note} /> : <Growth value={m.nominal_growth_vs_prev} />) },
+          { key: 'real', header: 'Real', align: 'right', hideBelow: 'sm', sortable: false, cell: (m) => (m.partial ? <InProgress note={m.partial_note} /> : <Growth value={m.real_growth_vs_prev} />) },
         ]
 
         return (
@@ -353,7 +354,7 @@ export function InflationTab({ period }: { period: Period }) {
                     { key: 'nominal', label: 'Como se registraron', color: CHART_COLORS.extra },
                   ]}
                 />
-                {d.months.some((m) => m.partial) && d.months.length > 1 && <p className="px-2 pt-1 text-[12.5px] text-muted">* Mes en curso: todavía no terminó, por eso da más bajo.</p>}
+                {d.months.some((m) => m.partial) && d.months.length > 1 && <p className="px-2 pt-1 text-[12.5px] text-muted">* Mes incompleto (en curso, o el período toma solo algunos días): por eso da más bajo.</p>}
               </ChartCard>
             )}
 
