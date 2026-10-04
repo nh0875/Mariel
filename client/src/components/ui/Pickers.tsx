@@ -20,6 +20,7 @@ export function ProductSelect({
   exclude,
   invalid,
   placeholder = 'Elegí un vino…',
+  allowClear,
 }: {
   value: number | null | undefined
   onChange: (id: number | null, product: Product | null) => void
@@ -29,6 +30,8 @@ export function ProductSelect({
   exclude?: number[]
   invalid?: boolean
   placeholder?: string
+  /** Mostrar una X para quitar el vino elegido. */
+  allowClear?: boolean
 }) {
   const { data: products = [] } = useProducts({ includeInactive: true })
   const options = useMemo(
@@ -54,6 +57,7 @@ export function ProductSelect({
       searchPlaceholder="Buscá por nombre, bodega o varietal…"
       emptyText="No encontramos ese vino. Cargalo primero en «Vinos y stock»."
       invalid={invalid}
+      allowClear={allowClear}
     />
   )
 }

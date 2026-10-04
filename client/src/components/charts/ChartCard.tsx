@@ -36,15 +36,15 @@ export function ChartCard({
   const [showTable, setShowTable] = useState(false)
   return (
     <section className={clsx('vh-card flex min-w-0 flex-col', className)}>
-      <header className="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">
-        <div className="min-w-0">
+      <header className="flex items-start justify-between gap-2 px-5 pt-5">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <h3 className="text-[17px] leading-tight font-extrabold text-ink">{title}</h3>
             {term && <InfoTip term={term} />}
           </div>
           {subtitle && <p className="mt-0.5 text-[13.5px] text-ink-soft">{subtitle}</p>}
         </div>
-        <div className="vh-no-print flex items-center gap-1.5">
+        <div className="vh-no-print flex shrink-0 flex-wrap items-center justify-end gap-1.5">
           {actions}
           {table && (
             <button

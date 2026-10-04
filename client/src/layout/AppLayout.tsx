@@ -116,7 +116,7 @@ export function AppLayout() {
   if (settings && !settings.onboarding.completed) return <Navigate to="/bienvenida" replace />
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[264px_1fr]">
+    <div className="min-h-screen lg:grid lg:grid-cols-[264px_1fr] print:block">
       <aside className="vh-no-print sticky top-0 hidden h-screen border-r border-line bg-cream lg:block">
         <Sidebar />
       </aside>

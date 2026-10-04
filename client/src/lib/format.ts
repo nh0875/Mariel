@@ -36,7 +36,7 @@ export function moneyCompact(n: number | null | undefined): string {
 
 export function usd(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
-  return usdFmt.format(n).replace(/ /g, ' ')
+  return usdFmt.format(n).replace(/\s/g, '\u00a0')
 }
 
 export function num(n: number | null | undefined, decimals = 2): string {
@@ -52,7 +52,7 @@ export function int(n: number | null | undefined): string {
 /** 0.123 → "12,3 %" */
 export function pct(ratio: number | null | undefined, decimals = 1): string {
   if (ratio == null || !Number.isFinite(ratio)) return '—'
-  return `${new Intl.NumberFormat('es-AR', { maximumFractionDigits: decimals, minimumFractionDigits: 0 }).format(ratio * 100)} %`
+  return `${new Intl.NumberFormat('es-AR', { maximumFractionDigits: decimals, minimumFractionDigits: 0 }).format(ratio * 100)}\u00a0%`
 }
 
 /** Variación con signo: 0.12 → "+12 %", −0.05 → "−5 %" */
@@ -60,7 +60,7 @@ export function pctDelta(ratio: number | null | undefined): string {
   if (ratio == null || !Number.isFinite(ratio)) return '—'
   const v = Math.round(ratio * 1000) / 10
   const s = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 }).format(Math.abs(v))
-  return `${v > 0 ? '+' : v < 0 ? '−' : ''}${s} %`
+  return `${v > 0 ? '+' : v < 0 ? '−' : ''}${s}\u00a0%`
 }
 
 export function bottles(n: number | null | undefined): string {

@@ -136,7 +136,7 @@ export const GLOSSARY = {
     group: 'Costos y precios',
     title: 'Margen de contribución',
     short: 'Lo que te deja cada venta después de los costos variables (vino, comisiones, envíos).',
-    formula: 'Ventas − CMV − comisiones − gastos variables',
+    formula: 'Ventas − CMV − comisiones − mermas − gastos variables',
     why: 'Es la plata que "contribuye" a pagar los gastos fijos. Con eso se calcula el punto de equilibrio.',
   },
   costo_promedio: {
