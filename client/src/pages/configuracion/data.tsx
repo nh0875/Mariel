@@ -158,8 +158,9 @@ export function BackupsSection() {
       why={
         <>
           Tus datos viven en un archivo en esta computadora. Por si se borra, se rompe o te equivocás,{' '}
-          <b>todos los días la primera vez que abrís el programa se guarda una copia completa automática</b> (se guardan las últimas {data?.keep ?? 30}). También se hace una copia antes de borrar
-          todo, cargar el ejemplo o restaurar. Para tener una copia fuera de la compu, descargala y guardala en un pendrive o en tu mail.
+          <b>todos los días se guarda una copia completa automática</b> (al abrir el programa, y si lo dejás abierto, igual se hace una por día). Se guardan las automáticas de
+          los últimos {data?.keep_auto ?? 30} días y, aparte, hasta {data?.keep_other ?? 30} copias hechas a mano o de seguridad (antes de borrar todo, cargar el ejemplo o restaurar),
+          así hacer muchas copias a mano nunca borra las automáticas. Para tener una copia fuera de la compu, descargala y guardala en un pendrive o en tu mail.
         </>
       }
       extraActions={

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { PROJECT_ROOT, db } from './db'
 import api from './routes'
 import { errorHandler } from './lib/http'
+import { localOnly } from './lib/guard'
 import { ensureBaseData } from './services/setup'
 
 export const CLIENT_DIST = path.join(PROJECT_ROOT, 'client', 'dist')
@@ -15,6 +16,8 @@ export function createApp() {
 
   const app = express()
   app.disable('x-powered-by')
+  // Antes que nada: la API solo atiende a las pantallas del programa (ver lib/guard.ts).
+  app.use('/api', localOnly())
   app.use(express.json({ limit: '10mb' }))
 
   app.use('/api', api)

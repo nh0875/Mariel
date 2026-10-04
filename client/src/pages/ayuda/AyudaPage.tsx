@@ -306,7 +306,7 @@ function YourData() {
       body: (
         <>
           <p>
-            Todos los días se guarda una copia automática (las últimas 30, en <b>data/backups</b>), y también antes de borrar todo, cargar el ejemplo o restaurar.
+            Todos los días se guarda una copia automática (las de los últimos 30 días, en <b>data/backups</b>), y también antes de borrar todo, cargar el ejemplo o restaurar. Antes de restaurar, el programa revisa que la copia esté sana: si está dañada, no la usa y tus datos no se tocan.
           </p>
           <p>
             Hacé una copia a mano o volvé a una anterior desde{' '}

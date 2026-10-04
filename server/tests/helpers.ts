@@ -4,6 +4,9 @@ import type { Server } from 'node:http'
 import { resetInMemoryDatabase } from '../db'
 import { createApp } from '../app'
 
+/** Encabezado que la API exige para todo lo que cambia datos (ver server/lib/guard.ts). */
+export const WRITE_HEADERS = { 'X-VINOH': '1' } as const
+
 export interface TestServer {
   url: string
   close: () => Promise<void>
@@ -26,7 +29,7 @@ export async function startTestServer(): Promise<TestServer> {
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(`${url}/api${path}`, {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: { ...(method === 'GET' ? {} : WRITE_HEADERS), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     const text = await res.text()
@@ -45,6 +48,14 @@ export async function startTestServer(): Promise<TestServer> {
     post: (p, b) => call('POST', p, b ?? {}),
     put: (p, b) => call('PUT', p, b ?? {}),
     del: (p) => call('DELETE', p),
-    raw: (p, init) => fetch(`${url}/api${p}`, init),
+    // Como las pantallas: todo lo que no es leer lleva el encabezado X-VINOH (salvo que el test
+    // pase sus propios headers con X-VINOH distinto, para probar el rechazo).
+    raw: (p, init) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (method === 'GET' || method === 'HEAD') return fetch(`${url}/api${p}`, init)
+      const headers = new Headers(init?.headers)
+      if (!headers.has('X-VINOH')) headers.set('X-VINOH', '1')
+      return fetch(`${url}/api${p}`, { ...init, headers })
+    },
   }
 }

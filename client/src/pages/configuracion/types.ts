@@ -17,6 +17,10 @@ export interface BackupsResponse {
   db_path: string
   backup_dir: string
   keep: number
+  /** Copias automáticas que se guardan (una por día). */
+  keep_auto?: number
+  /** Copias hechas a mano o de seguridad que se guardan. */
+  keep_other?: number
   backups: BackupRow[]
 }
 

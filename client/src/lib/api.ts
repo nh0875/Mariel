@@ -11,6 +11,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Encabezado que el servidor exige en todo lo que cambia datos (POST/PUT/DELETE). Un sitio de
+ * afuera no lo puede mandar sin permiso del servidor, así que nadie puede borrar o cambiar tus
+ * datos desde otra página (ver server/lib/guard.ts).
+ */
+export const WRITE_HEADERS: Record<string, string> = { 'X-VINOH': '1' }
+
+const NO_CONNECTION =
+  'No hay conexión con el sistema. ¿Está abierta la ventana negra del programa? Si la cerraste, volvé a abrir VINOH!.'
+
 export type QueryParams = Record<string, string | number | boolean | null | undefined>
 
 function toQuery(params?: QueryParams): string {
@@ -32,13 +42,15 @@ export function apiUrl(path: string, params?: QueryParams): string {
 async function request<T>(method: string, path: string, body?: unknown, params?: QueryParams): Promise<T> {
   let res: Response
   try {
+    const headers: Record<string, string> = method === 'GET' ? {} : { ...WRITE_HEADERS }
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
     res = await fetch(apiUrl(path, params), {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {
-    throw new ApiError(0, 'No hay conexión con el sistema. ¿Está abierta la ventana negra del programa? Si la cerraste, volvé a abrir VINOH!.')
+    throw new ApiError(0, NO_CONNECTION)
   }
   const text = await res.text()
   let data: unknown = undefined
@@ -65,11 +77,16 @@ export const api = {
   del: <T>(path: string) => request<T>('DELETE', path),
   /** Sube un archivo crudo (Excel, backup). El servidor lo recibe como body binario. */
   upload: async <T>(path: string, file: File | Blob, params?: QueryParams): Promise<T> => {
-    const res = await fetch(apiUrl(path, params), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: file,
-    })
+    let res: Response
+    try {
+      res = await fetch(apiUrl(path, params), {
+        method: 'POST',
+        headers: { ...WRITE_HEADERS, 'Content-Type': 'application/octet-stream' },
+        body: file,
+      })
+    } catch {
+      throw new ApiError(0, NO_CONNECTION)
+    }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new ApiError(res.status, data?.error || `Error ${res.status}`, data?.details)
     return data as T
@@ -78,12 +95,22 @@ export const api = {
 
 /** Descarga un archivo (ej: Excel) desde la API sin salir de la página. */
 export async function downloadFile(path: string, params?: QueryParams): Promise<void> {
-  const res = await fetch(apiUrl(path, params))
+  let res: Response
+  try {
+    res = await fetch(apiUrl(path, params))
+  } catch {
+    throw new ApiError(0, NO_CONNECTION)
+  }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new ApiError(res.status, data?.error || 'No se pudo generar el archivo.')
   }
-  const blob = await res.blob()
+  let blob: Blob
+  try {
+    blob = await res.blob()
+  } catch {
+    throw new ApiError(0, NO_CONNECTION)
+  }
   const cd = res.headers.get('Content-Disposition') || ''
   const match = /filename\*=UTF-8''([^;]+)/.exec(cd) || /filename="?([^";]+)"?/.exec(cd)
   const name = match ? decodeURIComponent(match[1]) : 'vinoh-export.xlsx'

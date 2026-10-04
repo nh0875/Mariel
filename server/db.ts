@@ -26,7 +26,12 @@ function openDatabase(): DatabaseSync {
   conn.exec('PRAGMA foreign_keys = ON')
   if (!IN_MEMORY) conn.exec('PRAGMA journal_mode = WAL')
   conn.exec('PRAGMA busy_timeout = 5000')
-  migrate(conn)
+  try {
+    migrate(conn)
+  } catch (err) {
+    conn.close() // que no quede el archivo tomado (en Windows no se podría reemplazar)
+    throw err
+  }
   return conn
 }
 
@@ -335,7 +340,31 @@ const MIGRATIONS: string[] = [
   `,
 ]
 
-function migrate(conn: DatabaseSync) {
+/** Versión del esquema que entiende este programa (= cantidad de migraciones). */
+export const SCHEMA_VERSION = MIGRATIONS.length
+
+/** Tablas que tiene que tener una base de VINOH! (las crea la primera migración). */
+export const REQUIRED_TABLES = [
+  'settings',
+  'products',
+  'clients',
+  'suppliers',
+  'events',
+  'accounts',
+  'sales',
+  'sale_items',
+  'purchases',
+  'purchase_items',
+  'stock_movements',
+  'recurring_expenses',
+  'expenses',
+  'payments',
+  'goals',
+  'inflation',
+] as const
+
+/** Aplica las migraciones pendientes a una conexión (también se usa para probar una copia antes de restaurarla). */
+export function migrate(conn: DatabaseSync) {
   const row = conn.prepare('PRAGMA user_version').get() as { user_version: number }
   let version = Number(row.user_version)
   while (version < MIGRATIONS.length) {

@@ -42,7 +42,7 @@ import type { Client, Goal, InflationRate, Product, RecurringExpense, Supplier, 
 import { all, BACKUP_DIR, DATA_DIR, DATA_TABLES, DB_PATH, IN_MEMORY, PROJECT_ROOT, run, scalar, tx } from '../db'
 import { HttpError, badRequest, notFound, validate } from '../lib/http'
 import { addSheet, excelFilename, newWorkbook, sendWorkbookFile, type ExcelSheet } from '../lib/excel'
-import { backupPath, createBackup, listBackups, restoreFromBuffer, restoreFromFile, type BackupInfo } from '../lib/backup'
+import { KEEP_AUTO, KEEP_OTHER, RestoreError, backupKind, backupPath, createBackup, listBackups, restoreFromBuffer, restoreFromFile, type BackupInfo } from '../lib/backup'
 import { getSettings, updateSettings } from '../services/settings'
 import { loadDemoData } from '../seed/demo'
 import { ensureBaseData, wipeAllData } from '../services/setup'
@@ -150,7 +150,11 @@ router.get('/settings/category-usage', (_req, res) => {
 router.post('/demo/load', async (_req, res) => {
   if (!IN_MEMORY) {
     await freeBackupSecond()
-    createBackup('antes-de-ejemplo')
+    try {
+      createBackup('antes-de-ejemplo')
+    } catch (err) {
+      throw backupError(err, 'No se pudo hacer la copia de seguridad previa, así que no cargamos el ejemplo. Revisá que haya espacio libre en el disco.')
+    }
   }
   const counts = loadDemoData()
   res.json({ ok: true, ...counts })
@@ -164,7 +168,11 @@ router.post('/data/reset', async (req, res) => {
   const body = (req.body && typeof req.body === 'object' ? req.body : {}) as { restart_onboarding?: unknown }
   if (!IN_MEMORY) {
     await freeBackupSecond()
-    createBackup('antes-de-borrar')
+    try {
+      createBackup('antes-de-borrar')
+    } catch (err) {
+      throw backupError(err, 'No se pudo hacer la copia de seguridad previa, así que no borramos nada. Revisá que haya espacio libre en el disco.')
+    }
   }
   wipeAllData()
   ensureBaseData()
@@ -174,7 +182,6 @@ router.post('/data/reset', async (req, res) => {
 
 // ───────────────────────── Copias de seguridad ─────────────────────────
 
-const KEEP_BACKUPS = 30
 const NO_DISK_MSG =
   'Este sistema está funcionando sin guardar en disco (modo de prueba), así que no hay copias de seguridad para hacer, bajar ni restaurar.'
 
@@ -214,9 +221,16 @@ export interface BackupRow extends BackupInfo {
 }
 
 function describeBackup(b: BackupInfo): BackupRow {
-  const m = /^vinoh-(.+?)-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}(?:-\d{3})?(?:-\d+)?\.db$/.exec(b.file)
-  const kind = m ? m[1] : 'otra'
+  const kind = backupKind(b.file)
   return { ...b, kind, label: BACKUP_KIND_LABELS[kind] ?? 'Copia de seguridad' }
+}
+
+/** Errores al copiar o restaurar: los nuestros ya vienen en castellano; los demás se explican. */
+function backupError(err: unknown, fallback: string): HttpError {
+  if (err instanceof HttpError) return err
+  if (err instanceof RestoreError) return badRequest(err.message)
+  console.error('[VINOH] Error con las copias de seguridad:', err)
+  return new HttpError(500, fallback)
 }
 
 function mustBackup(file: string): string {
@@ -235,7 +249,9 @@ router.get('/backups', (_req, res) => {
     data_dir: DATA_DIR,
     db_path: DB_PATH,
     backup_dir: BACKUP_DIR,
-    keep: KEEP_BACKUPS,
+    keep: KEEP_AUTO + KEEP_OTHER,
+    keep_auto: KEEP_AUTO,
+    keep_other: KEEP_OTHER,
     backups: listBackups().map(describeBackup),
   })
 })
@@ -244,7 +260,12 @@ router.get('/backups', (_req, res) => {
 router.post('/backups', async (_req, res) => {
   requireDisk()
   await freeBackupSecond()
-  const file = path.basename(createBackup('manual'))
+  let file: string
+  try {
+    file = path.basename(createBackup('manual'))
+  } catch (err) {
+    throw backupError(err, 'No se pudo hacer la copia de seguridad. Revisá que haya espacio libre en el disco y probá de nuevo.')
+  }
   const info = listBackups().find((b) => b.file === file)
   if (!info) throw new HttpError(500, 'La copia se hizo pero no la encontramos en la carpeta. Probá de nuevo.')
   res.status(201).json(describeBackup(info))
@@ -267,20 +288,14 @@ router.post('/backups/:file/restore', async (req, res) => {
   requireDisk()
   const full = mustBackup(String(req.params.file))
   await freeBackupSecond()
-  const tmp = path.join(BACKUP_DIR, `restaurando-${Date.now()}.tmp`)
-  fs.copyFileSync(full, tmp)
   try {
-    restoreFromFile(tmp)
+    // restoreFromFile copia la elegida a un archivo de trabajo antes de hacer la copia "antes de
+    // restaurar" (que puede borrar las más viejas), así que se puede pasar el archivo directo.
+    restoreFromFile(full)
+    ensureBaseData()
   } catch (err) {
-    throw badRequest((err as Error).message || 'No se pudo restaurar esa copia.')
-  } finally {
-    try {
-      fs.unlinkSync(tmp)
-    } catch {
-      /* ya no está */
-    }
+    throw backupError(err, 'No se pudo restaurar esa copia. Tus datos no se tocaron; probá de nuevo o con otra copia.')
   }
-  ensureBaseData()
   res.json({ ok: true, restored: path.basename(full) })
 })
 
@@ -297,10 +312,10 @@ router.post('/backups/restore-upload', express.raw({ type: () => true, limit: '2
   await freeBackupSecond()
   try {
     restoreFromBuffer(buf)
+    ensureBaseData()
   } catch (err) {
-    throw badRequest((err as Error).message || 'No se pudo restaurar ese archivo.')
+    throw backupError(err, 'No se pudo restaurar ese archivo. Tus datos no se tocaron; probá de nuevo o con otra copia.')
   }
-  ensureBaseData()
   res.json({ ok: true })
 })
 

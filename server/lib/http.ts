@@ -156,6 +156,14 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     })
     return
   }
+  if (/database disk image is malformed|file is not a database|SQLITE_CORRUPT|SQLITE_NOTADB/i.test(msg)) {
+    console.error('[VINOH] La base de datos está dañada:', msg)
+    res.status(500).json({
+      error:
+        'La base de datos está dañada y no se puede leer. Tus copias de seguridad están a salvo: andá a Configuración → Copias de seguridad y restaurá la última copia buena.',
+    })
+    return
+  }
   if (err?.type === 'entity.too.large') {
     res.status(413).json({ error: 'El archivo es demasiado grande.' })
     return
