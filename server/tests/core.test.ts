@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { resetInMemoryDatabase, run, get } from '../db'
 import { ensureBaseData } from '../services/setup'
 import { createSale, deleteSale, getSaleDetail, updateSale } from '../services/sales'
-import { createPurchase, deletePurchase, getPurchaseDetail } from '../services/purchases'
+import { createPurchase, deletePurchase, getPurchaseDetail, updatePurchase } from '../services/purchases'
 import { createExpense, generateRecurringForMonth, listExpenses } from '../services/expenses'
 import { accountBalances, addSettlement, addTransfer, deletePayment } from '../services/payments'
 import { addMovement } from '../services/stock'
@@ -173,5 +173,42 @@ describe('gastos fijos recurrentes', () => {
     const [e] = listExpenses({ from: '2026-02-01', to: '2026-02-28' })
     expect(e.date).toBe('2026-02-28')
     expect(e.status).toBe('pagado')
+  })
+})
+
+describe('orden de la historia del vino (auditoría)', () => {
+  it('editar una compra (solo la factura) no cambia el costo de una venta del mismo día', () => {
+    const p = product('Mismo día', 0, 0)
+    const input = { date: '2026-10-04', invoice_number: 'A-1', items: [{ product_id: p, qty: 12, unit_cost: 1500 }], paid: false }
+    const purchaseId = createPurchase(purchaseInput.parse(input))
+    const saleId = createSale(saleInput.parse({ date: '2026-10-04', items: [{ product_id: p, qty: 2, unit_price: 3000 }] }))
+    expect(getSaleDetail(saleId).cost).toBe(3000)
+    updatePurchase(purchaseId, purchaseInput.parse({ ...input, invoice_number: 'A-1-corregida' }))
+    expect(getSaleDetail(saleId).cost).toBe(3000)
+  })
+
+  it('editar una venta (solo la nota) no cambia su costo si ese día también hubo una compra', () => {
+    const p = product('Con stock', 5, 1000)
+    const saleInputData = { date: '2026-10-04', items: [{ product_id: p, qty: 2, unit_price: 3000 }] }
+    const saleId = createSale(saleInput.parse(saleInputData))
+    createPurchase(purchaseInput.parse({ date: '2026-10-04', items: [{ product_id: p, qty: 10, unit_cost: 2000 }], paid: false }))
+    const before = getSaleDetail(saleId).cost
+    updateSale(saleId, saleInput.parse({ ...saleInputData, notes: 'cambié la nota' }))
+    expect(getSaleDetail(saleId).cost).toBe(before)
+  })
+
+  it('una compra con fecha anterior al alta del vino no queda en $0', () => {
+    const p = run("INSERT INTO products (name, price_retail) VALUES ('Alta tardía', 3000)").lastInsertRowid
+    addMovement({ product_id: p, date: '2026-10-04', kind: 'inicial', qty: 0, unit_cost: 0 })
+    createPurchase(purchaseInput.parse({ date: '2026-10-01', items: [{ product_id: p, qty: 12, unit_cost: 1500 }], paid: false }))
+    expect(prod(p)).toEqual({ stock: 12, unit_cost: 1500 })
+    const saleId = createSale(saleInput.parse({ date: '2026-10-04', items: [{ product_id: p, qty: 2, unit_price: 3000 }] }))
+    expect(getSaleDetail(saleId).cost).toBe(3000)
+  })
+
+  it('botellas iniciales sin costo toman el costo de la primera compra', () => {
+    const p = product('Sin costo', 6, 0)
+    createPurchase(purchaseInput.parse({ date: '2026-10-04', items: [{ product_id: p, qty: 6, unit_cost: 1000 }], paid: false }))
+    expect(prod(p)).toEqual({ stock: 12, unit_cost: 1000 })
   })
 })

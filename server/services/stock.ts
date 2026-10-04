@@ -74,21 +74,41 @@ export function deleteMovement(id: number) {
  */
 export function recalcProduct(productId: number) {
   tx(() => {
+    // Orden de la historia:
+    //  1) el "stock inicial" (alta del vino) siempre primero, sea cual sea su fecha: es el punto de partida;
+    //  2) después por fecha;
+    //  3) dentro del mismo día, primero lo que ENTRA (compras, cambios de costo, sobrantes) y después lo
+    //     que SALE (ventas, roturas…). Así editar una compra o una venta (que vuelve a grabar sus
+    //     renglones) no cambia el costo de las ventas de ese mismo día.
     const movs = all<{ id: number; kind: StockMovementKind; qty: number; unit_cost: number; ref_type: string | null; ref_id: number | null }>(
-      'SELECT id, kind, qty, unit_cost, ref_type, ref_id FROM stock_movements WHERE product_id = ? ORDER BY date, id',
+      `SELECT id, kind, qty, unit_cost, ref_type, ref_id FROM stock_movements WHERE product_id = ?
+       ORDER BY CASE WHEN kind = 'inicial' THEN 0 ELSE 1 END,
+                date,
+                CASE WHEN kind IN ('compra', 'revaluo') OR qty > 0 THEN 0 ELSE 1 END,
+                id`,
       [productId],
     )
     let stock = 0
     let avg = 0
     let hasCost = false
     for (const m of movs) {
-      if (m.kind === 'revaluo' || (INBOUND_WITH_COST.includes(m.kind) && m.qty === 0)) {
+      if (m.kind === 'revaluo') {
         avg = m.unit_cost
         hasCost = true
         continue
       }
+      if (m.kind === 'inicial') {
+        // Stock con el que se dio de alta el vino. Si se cargó sin costo ($0), esas botellas
+        // toman el costo de la primera compra (no "promedian para abajo" con $0).
+        stock += m.qty
+        if (m.unit_cost > 0) {
+          avg = m.unit_cost
+          hasCost = true
+        }
+        continue
+      }
       if (INBOUND_WITH_COST.includes(m.kind) && m.qty > 0) {
-        // Si todavía no había un costo conocido, las botellas previas (ej: un ajuste sin costo)
+        // Si todavía no había un costo conocido, las botellas previas (ej: un stock inicial sin costo)
         // toman el costo de esta primera entrada.
         const base = hasCost ? Math.max(stock, 0) : 0
         avg = (base * avg + m.qty * m.unit_cost) / (base + m.qty)
