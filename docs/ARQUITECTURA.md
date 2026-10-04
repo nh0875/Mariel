@@ -120,7 +120,9 @@ Comandos: `npm run dev` (API + Vite con recarga), `npm run build`, `npm start`, 
 - Formularios en `Modal`. Campos: `Field` + `TextInput` / `MoneyInput` / `IntInput` / `DateInput` / `Select` / `ChoiceCards` / `ProductSelect` / `ClientSelect` / `SupplierSelect` / `AccountSelect` / `EventSelect`.
 - Listas: `DataTable` (búsqueda, orden, paginado, totales) con `EmptyState` cuando no hay nada (y botón para cargar el primero).
 - Exportar: `<ExportButton path="/sales/export" params={{ from, to }} />`.
-- Botones rápidos de arriba: abren `/ventas?nuevo=1`, `/gastos?nuevo=1`, `/compras?nuevo=1`. Cada pantalla usa `useNewParam()` para abrir su formulario. Además, `?evento=ID` preselecciona el evento en ventas y gastos.
+- Botones rápidos de arriba: abren `/ventas?nuevo=1`, `/gastos?nuevo=1`, `/compras?nuevo=1`. Cada pantalla usa `useNewParam()` para abrir su formulario. Además, `?evento=ID` preselecciona el evento en el formulario nuevo de ventas y gastos.
+- Links profundos entre pantallas: `/ventas?ver=ID` abre el detalle de esa venta; `/compras?ver=ID` el de esa compra; `/gastos?ver=ID` el de ese gasto. Fichas: `/vinos/:id`, `/clientes/:id`, `/proveedores/:id`, `/eventos/:id`.
+- Cobros/pagos: usar `<SettlementModal kind="sale|purchase|expense" … />` de `@/components/forms/SettlementModal` (postea a `/{sales|purchases|expenses}/:id/payments`).
 - Colores por grupo del menú (`lib/nav.ts`): naranja = Cómo venimos, celeste = Entra plata, coral = Sale plata, mostaza = Los vinos, marrón = Herramientas.
 - Colores de gráficos fijos por concepto (`CHART_COLORS`): ventas azul, gastos coral, costo mostaza, ganancia verde azulado. Los gráficos llevan tabla alternativa (`ChartCard table={…}`).
 

@@ -10,6 +10,8 @@ const apiPort = process.env.VINOH_API_PORT || process.env.PORT || '3030'
 export default defineConfig({
   root: fileURLToPath(new URL('./client', import.meta.url)),
   plugins: [react(), tailwindcss()],
+  // Permite correr varias instancias en paralelo sin pisarse la caché.
+  cacheDir: process.env.VITE_CACHE_DIR || fileURLToPath(new URL('./node_modules/.vite', import.meta.url)),
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./client/src', import.meta.url)),
