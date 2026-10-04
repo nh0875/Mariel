@@ -7,6 +7,7 @@ import type { AccountWithBalance, ExpenseCategorySetting, PaymentMethodSetting, 
 import { ACCOUNT_KIND_LABELS, PAYMENT_METHOD_LABELS, type ExpenseNature, type PaymentMethod } from '@shared/constants'
 import type { SettingsInput } from '@shared/schemas'
 import { today } from '@shared/dates'
+import { suggestPrice } from '@shared/pricing'
 import { api } from '@/lib/api'
 import { date as fmtDate, int, money, pct, relativeDays, usd } from '@/lib/format'
 import { useAccounts, useApi, useApiMutation } from '@/lib/queries'
@@ -631,6 +632,9 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
   const iva = draft.iva_pct / 100
   const finalWithIva = 10000 * (1 + iva)
   const iibb = (10000 * draft.iibb_pct) / 100
+  // El mismo % en la Calculadora («¿A cuánto lo vendo?»): ahí es lo que queda DESPUÉS de IIBB y la comisión.
+  // Mismo cálculo que hace la Calculadora (cobrando en efectivo, sin comisión, redondeado a $ 100).
+  const calc = suggestPrice({ cost: 6000, target_margin: m, iibb_pct: draft.iibb_pct, fee_pct: 0, round_to: 100 })
   const errors = {
     target: draft.target_margin_pct < 0 || draft.target_margin_pct > 95 ? 'Entre 0 % y 95 %.' : null,
     wholesale: draft.wholesale_discount_pct < 0 || draft.wholesale_discount_pct > 90 ? 'Entre 0 % y 90 %.' : null,
@@ -657,13 +661,26 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
     >
       <div className="grid gap-5 md:grid-cols-2">
         <div className="space-y-2">
-          <Field htmlFor="cfg-margin" label="Margen objetivo" info="margen_vs_markup" error={errors.target} hint="Cuánto querés que te quede de cada venta, sobre el precio.">
+          <Field
+            htmlFor="cfg-margin"
+            label="Margen objetivo"
+            info="margen_bruto"
+            error={errors.target}
+            hint="Margen bruto: lo que te queda del precio después de pagar el vino, antes de Ingresos Brutos y de la comisión del cobro. Es el que ves en Vinos y stock y en Reportes."
+          >
             <NumberInput id="cfg-margin" value={draft.target_margin_pct} onChange={(v) => set('target_margin_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.target} />
           </Field>
           <Example>
             Con {nb(pct(m, 1))}, un vino que te cuesta <b>$ 6.000</b> lo vendés a <b>{nb(money(Math.round(priceForM)))}</b> (precio = costo ÷ (1 − {nb(pct(m, 1))})). Ojo: es un recargo del{' '}
             {nb(pct(markup, 1))} sobre el costo, no del {nb(pct(m, 1))}.
           </Example>
+          {calc.ok && (
+            <Example>
+              En la <b>Calculadora</b> («¿A cuánto lo vendo?») este mismo {nb(pct(m, 1))} se toma como lo que te queda <b>después</b> de Ingresos Brutos y la comisión, así que
+              sugiere un poco más: con {nb(pct(draft.iibb_pct / 100, 2))} de IIBB y cobrando en efectivo, ese vino da <b>{nb(money(calc.price, { decimals: 0 }))}</b> (redondeado a
+              $&nbsp;100). No se contradicen: allá el precio también deja lugar para el impuesto y la comisión.
+            </Example>
+          )}
         </div>
         <div className="space-y-2">
           <Field

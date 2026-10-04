@@ -18,11 +18,11 @@
 // (services/sales.ts, services/expenses.ts, services/stock.ts) y acá solo se suman.
 import { Router } from 'express'
 import { z } from 'zod'
-import { eventInput } from '../../shared/schemas'
+import { eventInput, openBottlesInput } from '../../shared/schemas'
 import { EVENT_KIND_LABELS, STOCK_MOVEMENT_LABELS, type EventKind, type StockMovementKind } from '../../shared/constants'
 import { round2, safeDiv } from '../../shared/calc'
 import { addDays, today } from '../../shared/dates'
-import type { ExpenseWithStatus, SaleWithStatus, WineEvent } from '../../shared/types'
+import type { EventDetail, EventSale, EventSummary, EventWithSummary, ExpenseWithStatus, OpenedBottle, WineEvent } from '../../shared/types'
 import { all, get, run, tx } from '../db'
 import { HttpError, notFound, parseId, qs, validate } from '../lib/http'
 import { excelFilename, fmtDate, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
@@ -32,93 +32,8 @@ import { listExpenses } from '../services/expenses'
 
 const router = Router()
 
-// ───────────────────────── Tipos de respuesta ─────────────────────────
-
-/** Las cuentas de un evento (ver el comentario de arriba). */
-export interface EventSummary {
-  /** Todo lo que se cobró en ventas asociadas al evento (total de cada venta). */
-  revenue: number
-  /** Parte de revenue que son entradas u otros ítems que no son vino del stock. */
-  tickets: number
-  /** Cantidad de entradas (unidades de ítems que no son vino). */
-  tickets_qty: number
-  /** revenue − tickets: lo que se vendió de vino (con descuentos y envíos repartidos). */
-  wine_sales: number
-  /** Costo de las botellas vendidas en el evento. */
-  cogs: number
-  /** Comisiones de cobro de esas ventas. */
-  fees: number
-  /** Gastos cargados con este evento. */
-  expenses: number
-  /** Botellas que salieron del stock para el evento sin venderse (degustación, regalos…). */
-  bottles_opened: number
-  /** Esas botellas valorizadas al costo promedio del momento. */
-  bottles_opened_cost: number
-  /** Botellas vendidas en las ventas del evento. */
-  bottles_sold: number
-  /** cogs + fees + expenses + bottles_opened_cost */
-  costs: number
-  /** Lo que pusiste para hacer el evento: gastos + botellas abiertas. */
-  investment: number
-  /** revenue − cogs − fees − expenses − bottles_opened_cost */
-  result: number
-  /** result ÷ personas (null si no se cargó cuánta gente fue). */
-  per_attendee: number | null
-  /** result ÷ (gastos + botellas abiertas) (null si no hubo inversión). */
-  roi: number | null
-  /** (gastos + botellas abiertas) ÷ presupuesto (null si no tiene presupuesto). */
-  budget_used: number | null
-  sales_count: number
-  expenses_count: number
-  /** Movimientos de stock asociados (para saber si se puede borrar el evento). */
-  opened_count: number
-}
-
-export type EventWithSummary = WineEvent & { summary: EventSummary }
-
-export interface OpenedBottle {
-  id: number
-  date: string
-  kind: StockMovementKind
-  kind_label: string
-  product_id: number
-  product_name: string
-  product_winery: string | null
-  /** Botellas (positivo = salieron del stock). */
-  bottles: number
-  unit_cost: number
-  /** bottles × unit_cost */
-  cost: number
-  notes: string | null
-}
-
-export type EventSale = SaleWithStatus & {
-  /** "Entrada al evento ×24" / "Malbec Reserva ×2 +1". */
-  items_label: string
-  /** Parte de la venta que son entradas (para separar en la tabla). */
-  tickets: number
-}
-
-export interface EventDetail {
-  event: WineEvent
-  summary: EventSummary
-  sales: EventSale[]
-  expenses: ExpenseWithStatus[]
-  opened: OpenedBottle[]
-  /** ¿Los clientes que compraron en el evento volvieron a comprar en los 30 días siguientes? */
-  after: {
-    days: number
-    /** Clientes identificados que compraron en el evento. */
-    clients: number
-    /** Cuántos de ellos volvieron a comprar. */
-    returning_clients: number
-    sales_count: number
-    revenue: number
-    /** false si todavía no pasaron los 30 días. */
-    complete: boolean
-  }
-  budget_used: number | null
-}
+// Los tipos de las respuestas están en shared/types.ts (los usa también la pantalla).
+export type { EventDetail, EventSale, EventSummary, EventWithSummary, OpenedBottle } from '../../shared/types'
 
 const AFTER_DAYS = 30
 
@@ -385,30 +300,6 @@ function validateEvent<S extends z.ZodTypeAny>(schema: S, body: unknown): z.outp
     throw err
   }
 }
-
-// ───────────────────────── Validación de "botellas abiertas" ─────────────────────────
-
-const openBottlesInput = z.object({
-  /** Si no viene, se usa la fecha del evento. */
-  date: z
-    .string()
-    .regex(ISO, 'tiene que ser una fecha válida')
-    .nullish()
-    .transform((v) => v || null),
-  items: z
-    .array(
-      z.object({
-        product_id: z.number({ required_error: 'elegí el vino' }).int().positive('elegí el vino'),
-        qty: z.number().int('tienen que ser botellas enteras').min(1, 'tiene que ser 1 o más').max(10_000, 'es demasiado (máx. 10.000 botellas por renglón)'),
-      }),
-    )
-    .min(1, 'elegí al menos un vino'),
-  notes: z
-    .string()
-    .max(500)
-    .nullish()
-    .transform((v) => (v && v.trim() ? v.trim() : null)),
-})
 
 // ───────────────────────── Excel ─────────────────────────
 

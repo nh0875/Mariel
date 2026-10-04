@@ -1,7 +1,7 @@
 // Reportes: el análisis a fondo de "¿Cómo venimos?".
 // Seis pestañas (resultados, vinos, canales y cobros, clientes, gastos, inflación), cada una con su
 // explicación, su Excel y frases que traducen los números. Todo sale del mismo motor que Inicio y Metas.
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { CalendarClock, ChartColumn, Landmark, Printer, Receipt, TrendingUp, Users, Wine } from 'lucide-react'
@@ -57,15 +57,6 @@ export default function ReportesPage() {
     },
     [params, setParams],
   )
-  // En celulares las pestañas se deslizan: que la elegida siempre quede a la vista.
-  const tabsBox = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const active = tabsBox.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
-    const list = active?.parentElement
-    if (active && list && list.scrollWidth > list.clientWidth) {
-      list.scrollLeft = Math.max(0, list.scrollLeft + active.getBoundingClientRect().left - list.getBoundingClientRect().left - 24)
-    }
-  }, [tab])
   const singleMonth = period.from.slice(0, 7) === period.to.slice(0, 7)
 
   return (
@@ -146,9 +137,7 @@ export default function ReportesPage() {
         <b className="text-ink">Período:</b> {label} ({date(period.from)} al {date(period.to)})
       </p>
 
-      <div ref={tabsBox}>
-        <Tabs<TabKey> className="mt-5 mb-6" value={tab} onChange={setTab} items={TABS} />
-      </div>
+      <Tabs<TabKey> className="mt-5 mb-6" value={tab} onChange={setTab} items={TABS} />
 
       {tab === 'resultados' && <PnlTab period={period} />}
       {tab === 'vinos' && <ProductsTab period={period} />}

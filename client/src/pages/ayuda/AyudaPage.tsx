@@ -70,7 +70,7 @@ function StartSteps() {
       text: 'Con costo, precio y las botellas que tenés hoy. Si ya los tenés en una planilla, usá «Importar desde Excel» en Vinos y stock.',
       done: known ? count('products') > 0 : null,
       cta: { label: 'Cargar un vino', to: '/vinos?nuevo=1' },
-      more: [{ label: 'Importar desde Excel', to: '/vinos' }],
+      more: [{ label: 'Importar desde Excel', to: '/vinos?importar=1' }],
     },
     {
       title: 'Cargá las compras y ventas del día a día',

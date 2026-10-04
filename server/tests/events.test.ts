@@ -240,6 +240,10 @@ describe('Revisión: consistencia, mensajes y cambios de fecha', () => {
     const r4 = await t.post(`/events/${ev.id}/open-bottles`, { items: [{ product_id: 1, qty: 0 }] })
     expect(r4.body.error).toMatch(/renglón 1/)
     expect(r4.body.error).toMatch(/1 o más/)
+    // El esquema vive en shared/schemas.ts: también rechaza fechas que no existen.
+    const r5 = await t.post(`/events/${ev.id}/open-bottles`, { date: '2026-02-30', items: [{ product_id: 1, qty: 1 }] })
+    expect(r5.status).toBe(400)
+    expect(r5.body.error).toMatch(/esa fecha no existe/)
   })
 
   it('si cambia la fecha del evento, las botellas abiertas de ese día se mueven con él (las de otro día no)', async () => {

@@ -240,7 +240,8 @@ function MoneyToday({ d }: { d: DashboardResponse }) {
               {accounts.length ? accounts.map((a) => `${a.name.replace(/\s*\(.*\)$/, '')} ${compact(a.balance)}`).join(' · ') : 'Todavía no hay cuentas.'}
               {d.cash.scheduled.out > 0.5 && (
                 <span className="mt-1 block">
-                  Ya descuenta {money0(d.cash.scheduled.out)} de pagos cargados con fecha más adelante (por ejemplo, gastos fijos marcados como pagados).
+                  Todavía no descuenta {money0(d.cash.scheduled.out)} de pagos cargados con fecha más adelante (por ejemplo, gastos fijos marcados como pagados): salen de la
+                  cuenta el día de su fecha.
                 </span>
               )}
             </>

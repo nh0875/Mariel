@@ -53,6 +53,7 @@ export default function VentasPage() {
   const [newOpen, openNew, closeNew] = useNewParam()
   const [presetEvent, setPresetEvent] = useState<number | null>(null)
   const [presetClient, setPresetClient] = useState<number | null>(null)
+  const [presetTickets, setPresetTickets] = useState(false)
   const [editing, setEditing] = useState<SaleDetail | null>(null)
 
   // Filtros de la tabla
@@ -68,18 +69,21 @@ export default function VentasPage() {
     setQuery('')
   }
 
-  // ?evento=ID → abre "Nueva venta" con ese evento y el canal "Eventos" (desde la ficha del evento).
+  // ?evento=ID → abre "Nueva venta" con ese evento y el canal "Eventos" (desde la ficha del evento);
+  //   si el evento ya pasó, con su fecha. Con &entrada=1 («Vender entradas») arranca con el renglón «Entrada».
   // ?cliente=ID → abre "Nueva venta" con ese cliente elegido (desde la ficha del cliente).
   useEffect(() => {
     const ev = Number(params.get('evento'))
     const cl = Number(params.get('cliente'))
-    if (!params.has('evento') && !params.has('cliente')) return
+    if (!params.has('evento') && !params.has('cliente') && !params.has('entrada')) return
     if (ev > 0) setPresetEvent(ev)
     if (cl > 0) setPresetClient(cl)
+    setPresetTickets(ev > 0 && params.get('entrada') === '1')
     if (ev > 0 || cl > 0) openNew()
     const next = new URLSearchParams(params)
     next.delete('evento')
     next.delete('cliente')
+    next.delete('entrada')
     setParams(next, { replace: true })
   }, [params, setParams, openNew])
 
@@ -256,6 +260,7 @@ export default function VentasPage() {
     setEditing(null)
     setPresetEvent(null)
     setPresetClient(null)
+    setPresetTickets(false)
   }
 
   return (
@@ -571,7 +576,7 @@ export default function VentasPage() {
         </div>
       </Card>
 
-      <SaleFormModal open={formOpen} sale={editing} presetEventId={presetEvent} presetClientId={presetClient} onClose={closeForm} />
+      <SaleFormModal open={formOpen} sale={editing} presetEventId={presetEvent} presetClientId={presetClient} presetTickets={presetTickets} onClose={closeForm} />
       <SaleDetailModal
         saleId={formOpen ? null : viewId}
         onClose={closeDetail}

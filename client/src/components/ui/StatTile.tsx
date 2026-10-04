@@ -11,6 +11,8 @@ export interface StatTileProps {
   value: ReactNode
   /** Concepto del glosario para el "?" */
   term?: GlossaryKey
+  /** O una explicación propia de esta pantalla para el "?" (si no hay un concepto del glosario que sirva). */
+  info?: { title: string; text: ReactNode }
   /** Variación vs. el período anterior (0.12 = +12 %). */
   delta?: number | null
   /** ¿Subir es bueno? (ventas: sí; gastos: no). Define el color de la variación. */
@@ -26,7 +28,7 @@ export interface StatTileProps {
 }
 
 /** Tarjeta con un número importante, su explicación y cómo viene respecto del período anterior. */
-export function StatTile({ label, value, term, delta, upIsGood = true, deltaLabel = 'vs. período anterior', hint, tone, className, hero }: StatTileProps) {
+export function StatTile({ label, value, term, info, delta, upIsGood = true, deltaLabel = 'vs. período anterior', hint, tone, className, hero }: StatTileProps) {
   const hasDelta = delta != null && Number.isFinite(delta)
   const flat = hasDelta && Math.abs(delta!) < 0.005
   const good = hasDelta && !flat && (delta! > 0) === upIsGood
@@ -36,7 +38,7 @@ export function StatTile({ label, value, term, delta, upIsGood = true, deltaLabe
       <div className="flex items-center gap-1.5">
         {tone && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONE_VAR[tone] }} aria-hidden />}
         <span className="line-clamp-2 text-[13.5px] leading-snug font-bold text-ink-soft">{label}</span>
-        {term && <InfoTip term={term} />}
+        {term ? <InfoTip term={term} /> : info ? <InfoTip title={info.title} text={info.text} /> : null}
       </div>
       <div className={clsx('leading-none font-extrabold tracking-tight text-ink', hero ? 'text-[2.4rem]' : 'text-[1.7rem]')}>{value}</div>
       {hasDelta && (

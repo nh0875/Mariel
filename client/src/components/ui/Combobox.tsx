@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Plus, Search, X } from 'lucide-react'
 import clsx from 'clsx'
-import { inputClass } from './Field'
+import { inputClass, useFieldLabelId } from './Field'
 
 export interface ComboOption<V extends string | number = number> {
   value: V
@@ -64,6 +64,10 @@ export function Combobox<V extends string | number>({
   const search = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLUListElement>(null)
   const selected = options.find((o) => o.value === value)
+  // Dentro de un Field: el botón se nombra con la etiqueta + lo elegido («Vino: Malbec Reserva»).
+  const autoId = useId()
+  const triggerId = id ?? autoId
+  const fieldLabelId = useFieldLabelId()
 
   const filtered = useMemo(() => {
     const q = normalize(query.trim())
@@ -155,7 +159,8 @@ export function Combobox<V extends string | number>({
     <div className={clsx('relative min-w-0', className)}>
       <button
         ref={trigger}
-        id={id}
+        id={triggerId}
+        aria-labelledby={fieldLabelId && !id ? `${fieldLabelId} ${triggerId}` : undefined}
         type="button"
         disabled={disabled}
         aria-haspopup="listbox"

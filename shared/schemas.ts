@@ -275,6 +275,22 @@ export const eventInput = z.object({
 })
 export type EventInput = z.input<typeof eventInput>
 
+/** Botellas abiertas en un evento (degustación, regalos): salen del stock como costo del evento. */
+export const openBottlesInput = z.object({
+  /** Si no viene, se usa la fecha del evento. */
+  date: optDate,
+  items: z
+    .array(
+      z.object({
+        product_id: z.number({ required_error: 'elegí el vino' }).int().positive('elegí el vino'),
+        qty: z.number().int('tienen que ser botellas enteras').min(1, 'tiene que ser 1 o más').max(10_000, 'es demasiado (máx. 10.000 botellas por renglón)'),
+      }),
+    )
+    .min(1, 'elegí al menos un vino'),
+  notes: optText(500),
+})
+export type OpenBottlesInput = z.input<typeof openBottlesInput>
+
 export const goalInput = z.object({
   month,
   sales_target: optMoney,

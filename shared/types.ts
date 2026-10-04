@@ -280,6 +280,96 @@ export interface WineEvent {
   created_at: string
 }
 
+// Respuestas de /api/events (ver server/routes/events.ts).
+/**
+ * Las cuentas de un evento (GET /events, /events/:id):
+ *   entradas + ventas de vino − costo del vino vendido − comisiones − gastos del evento − botellas abiertas.
+ */
+export interface EventSummary {
+  /** Todo lo que se cobró en ventas asociadas al evento (total de cada venta). */
+  revenue: number
+  /** Parte de revenue que son entradas u otros ítems que no son vino del stock. */
+  tickets: number
+  /** Cantidad de entradas (unidades de ítems que no son vino). */
+  tickets_qty: number
+  /** revenue − tickets: lo que se vendió de vino (con descuentos y envíos repartidos). */
+  wine_sales: number
+  /** Costo de las botellas vendidas en el evento. */
+  cogs: number
+  /** Comisiones de cobro de esas ventas. */
+  fees: number
+  /** Gastos cargados con este evento. */
+  expenses: number
+  /** Botellas que salieron del stock para el evento sin venderse (degustación, regalos…). */
+  bottles_opened: number
+  /** Esas botellas valorizadas al costo promedio del momento. */
+  bottles_opened_cost: number
+  /** Botellas vendidas en las ventas del evento. */
+  bottles_sold: number
+  /** cogs + fees + expenses + bottles_opened_cost */
+  costs: number
+  /** Lo que pusiste para hacer el evento: gastos + botellas abiertas. */
+  investment: number
+  /** revenue − cogs − fees − expenses − bottles_opened_cost */
+  result: number
+  /** result ÷ personas (null si no se cargó cuánta gente fue). */
+  per_attendee: number | null
+  /** result ÷ (gastos + botellas abiertas) (null si no hubo inversión). */
+  roi: number | null
+  /** (gastos + botellas abiertas) ÷ presupuesto (null si no tiene presupuesto). */
+  budget_used: number | null
+  sales_count: number
+  expenses_count: number
+  /** Movimientos de stock asociados (para saber si se puede borrar el evento). */
+  opened_count: number
+}
+
+export type EventWithSummary = WineEvent & { summary: EventSummary }
+
+export interface OpenedBottle {
+  id: number
+  date: ISODate
+  kind: StockMovementKind
+  kind_label: string
+  product_id: number
+  product_name: string
+  product_winery: string | null
+  /** Botellas (positivo = salieron del stock). */
+  bottles: number
+  unit_cost: number
+  /** bottles × unit_cost */
+  cost: number
+  notes: string | null
+}
+
+export type EventSale = SaleWithStatus & {
+  /** "Entrada al evento ×24" / "Malbec Reserva ×2 +1". */
+  items_label: string
+  /** Parte de la venta que son entradas (para separar en la tabla). */
+  tickets: number
+}
+
+export interface EventDetail {
+  event: WineEvent
+  summary: EventSummary
+  sales: EventSale[]
+  expenses: ExpenseWithStatus[]
+  opened: OpenedBottle[]
+  /** ¿Los clientes que compraron en el evento volvieron a comprar en los 30 días siguientes? */
+  after: {
+    days: number
+    /** Clientes identificados que compraron en el evento. */
+    clients: number
+    /** Cuántos de ellos volvieron a comprar. */
+    returning_clients: number
+    sales_count: number
+    revenue: number
+    /** false si todavía no pasaron los 30 días. */
+    complete: boolean
+  }
+  budget_used: number | null
+}
+
 export interface Goal {
   month: string // 'YYYY-MM'
   sales_target: number | null

@@ -414,11 +414,14 @@ describe('Comparación honesta', () => {
     expect(d.comparison.current.expenses).toBe(1000)
     expect(d.comparison.after_today).toEqual({ sales: 0, expenses: 7000, net_result: -7000 })
     expect(d.comparison.detail.replace(/\u00a0/g, ' ')).toContain('ya hay $ 7.000 de gastos cargados con fecha posterior a hoy')
-    // Ese gasto se cargó como pagado: el saldo de caja ya lo descuenta y lo informamos para explicarlo.
+    // Ese gasto se cargó como pagado con fecha 20/03: el saldo de hoy todavía NO lo descuenta; lo informamos para explicarlo.
     expect(d.cash.scheduled).toEqual({ out: 7000, in: 0 })
     // Sin nada después de hoy, no hay nota.
     const d2 = buildDashboard({ from: '2025-03-01', to: '2025-03-31' }, '2025-03-25')
     expect(d2.comparison.after_today).toBeNull()
+    expect(d2.cash.scheduled).toEqual({ out: 0, in: 0 })
+    // El 25/03 ese pago ya salió de la caja: la diferencia de saldo es exactamente ese gasto.
+    expect(Math.round((d.cash.total - d2.cash.total) * 100) / 100).toBe(7000)
   })
 })
 

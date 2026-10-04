@@ -23,7 +23,6 @@ const AyudaPage = lazy(() => import('./pages/ayuda/AyudaPage'))
 const ConfiguracionPage = lazy(() => import('./pages/configuracion/ConfiguracionPage'))
 const BienvenidaPage = lazy(() => import('./pages/bienvenida/BienvenidaPage'))
 const NotFound = lazy(() => import('./pages/NotFound'))
-const KitPage = lazy(() => import('./pages/_kit/KitPage'))
 
 export default function App() {
   return (
@@ -48,7 +47,6 @@ export default function App() {
         <Route path="calculadora" element={<CalculadoraPage />} />
         <Route path="ayuda" element={<AyudaPage />} />
         <Route path="configuracion" element={<ConfiguracionPage />} />
-        <Route path="kit" element={<KitPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

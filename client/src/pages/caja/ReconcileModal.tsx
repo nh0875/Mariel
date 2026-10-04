@@ -30,7 +30,7 @@ export function ReconcileModal({ account, onClose }: { account: AccountRow | nul
   }, [open, account?.id])
 
   // Saldo del sistema al cierre de la fecha del arqueo: lo mismo que usa el servidor para calcular el ajuste.
-  // (El saldo de la tarjeta incluye movimientos con fecha futura, si los hubiera; por eso siempre se pide a esa fecha.)
+  // (El saldo de la tarjeta es el de hoy; para otra fecha se pide el saldo a esa fecha.)
   const isToday = date === today()
   const future = !!date && date > today()
   const atDate = useApi<AccountRow[]>('/accounts', { as_of: date }, { enabled: open && !!date && !future })

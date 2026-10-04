@@ -18,10 +18,11 @@ import {
   type PriceList,
   type SaleChannel,
 } from '@shared/constants'
-import type { Product, SaleDetail } from '@shared/types'
+import type { Product, SaleDetail, WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
-import { bottles as fmtBottles, date as fmtDate, money, pct } from '@/lib/format'
-import { useAccounts, useApiMutation, useClients, useProducts, useSettings } from '@/lib/queries'
+import { eventStartDate, ticketLine } from '@/lib/eventPreset'
+import { bottles as fmtBottles, date as fmtDate, dateShort, money, pct } from '@/lib/format'
+import { useAccounts, useApiMutation, useClients, useEvents, useProducts, useSettings } from '@/lib/queries'
 import {
   AccountSelect,
   Button,
@@ -89,6 +90,10 @@ function buildInitial(
   presetEventId: number | null | undefined,
   presetClientId: number | null | undefined,
   feePctOf: (m: string) => number,
+  /** El evento de ?evento=ID (si ya pasó, la venta arranca con su fecha). */
+  presetEvent?: WineEvent | null,
+  /** ?entrada=1: arranca con un renglón «Entrada» (precio de la entrada × personas). */
+  presetTickets?: boolean,
 ): FormState {
   if (sale) {
     const autoFee = round2((sale.total * feePctOf(sale.payment_method)) / 100)
@@ -121,9 +126,10 @@ function buildInitial(
       feeOverride: Math.abs(sale.fee - autoFee) > 0.01 ? sale.fee : null,
     }
   }
+  const tickets = presetEvent && presetTickets ? ticketLine(presetEvent) : null
   return {
-    date: today(),
-    rows: [newRow()],
+    date: eventStartDate(presetEvent),
+    rows: tickets ? [{ ...newRow('other'), description: tickets.description, qty: tickets.qty, price: tickets.price, autoPrice: false }] : [newRow()],
     priceList: 'minorista',
     channel: presetEventId ? 'eventos' : 'local',
     clientId: presetClientId ?? null,
@@ -217,6 +223,7 @@ export function SaleFormModal({
   sale,
   presetEventId,
   presetClientId,
+  presetTickets,
   onClose,
   onSaved,
 }: {
@@ -227,6 +234,8 @@ export function SaleFormModal({
   presetEventId?: number | null
   /** ?cliente=ID (desde la ficha del cliente): preselecciona el cliente. */
   presetClientId?: number | null
+  /** ?entrada=1 (junto con ?evento=ID, «Vender entradas»): arranca con el renglón de entradas del evento. */
+  presetTickets?: boolean
   onClose: () => void
   onSaved?: (sale: SaleDetail) => void
 }) {
@@ -235,8 +244,11 @@ export function SaleFormModal({
   const products = useMemo(() => productsQ.data ?? [], [productsQ.data])
   const { data: accounts = [] } = useAccounts()
   const { data: clients = [] } = useClients()
+  const eventsQ = useEvents()
+  const events = useMemo(() => eventsQ.data ?? [], [eventsQ.data])
   const confirm = useConfirm()
   const editing = !!sale
+  const presetEvent = !editing && presetEventId ? (events.find((e) => e.id === presetEventId) ?? null) : null
 
   const feePctOf = (m: string) => settings?.payment_methods.find((x) => x.key === m)?.fee_pct ?? 0
   const methodLabel = (m: string) => settings?.payment_methods.find((x) => x.key === m)?.label || PAYMENT_METHOD_LABELS[m as PaymentMethod] || m
@@ -248,7 +260,7 @@ export function SaleFormModal({
     return accounts.find((a) => a.active)?.id ?? null
   }
 
-  const [f, setF] = useState<FormState>(() => buildInitial(sale, presetEventId, presetClientId, feePctOf))
+  const [f, setF] = useState<FormState>(() => buildInitial(sale, presetEventId, presetClientId, feePctOf, presetEvent, presetTickets))
   const [submitted, setSubmitted] = useState(false)
   const [showNotes, setShowNotes] = useState(false)
   const [editFee, setEditFee] = useState(false)
@@ -261,10 +273,12 @@ export function SaleFormModal({
 
   // Al abrir: arrancar de cero (o con los datos de la venta a editar).
   // Al editar esperamos la configuración: hace falta para saber si la comisión fue automática o a mano.
+  // Si viene de un evento, esperamos sus datos (fecha, precio de la entrada): es local, tarda un instante.
   const waitSettings = editing && !settings
+  const waitEvent = !editing && !!presetEventId && eventsQ.isPending
   useEffect(() => {
-    if (!open || waitSettings) return
-    const init = buildInitial(sale, presetEventId, presetClientId, feePctOf)
+    if (!open || waitSettings || waitEvent) return
+    const init = buildInitial(sale, presetEventId, presetClientId, feePctOf, presetEvent, presetTickets)
     setF(init)
     initialRef.current = JSON.stringify(init)
     setSubmitted(false)
@@ -272,7 +286,7 @@ export function SaleFormModal({
     setEditFee(init.feeOverride != null)
     setFocusRow(init.rows[0]?.key ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sale?.id, waitSettings])
+  }, [open, sale?.id, waitSettings, waitEvent])
 
   // Llevar el foco al renglón nuevo (así se puede seguir cargando con el teclado).
   useEffect(() => {
@@ -316,6 +330,8 @@ export function SaleFormModal({
   }, [f, productById, originalQty, originalItem, settings])
 
   const accountId = f.accountTouched ? f.accountId : (defaultAccountFor(f.method) ?? f.accountId)
+  // La venta quedó con la fecha de un evento que ya pasó (la ponemos así al venir desde su ficha).
+  const dateEvent = events.find((e) => e.id === f.eventId && e.date === f.date && e.date < today()) ?? null
   const client = clients.find((c) => c.id === f.clientId)
   const suggestWholesale = f.priceList === 'minorista' && ((client && WHOLESALE_KINDS.includes(client.kind)) || f.channel === 'mayorista')
 
@@ -686,7 +702,13 @@ export function SaleFormModal({
                   label="Fecha"
                   required
                   error={shownErrors.date}
-                  hint={f.date > today() ? 'Ojo: es una fecha futura. Si la venta ya se hizo, poné el día que vendiste.' : 'Si la cargás tarde, poné el día que vendiste.'}
+                  hint={
+                    f.date > today()
+                      ? 'Ojo: es una fecha futura. Si la venta ya se hizo, poné el día que vendiste.'
+                      : dateEvent
+                        ? `Es el día del evento «${dateEvent.name}» (${dateShort(dateEvent.date)}). Si vendiste otro día, cambiala.`
+                        : 'Si la cargás tarde, poné el día que vendiste.'
+                  }
                 >
                   <DateInput value={f.date} onChange={(v) => set({ date: v })} max="2100-12-31" />
                 </Field>

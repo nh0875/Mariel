@@ -418,7 +418,7 @@ export default function CajaPage() {
 
       <div ref={tabsRef} className="mt-7 scroll-mt-20">
         {/* flex-wrap: en el celular las tres pestañas no entran en un renglón y «Flujo de caja» quedaba escondida. */}
-        <Tabs items={tabs} value={tab} onChange={setTab} className="mb-4 flex-wrap" />
+        <Tabs items={tabs} value={tab} onChange={setTab} className="mb-4" />
         {tab === 'movimientos' && (
           <MovementsTab accounts={accounts} filters={filters} setFilters={setFilters} onNew={openNew} onEdit={(m) => setEditMovement(m)} />
         )}

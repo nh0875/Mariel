@@ -77,7 +77,7 @@ export interface DashboardResponse {
     after_today: { sales: number; expenses: number; net_result: number } | null
   }
   series: MonthlyPoint[]
-  /** scheduled: pagos/cobros ya cargados con fecha posterior a hoy (el saldo ya los descuenta). */
+  /** scheduled: pagos/cobros ya cargados con fecha posterior a hoy (el saldo de hoy todavía NO los cuenta). */
   cash: { total: number; accounts: AccountWithBalance[]; scheduled: { out: number; in: number } }
   stock: { value: number; bottles: number; products: number }
   receivables: { total: number; count: number; overdue: number }

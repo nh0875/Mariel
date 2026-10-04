@@ -24,7 +24,7 @@ import {
   type StockMovementKind,
   type WineType,
 } from '../../shared/constants'
-import { marginOnPrice, markupOnCost, round2, roundUpTo } from '../../shared/calc'
+import { marginOnPrice, markupOnCost, reorderSuggestion, round2, roundUpTo } from '../../shared/calc'
 import { addDays, addMonths, monthLabel, monthsBetween, startOfMonth, today } from '../../shared/dates'
 import type { Product, StockMovement } from '../../shared/types'
 
@@ -206,17 +206,8 @@ function loadProduct(id: number): ProductWithStats {
   return decorate(toProduct(row), soldSince(since90(), id).get(id) ?? 0)
 }
 
-/**
- * Cuánto conviene pedir de un vino: lo necesario para cubrir ~45 días de venta (al ritmo de los
- * últimos 90 días) o el doble del stock mínimo, lo que sea mayor, redondeado a cajas cerradas.
- */
-export function reorderSuggestion(p: Pick<ProductWithStats, 'sold_90d' | 'min_stock' | 'stock' | 'units_per_box'>): number {
-  const target = Math.max(p.min_stock * 2, Math.ceil((p.sold_90d / 90) * 45))
-  const need = target - Math.max(p.stock, 0)
-  if (need <= 0) return 0
-  const box = Math.max(1, p.units_per_box)
-  return Math.ceil(need / box) * box
-}
+/** Cuánto conviene pedir de un vino (la regla vive en shared/calc.ts, igual que en la pantalla). */
+export { reorderSuggestion }
 
 function checkUniqueSku(sku: string | null, exceptId?: number) {
   if (!sku) return

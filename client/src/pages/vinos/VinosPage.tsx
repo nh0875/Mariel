@@ -1,6 +1,6 @@
 // Vinos y stock: el catálogo con costos, precios, márgenes y botellas.
-import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { FileText, Plus, ShoppingBasket, TrendingUp, Upload, Wine } from 'lucide-react'
 import { WINE_TYPES, WINE_TYPE_LABELS } from '@shared/constants'
 import { int, money, moneyCompact, pct } from '@/lib/format'
@@ -88,6 +88,15 @@ export default function VinosPage() {
   const [newOpen, openNew, closeNew] = useNewParam()
   const [bulkOpen, setBulkOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [params, setParams] = useSearchParams()
+  // ?importar=1 → abre «Importar desde Excel» (desde la Bienvenida y la Ayuda).
+  useEffect(() => {
+    if (params.get('importar') !== '1') return
+    setImportOpen(true)
+    const next = new URLSearchParams(params)
+    next.delete('importar')
+    setParams(next, { replace: true })
+  }, [params, setParams])
   const [listOpen, setListOpen] = useState(false)
   const [type, setType] = useState('')
   const [winery, setWinery] = useState('')

@@ -8,10 +8,13 @@ export interface TabItem<K extends string = string> {
   count?: number
 }
 
-/** Pestañas tipo "píldora". */
+/**
+ * Pestañas tipo "píldora". Si no entran en una línea (celular), bajan a la siguiente:
+ * así todas quedan a la vista y nadie tiene que adivinar que había que deslizar.
+ */
 export function Tabs<K extends string>({ items, value, onChange, className }: { items: TabItem<K>[]; value: K; onChange: (k: K) => void; className?: string }) {
   return (
-    <div role="tablist" className={clsx('vh-no-print vh-scroll -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1', className)}>
+    <div role="tablist" className={clsx('vh-no-print flex flex-wrap gap-1.5 pb-1', className)}>
       {items.map((t) => {
         const active = t.key === value
         const Icon = t.icon

@@ -330,7 +330,14 @@ export default function VinoDetailPage() {
           hint={
             <>
               {p.units_per_box > 1 && p.stock >= p.units_per_box ? `${boxes(p.stock, p.units_per_box)} · ` : ''}mínimo {int(p.min_stock)}
-              {level !== 'ok' && <b className="text-bad"> · reponer</b>}
+              {level !== 'ok' && (
+                <>
+                  {' · '}
+                  <Link to={`/compras?vino=${p.id}`} className="vh-no-print font-bold text-bad underline-offset-2 hover:underline" title="Cargar una compra de este vino">
+                    reponer
+                  </Link>
+                </>
+              )}
             </>
           }
         />
@@ -429,6 +436,14 @@ export default function VinoDetailPage() {
             {p.price_retail > 0 && p.unit_cost > 0 && (
               <p className="text-[13px] text-muted">
                 Markup minorista: {pct(markupOnCost(p.price_retail, p.unit_cost), 0)} (lo que le sumás al costo). Margen: {pct(p.margin_retail, 0)} (lo que te queda del precio).
+              </p>
+            )}
+            {p.active && (
+              <p className="vh-no-print text-[13px]">
+                <Link to={`/calculadora?vino=${p.id}`} className="font-bold text-sky-deep hover:underline">
+                  Calcular su precio en la Calculadora
+                </Link>
+                <span className="text-muted"> (con Ingresos Brutos y la comisión del cobro)</span>
               </p>
             )}
           </div>

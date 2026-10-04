@@ -13,7 +13,7 @@ import type { PaymentMethod } from '@shared/constants'
 import { api } from '@/lib/api'
 import { money } from '@/lib/format'
 import { useApi, useApiMutation, useSettings } from '@/lib/queries'
-import { Button, ChoiceCards, Field, InfoTip, MoneyInput, NumberInput, Spinner, TextInput, useConfirm, useToast } from '@/components/ui'
+import { Button, ChoiceCards, Field, InfoTip, MoneyInput, NumberInput, Spinner, TextInput, useConfirm } from '@/components/ui'
 import { nb } from '../configuracion/parts'
 
 type Step = 0 | 1 | 2 | 3
@@ -88,7 +88,6 @@ const ACCOUNT_ICON = { efectivo: Banknote, banco: Landmark, billetera: Wallet, o
 export default function BienvenidaPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const toast = useToast()
   const confirm = useConfirm()
   const { data: settings } = useSettings()
   const accountsQ = useApi<AccountWithBalance[]>('/accounts')
@@ -177,7 +176,6 @@ export default function BienvenidaPage() {
   )
   const finish = useApiMutation((to: string) => putSettings({ onboarding: { completed: true } }).then(() => to), {
     onSuccess: (to) => {
-      if (to === '/vinos') toast.info('Tocá «Importar desde Excel» (arriba a la derecha) para subir tu planilla.')
       navigate(to)
     },
   })
@@ -429,7 +427,7 @@ export default function BienvenidaPage() {
                 <Button variant="primary" size="lg" icon={Wine} onClick={() => finish.mutate('/vinos?nuevo=1')} loading={finish.isPending && finish.variables === '/vinos?nuevo=1'}>
                   Cargar mi primer vino
                 </Button>
-                <Button size="lg" icon={FileSpreadsheet} onClick={() => finish.mutate('/vinos')} loading={finish.isPending && finish.variables === '/vinos'}>
+                <Button size="lg" icon={FileSpreadsheet} onClick={() => finish.mutate('/vinos?importar=1')} loading={finish.isPending && finish.variables === '/vinos?importar=1'}>
                   Importar desde Excel
                 </Button>
               </div>

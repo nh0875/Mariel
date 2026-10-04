@@ -121,7 +121,8 @@ export interface DashboardResponse {
   series: MonthlyPoint[]
   /**
    * scheduled: neto de movimientos de caja con fecha posterior a hoy que ya están cargados (ej: gastos fijos
-   * generados como "pagados" para todo el mes). El saldo de las cuentas ya los descuenta; lo informamos para explicarlo.
+   * generados como "pagados" para todo el mes). El saldo de hoy todavía NO los cuenta (accountBalances() suma hasta
+   * hoy); lo informamos para explicar por qué la plata va a bajar esos días.
    */
   cash: { total: number; accounts: AccountWithBalance[]; scheduled: { out: number; in: number } }
   stock: { value: number; bottles: number; products: number }
@@ -184,7 +185,7 @@ export function periodPhrase(p: Period, dataSince: string | null): string {
   return `del ${rangeInWords(p.from, p.to)}`
 }
 
-/** Pagos y cobros ya cargados con fecha posterior a hoy (el saldo de las cuentas ya los cuenta). */
+/** Pagos y cobros ya cargados con fecha posterior a hoy (el saldo de hoy todavía no los cuenta). */
 function scheduledCash(ref: string): { out: number; in: number } {
   const r = get<{ cout: number; cin: number }>(
     `SELECT COALESCE(SUM(CASE WHEN direction = 'out' THEN amount ELSE 0 END), 0) AS cout,
@@ -667,7 +668,7 @@ export function buildDashboard(period: Period, ref: string = today()): Dashboard
   const lastMonthStart = startOfMonth(minDate(to, endOfMonth(ref)))
   const series = monthlySeries(addMonths(lastMonthStart, -11), endOfMonth(lastMonthStart))
 
-  const accounts = accountBalances().filter((a) => a.active || Math.abs(a.balance) > 0.009)
+  const accounts = accountBalances(ref).filter((a) => a.active || Math.abs(a.balance) > 0.009)
   const cashTotal = round2(accounts.reduce((s, a) => s + a.balance, 0))
 
   const low = lowStock()

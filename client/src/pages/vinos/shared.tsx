@@ -68,17 +68,8 @@ export function MarginChip({ margin, price, target }: { margin: number; price: n
   return <Badge tone={marginTone(margin, target)}>{pct(margin, 0)}</Badge>
 }
 
-/**
- * Cuánto conviene pedir: lo necesario para cubrir ~45 días de venta (al ritmo de los últimos 90 días)
- * o el doble del stock mínimo, lo que sea mayor, redondeado a cajas cerradas. (Igual que en el Excel.)
- */
-export function reorderSuggestion(p: Pick<ProductRow, 'sold_90d' | 'min_stock' | 'stock' | 'units_per_box'>): number {
-  const target = Math.max(p.min_stock * 2, Math.ceil((p.sold_90d / 90) * 45))
-  const need = target - Math.max(p.stock, 0)
-  if (need <= 0) return 0
-  const box = Math.max(1, p.units_per_box)
-  return Math.ceil(need / box) * box
-}
+/** Cuánto conviene pedir: la misma regla que usa la API y el Excel (shared/calc.ts). */
+export { reorderSuggestion } from '@shared/calc'
 
 export const REORDER_HELP =
   'Lo necesario para cubrir unos 45 días de venta (al ritmo de los últimos 90 días) o el doble de tu stock mínimo, lo que sea mayor, redondeado a cajas cerradas. Es una sugerencia: ajustala según la plata que tengas y si la bodega aumentó.'

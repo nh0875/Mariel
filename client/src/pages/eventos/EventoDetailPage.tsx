@@ -120,6 +120,8 @@ export default function EventoDetailPage() {
   }
 
   const goSale = () => navigate(`/ventas?nuevo=1&evento=${ev.id}`)
+  // «Vender entradas»: la venta arranca con el renglón «Entrada» (precio de la entrada × personas).
+  const goTickets = () => navigate(`/ventas?nuevo=1&evento=${ev.id}&entrada=1`)
   const goExpense = () => navigate(`/gastos?nuevo=1&evento=${ev.id}`)
 
   // ─────────── Tablas ───────────
@@ -306,7 +308,7 @@ export default function EventoDetailPage() {
           <Button variant="primary" icon={Store} onClick={goSale}>
             Cargar venta del evento
           </Button>
-          <Button icon={Ticket} onClick={goSale}>
+          <Button icon={Ticket} onClick={goTickets}>
             Vender entradas
           </Button>
           <Button icon={Receipt} onClick={goExpense}>
@@ -319,16 +321,23 @@ export default function EventoDetailPage() {
         <p className="mt-3 flex items-start gap-2 text-[13.5px] leading-snug text-ink-soft">
           <Ticket size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
           <span>
-            <b className="text-ink">Entradas:</b> en la venta tocá «Agregar otro ítem (no es vino)», escribí «Entrada» y poné cuántas personas{ticketHint}. Así no tocan el stock y
-            se ven separadas del vino.
+            <b className="text-ink">Entradas:</b> «Vender entradas» arma la venta con un renglón «Entrada»{ticketHint}
+            {ev.attendees ? ` × ${int(ev.attendees)} ${ev.attendees === 1 ? 'persona' : 'personas'}` : ''}: revisá cuántas fueron y el precio antes de guardar. No es vino: no
+            toca el stock y se ve separado de las botellas.
+            {s.tickets_qty > 0 && (
+              <b className="text-ink">
+                {' '}
+                Ojo: sus ventas ya tienen {int(s.tickets_qty)} {s.tickets_qty === 1 ? 'entrada u otro ítem' : 'entradas u otros ítems'} que no son vino; fijate de no cargarlas dos veces.
+              </b>
+            )}
           </span>
         </p>
         {isPast && (
           <p className="mt-2 flex items-start gap-2 text-[13.5px] leading-snug text-ink-soft">
             <CalendarHeart size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
             <span>
-              <b className="text-ink">Fecha:</b> el evento fue el {dateLong(ev.date)}. La venta y el gasto nuevos arrancan con la fecha de hoy: si son de ese día, cambiala, así
-              cuentan en el mes que corresponde.
+              <b className="text-ink">Fecha:</b> el evento fue el {dateLong(ev.date)}. La venta y el gasto que cargues desde acá arrancan con esa fecha, así cuentan en el mes
+              que corresponde. Si fueron otro día, cambiala en el formulario.
             </span>
           </p>
         )}
@@ -435,7 +444,6 @@ export default function EventoDetailPage() {
       <Card className="mt-4" flush>
         <div className="px-4 pt-4 sm:px-5 sm:pt-5">
           <Tabs<TabKey>
-            className="flex-wrap"
             value={tab}
             onChange={setTab}
             items={[

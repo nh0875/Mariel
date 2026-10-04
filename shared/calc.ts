@@ -51,3 +51,16 @@ export function roundUpTo(n: number, multiple: number): number {
   if (!multiple) return round2(n)
   return Math.ceil(n / multiple) * multiple
 }
+
+/**
+ * Cuánto conviene pedir de un vino: lo necesario para cubrir ~45 días de venta (al ritmo de los
+ * últimos 90 días) o el doble del stock mínimo, lo que sea mayor, redondeado a cajas cerradas.
+ * La usan la API (ficha del vino y Excel de reposición) y la pantalla «Vinos y stock».
+ */
+export function reorderSuggestion(p: { sold_90d: number; min_stock: number; stock: number; units_per_box: number }): number {
+  const target = Math.max(p.min_stock * 2, Math.ceil((p.sold_90d / 90) * 45))
+  const need = target - Math.max(p.stock, 0)
+  if (need <= 0) return 0
+  const box = Math.max(1, p.units_per_box)
+  return Math.ceil(need / box) * box
+}

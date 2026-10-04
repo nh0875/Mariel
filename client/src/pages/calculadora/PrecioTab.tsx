@@ -169,11 +169,11 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
           </div>
           <SliderField
             label="Margen que querés que te quede"
-            info="margen_vs_markup"
+            info="margen_despues_iibb"
             hint={
               <>
-                De cada $&nbsp;100 que cobrás, lo que te queda después del vino, IIBB y la comisión. Ojo: en «Vinos y stock» el margen se mide <b className="text-ink-soft">antes</b> de IIBB y
-                comisión; por eso acá el precio da un poco más alto.
+                De cada $&nbsp;100 que cobrás, lo que te queda después del vino, IIBB y la comisión. Arranca con tu margen objetivo de Configuración ({nf(ctx.pricing.target_margin_pct)}
+                &nbsp;%), pero allá y en «Vinos y stock» ese % se mide <b className="text-ink-soft">antes</b> de IIBB y comisión (margen bruto): por eso acá el precio da un poco más alto.
               </>
             }
             value={state.margin}

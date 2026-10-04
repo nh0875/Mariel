@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Trash2, Wine } from 'lucide-react'
+import type { OpenBottlesInput } from '@shared/schemas'
 import type { WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
 import { bottles as fmtBottles, money } from '@/lib/format'
@@ -73,7 +74,7 @@ export function OpenBottlesModal({ open, event, onClose }: { open: boolean; even
   const totalCost = rows.reduce((a, r) => a + (r.productId ? (r.qty ?? 0) * (byId.get(r.productId)?.unit_cost ?? 0) : 0), 0)
 
   const save = useApiMutation(
-    (body: { date: string; items: { product_id: number; qty: number }[]; notes: string | null }) => api.post(`/events/${event.id}/open-bottles`, body),
+    (body: OpenBottlesInput) => api.post(`/events/${event.id}/open-bottles`, body),
     {
       success: (_r, b) => {
         const n = b.items.reduce((a, i) => a + i.qty, 0)

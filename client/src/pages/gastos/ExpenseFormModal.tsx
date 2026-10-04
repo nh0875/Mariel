@@ -6,11 +6,12 @@ import { Banknote, ChevronDown, Clock, Repeat, TrendingDown, Waves, type LucideI
 import clsx from 'clsx'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
 import { today } from '@shared/dates'
-import type { ExpenseCategorySetting } from '@shared/types'
+import type { ExpenseCategorySetting, WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
-import { date as fmtDate, monthName } from '@/lib/format'
+import { eventStartDate } from '@/lib/eventPreset'
+import { date as fmtDate, dateShort, monthName } from '@/lib/format'
 import { useLocalState } from '@/lib/hooks'
-import { useAccounts, useApiMutation, useSettings } from '@/lib/queries'
+import { useAccounts, useApiMutation, useEvents, useSettings } from '@/lib/queries'
 import {
   AccountSelect,
   Button,
@@ -49,7 +50,14 @@ interface FormState {
 
 const EVENT_CATEGORY = /evento|degustaci/i
 
-function buildInitial(expense: ExpenseDetail | null | undefined, categories: ExpenseCategorySetting[], presetEventId: number | null | undefined, defaultAccount: number | null): FormState {
+function buildInitial(
+  expense: ExpenseDetail | null | undefined,
+  categories: ExpenseCategorySetting[],
+  presetEventId: number | null | undefined,
+  defaultAccount: number | null,
+  /** El evento de ?evento=ID: si ya pasó, el gasto arranca con su fecha. */
+  presetEvent?: WineEvent | null,
+): FormState {
   if (expense) {
     const known = categories.some((c) => c.name === expense.category)
     return {
@@ -78,7 +86,7 @@ function buildInitial(expense: ExpenseDetail | null | undefined, categories: Exp
     otherText: '',
     description: '',
     amount: null,
-    date: today(),
+    date: eventStartDate(presetEvent),
     nature: eventCat?.nature ?? 'variable',
     supplierId: null,
     eventId: presetEventId ?? null,
@@ -110,6 +118,10 @@ export function ExpenseFormModal({
   const { data: accounts = [] } = useAccounts()
   const categories = settings?.expense_categories?.length ? settings.expense_categories : DEFAULT_EXPENSE_CATEGORIES
   const [lastAccount, setLastAccount] = useLocalState<number | null>('gastos.account', null)
+  const eventsQ = useEvents()
+  const presetEvent = !expense && presetEventId ? (eventsQ.data?.find((e) => e.id === presetEventId) ?? null) : null
+  // Si viene de un evento, esperamos sus datos (la fecha): es local, tarda un instante.
+  const waitEvent = !expense && !!presetEventId && eventsQ.isPending
 
   // Cuenta sugerida: la última que usaste para un gasto; si no, el banco; si no, la primera.
   const activeAccounts = accounts.filter((a) => a.active)
@@ -119,21 +131,21 @@ export function ExpenseFormModal({
     activeAccounts[0]?.id ??
     null
 
-  const [f, setF] = useState<FormState>(() => buildInitial(expense, categories, presetEventId, defaultAccount))
+  const [f, setF] = useState<FormState>(() => buildInitial(expense, categories, presetEventId, defaultAccount, presetEvent))
   const [touched, setTouched] = useState(false)
   const [showErrors, setShowErrors] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
 
   useEffect(() => {
-    if (!open) return
-    const init = buildInitial(expense, categories, presetEventId, defaultAccount)
+    if (!open || waitEvent) return
+    const init = buildInitial(expense, categories, presetEventId, defaultAccount, presetEvent)
     setF(init)
     setTouched(false)
     setShowErrors(false)
     setMoreOpen(!!(init.supplierId || init.eventId || init.notes))
     // Solo al abrir (o cambiar de gasto): no pisar lo que la persona está escribiendo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, expense?.id, presetEventId])
+  }, [open, expense?.id, presetEventId, waitEvent])
 
   // Si las cuentas llegan después de abrir, completamos la sugerida.
   useEffect(() => {
@@ -146,6 +158,8 @@ export function ExpenseFormModal({
   }
 
   const isEdit = !!expense
+  // El gasto quedó con la fecha de un evento que ya pasó (la ponemos así al venir desde su ficha).
+  const dateEvent = eventsQ.data?.find((e) => e.id === f.eventId && e.date === f.date && e.date < today()) ?? null
   const category = f.other ? f.otherText.trim() : (f.category ?? '')
   const day = Math.min(Number(f.date.slice(8, 10)) || 1, 28)
   const partialPaid = isEdit && expense!.status === 'parcial'
@@ -375,7 +389,12 @@ export function ExpenseFormModal({
           <Field label="Monto" required error={err('amount')} hint="Lo que figura en la factura o ticket.">
             <MoneyInput value={f.amount} onChange={(v) => set('amount', v)} aria-invalid={!!err('amount')} aria-label="Monto" />
           </Field>
-          <Field label="Fecha" required error={err('date')} hint="El día del gasto.">
+          <Field
+            label="Fecha"
+            required
+            error={err('date')}
+            hint={dateEvent ? `Es el día del evento «${dateEvent.name}» (${dateShort(dateEvent.date)}). Si el gasto fue de otro día, cambiala.` : 'El día del gasto.'}
+          >
             <DateInput value={f.date} onChange={(v) => set('date', v)} aria-invalid={!!err('date')} aria-label="Fecha" />
           </Field>
         </div>

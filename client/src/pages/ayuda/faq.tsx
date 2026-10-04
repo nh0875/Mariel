@@ -171,7 +171,10 @@ export const FAQ: FaqItem[] = [
           <li>
             Creá el evento en <L to="/eventos">Eventos</L>.
           </li>
-          <li>Cuando cargues las ventas y los gastos de ese evento, elegilo en el campo «Evento».</li>
+          <li>
+            Cuando cargues las ventas y los gastos de ese evento, elegilo en el campo «Evento». Más fácil: desde la ficha del evento, <b>«Cargar venta del evento»</b>,{' '}
+            <b>«Vender entradas»</b> y <b>«Cargar gasto del evento»</b> ya lo traen elegido (y con la fecha del evento, si ya pasó).
+          </li>
           <li>
             En la ficha del evento, tocá <b>«Registrar botellas abiertas»</b> para las que abriste para degustar.
           </li>
