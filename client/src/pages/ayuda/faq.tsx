@@ -36,10 +36,10 @@ export const FAQ: FaqItem[] = [
           </li>
           <li>Elegí el cliente (si no existe, escribí su nombre y tocá «Agregar cliente») y cargá los vinos.</li>
           <li>
-            En <b>«¿Ya la cobraste?»</b> elegí <b>«Todavía no»</b>. Si acordaron una fecha, ponela como vencimiento.
+            En <b>«¿Ya la cobraste?»</b> elegí <b>«No, me la pagan después»</b>. Si acordaron una fecha, ponela como vencimiento.
           </li>
         </Steps>
-        Queda como <b>«Por cobrar»</b> en Ventas, en la ficha del cliente y en Caja y bancos → Pendientes. Si se pasa la fecha, el sistema la marca como vencida.
+        Queda como <b>«Por cobrar»</b> en Ventas, en la ficha del cliente y en Caja y bancos → «Por cobrar y por pagar». Si se pasa la fecha, el sistema la marca como vencida.
         <Why>La venta cuenta en el resultado del día que vendiste (el vino ya salió), pero la plata entra a la caja recién cuando te pagan.</Why>
       </>
     ),
@@ -58,7 +58,8 @@ export const FAQ: FaqItem[] = [
             Tocá <b>«Registrar cobro»</b>: poné cuánto te pagaron, la fecha y en qué cuenta entró la plata.
           </li>
         </Steps>
-        Puede ser un pago parcial (una seña): la venta queda en «Cobro parcial» hasta completar. También podés cobrar desde <L to="/caja">Caja y bancos</L> → pestaña de pendientes → «Cobrar».
+        Puede ser un pago parcial (una seña): la venta queda en «Cobro parcial» hasta completar. También podés cobrar desde <L to="/caja">Caja y bancos</L> → pestaña «Por cobrar y por pagar» →
+        «Cobrar».
         <Why>Así la caja de cada cuenta coincide con la real y sabés exactamente quién te debe y cuánto.</Why>
       </>
     ),
@@ -77,8 +78,8 @@ export const FAQ: FaqItem[] = [
             Para corregirla tocá <b>«Editar»</b>; para anularla del todo, <b>«Borrar»</b>.
           </li>
         </Steps>
-        Al borrarla, las botellas vuelven al stock y se borran sus cobros y comisiones. Si el cliente te devolvió solo algunas botellas, editá la venta o cargá una «Devolución de cliente» desde la ficha
-        del vino → «Ajustar stock».
+        Al borrarla, las botellas vuelven al stock y se borran sus cobros y comisiones. Si el cliente te devolvió solo algunas botellas, editá la venta o cargá una «Devolución de cliente» desde la
+        ficha del vino → «Ajustar stock».
         <Why>Todo se recalcula solo (stock, costo, caja y reportes), así los números siempre cierran aunque te hayas equivocado.</Why>
       </>
     ),
@@ -226,7 +227,7 @@ export const FAQ: FaqItem[] = [
       <>
         <Steps>
           <li>
-            En <L to="/gastos">Gastos</L>, andá a <b>«Gastos fijos»</b> y cargá cada uno una sola vez (monto, día del mes, categoría).
+            En <L to="/gastos">Gastos</L>, andá a la pestaña <b>«Gastos fijos del mes»</b> y cargá cada uno una sola vez (monto, día del mes, categoría).
           </li>
           <li>
             Cada mes tocá <b>«Generar los gastos del mes»</b>: se cargan todos juntos.
@@ -244,8 +245,8 @@ export const FAQ: FaqItem[] = [
     a: (
       <>
         Cada pantalla tiene su botón <b>«Descargar Excel»</b> con el período que estás mirando. Para tener absolutamente todo junto, andá a{' '}
-        <L to="/configuracion#datos">Configuración → Tus datos → «Descargar todo en Excel»</L>: es un archivo con 16 hojas (vinos, ventas, compras, gastos, caja, clientes…) y una hoja «Léeme» que explica
-        cada una.
+        <L to="/configuracion#datos">Configuración → Tus datos → «Descargar todo en Excel»</L>: es un archivo con 16 hojas (vinos, ventas, compras, gastos, caja, clientes…) y una hoja «Léeme» que
+        explica cada una.
         <Why>Los Excel salen con formato de pesos, fechas reales, filtros y una explicación abajo de cada tabla: listos para el contador.</Why>
       </>
     ),
@@ -257,8 +258,8 @@ export const FAQ: FaqItem[] = [
     a: (
       <>
         No tenés que hacer nada: <b>todos los días se guarda una copia automática</b> (y antes de borrar o restaurar algo, también). Si querés una en el momento, andá a{' '}
-        <L to="/configuracion#backups">Configuración → Copias de seguridad</L> → <b>«Hacer una copia ahora»</b>. Para tenerla fuera de la compu, tocá «Descargar» y guardala en un pendrive o mandátela por
-        mail.
+        <L to="/configuracion#backups">Configuración → Copias de seguridad</L> → <b>«Hacer una copia ahora»</b>. Para tenerla fuera de la compu, tocá «Descargar» y guardala en un pendrive o mandátela
+        por mail.
         <Why>Si la compu se rompe o te la roban, la copia en otro lado es lo único que salva tus datos. Una vez por semana está bien.</Why>
       </>
     ),
@@ -302,9 +303,11 @@ export const FAQ: FaqItem[] = [
     keywords: 'arqueo contar plata diferencia sobra falta ajuste',
     a: (
       <>
-        Contá la plata real y hacé un <b>arqueo</b>: en <L to="/caja">Caja y bancos</L>, menú ⋮ de la cuenta → «Arqueo». Escribís cuánto contaste y el sistema registra la diferencia como «Ajuste de
-        saldo». Antes, fijate si te faltó cargar alguna venta, gasto o retiro: casi siempre la diferencia es eso.
-        <Why>Hacerlo seguido evita que los errores se acumulen y después no sepas de dónde vienen. Ver <L to="/ayuda#arqueo">arqueo de caja</L>.</Why>
+        Contá la plata real y hacé un <b>arqueo</b>: en <L to="/caja">Caja y bancos</L>, menú ⋮ de la cuenta → «Hacer arqueo». Escribís cuánto contaste y el sistema registra la diferencia como «Ajuste
+        de saldo». Antes, fijate si te faltó cargar alguna venta, gasto o retiro: casi siempre la diferencia es eso.
+        <Why>
+          Hacerlo seguido evita que los errores se acumulen y después no sepas de dónde vienen. Ver <L to="/ayuda#arqueo">arqueo de caja</L>.
+        </Why>
       </>
     ),
   },
@@ -326,8 +329,8 @@ export const FAQ: FaqItem[] = [
     keywords: 'objetivo meta presupuesto mes',
     a: (
       <>
-        En <L to="/metas">Metas</L> cargás cuánto querés vender (en pesos y en botellas) y cuánto pensás gastar cada mes. El sistema te sugiere un piso: tu punto de equilibrio. En Inicio vas viendo cuánto
-        te falta.
+        En <L to="/metas">Metas</L> cargás cuánto querés vender (en pesos y en botellas) y cuánto pensás gastar cada mes. El sistema te sugiere un piso: tu punto de equilibrio. En Inicio vas viendo
+        cuánto te falta.
         <Why>Sin meta no hay forma de saber si un mes fue bueno o malo. Y arrancar por el punto de equilibrio te asegura no perder plata.</Why>
       </>
     ),
@@ -338,8 +341,8 @@ export const FAQ: FaqItem[] = [
     keywords: 'ejemplo demo borrar empezar de cero',
     a: (
       <>
-        Andá a <L to="/configuracion#datos">Configuración → Tus datos</L> → <b>«Borrar todo»</b> y escribí BORRAR para confirmar. Se borran los datos pero se mantiene tu configuración, y te llevamos a la
-        bienvenida para cargar tus saldos.
+        Andá a <L to="/configuracion#datos">Configuración → Tus datos</L> → <b>«Borrar todo»</b> y escribí BORRAR para confirmar. Se borran los datos pero se mantiene tu configuración, y te llevamos a
+        la bienvenida para cargar tus saldos.
         <Why>Antes de borrar se guarda una copia de seguridad, así que si te arrepentís, la restaurás.</Why>
       </>
     ),

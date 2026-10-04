@@ -8,7 +8,7 @@ import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constant
 import { today } from '@shared/dates'
 import type { ExpenseCategorySetting } from '@shared/types'
 import { api } from '@/lib/api'
-import { date as fmtDate, money, monthName } from '@/lib/format'
+import { date as fmtDate, monthName } from '@/lib/format'
 import { useLocalState } from '@/lib/hooks'
 import { useAccounts, useApiMutation, useSettings } from '@/lib/queries'
 import {
@@ -26,7 +26,7 @@ import {
   TextInput,
   Textarea,
 } from '@/components/ui'
-import { CategoryPicker } from './parts'
+import { CategoryPicker, money } from './parts'
 import { descriptionExample, type ExpenseDetail } from './types'
 
 interface FormState {
@@ -258,8 +258,8 @@ export function ExpenseFormModal({
           <>
             {isEdit && expense!.paid > 0.009 ? (
               <>
-                Queda un solo pago de <b>{money(f.amount)}</b> desde <b>{account?.name ?? 'la cuenta elegida'}</b>, en lugar de lo que habías registrado ({money(expense!.paid)}{' '}
-                desde {paidAccounts})
+                Queda un solo pago de <b>{money(f.amount)}</b> desde <b>{account?.name ?? 'la cuenta elegida'}</b>, en lugar de los {money(expense!.paid)} que habías registrado desde{' '}
+                {paidAccounts}
               </>
             ) : (
               <>
@@ -269,7 +269,8 @@ export function ExpenseFormModal({
             {willBe != null && (
               <>
                 {' '}
-                (le quedarían <b className={willBe < 0 ? 'text-bad' : undefined}>{money(willBe)}</b>
+                ({isEdit && expense!.paid > 0.009 ? `a ${account?.name ?? 'la cuenta'} le quedarían` : 'le quedarían'}{' '}
+                <b className={willBe < 0 ? 'text-bad' : undefined}>{money(willBe)}</b>
                 {willBe < 0 ? ': ojo, quedaría en negativo' : ''})
               </>
             )}
@@ -287,22 +288,18 @@ export function ExpenseFormModal({
             </>
           ),
         })
-      } else if (partialPaid) {
-        out.push({
-          icon: Banknote,
-          text: (
-            <>
-              Lo que ya pagaste ({money(expense!.paid)}) queda registrado. Faltaría pagar <b>{money(Math.max(0, f.amount - expense!.paid))}</b>.
-            </>
-          ),
-        })
       }
       out.push({
         icon: Clock,
-        text: (
+        text: partialPaid ? (
+          <>
+            Lo que ya pagaste ({money(expense!.paid)}) queda registrado y el resto, <b>{money(Math.max(0, f.amount - expense!.paid))}</b>, queda <b>por pagar</b>
+            {f.dueDate ? <> (vence el {fmtDate(f.dueDate)})</> : ''}. No sale más plata hasta que toques «Registrar pago».
+          </>
+        ) : (
           <>
             Queda <b>por pagar</b>
-            {f.dueDate ? <>, vence el {fmtDate(f.dueDate)}</> : ''}. No sale {partialPaid ? 'más ' : ''}plata de ninguna cuenta hasta que toques «Registrar pago».
+            {f.dueDate ? <>, vence el {fmtDate(f.dueDate)}</> : ''}. No sale plata de ninguna cuenta hasta que toques «Registrar pago».
           </>
         ),
       })

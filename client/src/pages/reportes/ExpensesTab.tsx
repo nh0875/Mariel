@@ -108,14 +108,28 @@ export function ExpensesTab({ period }: { period: Period }) {
           },
           { key: 'total', header: 'Total', align: 'right', cell: (c) => <b>{money0(c.total)}</b>, footer: money0(t.total) },
           { key: 'share', header: '% del total', align: 'right', hideBelow: 'md', cell: (c) => pct(c.share, 1), footer: '100 %' },
-          { key: 'monthly_avg', header: 'Por mes', align: 'right', hideBelow: 'sm', cell: (c) => money0(c.monthly_avg), footer: money0(t.total / Math.max(1, d.by_month.length)) },
+          {
+            key: 'monthly_avg',
+            header: 'Por mes',
+            align: 'right',
+            hideBelow: 'sm',
+            cell: (c) =>
+              c.monthly_avg === 0 && c.total > 0 ? (
+                <span className="text-muted" title="Solo hubo gastos de esta categoría en el mes en curso, que no entra en el promedio.">
+                  —
+                </span>
+              ) : (
+                money0(c.monthly_avg)
+              ),
+            footer: money0(d.by_category.reduce((s, c) => s + c.monthly_avg, 0)),
+          },
           { key: 'count', header: 'Cant.', align: 'right', hideBelow: 'lg', cell: (c) => int(c.count) },
         ]
         return (
           <>
             {intro}
             <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-              <StatTile label="Gastos del período" term="gastos" tone="coral" value={<Amount value={t.total} />} hint={`Fijos ${compact(t.fixed)} · variables ${compact(t.variable)}`} />
+              <StatTile label="Gastos" term="gastos" tone="coral" value={<Amount value={t.total} />} hint={`En el período. Fijos ${compact(t.fixed)} · variables ${compact(t.variable)}.`} />
               <StatTile
                 label="Fijos por mes"
                 term="gastos_fijos"
@@ -123,19 +137,19 @@ export function ExpensesTab({ period }: { period: Period }) {
                 hint={`Promedio de ${plural(d.months_for_avg, 'mes', 'meses')}${d.by_month.some((m) => m.partial) && d.by_month.length > 1 ? ' completos' : ''}.`}
               />
               <StatTile
-                label="Variables sobre ventas"
+                label="Variables"
                 term="gastos_variables"
                 value={t.sales > 0 ? pct(d.variable_pct_of_sales) : '—'}
-                hint={t.sales > 0 ? `De cada $ 100 vendidos, ${pesos(Math.round(d.variable_pct_of_sales * 100))} son gastos variables.` : 'Se calcula cuando hay ventas.'}
+                hint={t.sales > 0 ? `Sobre las ventas: de cada ${pesos(100)} vendidos, ${pesos(Math.round(d.variable_pct_of_sales * 100))} son gastos variables.` : 'Se calcula cuando hay ventas.'}
               />
               <StatTile
-                label="Punto de equilibrio"
+                label="Equilibrio"
                 term="punto_equilibrio"
                 tone="orange"
                 value={d.break_even_monthly != null ? <Amount value={d.break_even_monthly} /> : '—'}
                 hint={
                   d.break_even_monthly != null
-                    ? `Ventas por mes para no perder: fijos por mes ÷ margen de contribución (${pct(d.contribution_margin, 0)}).`
+                    ? `Punto de equilibrio: lo que tenés que vender por mes para no perder (fijos por mes ÷ margen de contribución, ${pct(d.contribution_margin, 0)}).`
                     : t.sales > 0
                       ? 'No se puede calcular: el margen de contribución no es positivo.'
                       : 'Se calcula cuando hay ventas.'
@@ -186,7 +200,11 @@ export function ExpensesTab({ period }: { period: Period }) {
                 <RankBars items={d.by_category.map((c) => ({ label: c.category, value: Math.round(c.total) }))} color={CHART_COLORS.gastos} max={8} />
               </Card>
               <section className="min-w-0 xl:col-span-3" aria-label="Gastos por categoría">
-                <BlockTitle title="Por categoría">«Por mes» = total ÷ {plural(d.by_month.length, 'mes', 'meses')} del período. Comprar vino no es gasto: es stock.</BlockTitle>
+                <BlockTitle title="Por categoría">
+                  «Por mes» = promedio de{' '}
+                  {d.months_for_avg < d.by_month.length ? `los ${plural(d.months_for_avg, 'mes completo', 'meses completos')} (sin el mes en curso)` : plural(d.months_for_avg, 'mes', 'meses')}, igual
+                  que «Fijos por mes». Comprar vino no es gasto: es stock.
+                </BlockTitle>
                 <DataTable rows={d.by_category} columns={cols} rowKey={(c) => c.category} searchable={d.by_category.length > 8} searchPlaceholder="Buscar categoría…" dense />
               </section>
             </div>

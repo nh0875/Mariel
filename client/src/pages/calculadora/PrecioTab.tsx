@@ -11,7 +11,6 @@ import type { ProductInput } from '@shared/schemas'
 import { WHOLESALE_MIN_MARGIN, analyzePrice, markupTrap, reviewPrices, suggestPrice, wholesaleFromRetail, type CalculatorContext, type PriceReviewRow } from '@shared/pricing'
 import { Button, Card, DataTable, EmptyState, ExportButton, Field, InfoTip, MoneyInput, useConfirm, type Column } from '@/components/ui'
 import { api } from '@/lib/api'
-import { pct, pctDelta } from '@/lib/format'
 import { useApiMutation, useProducts } from '@/lib/queries'
 import {
   InputsCard,
@@ -33,6 +32,8 @@ import {
   defaultFeeKey,
   feeFor,
   money,
+  pct,
+  pctDelta,
 } from './parts'
 
 export interface PrecioState {
@@ -49,7 +50,7 @@ export interface PrecioState {
 export function defaultPrecio(ctx: CalculatorContext): PrecioState {
   return {
     productId: null,
-    cost: baseNumbers(ctx).cost,
+    cost: round2(baseNumbers(ctx).cost),
     freight: 0,
     margin: ctx.pricing.target_margin_pct,
     iibb: ctx.pricing.iibb_pct,
@@ -171,8 +172,8 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
             info="margen_vs_markup"
             hint={
               <>
-                De cada $&nbsp;100 que cobrás, cuánto te queda después de pagar el vino, Ingresos Brutos y la comisión. Ojo: en Configuración y en «Vinos y stock» el margen se mide{' '}
-                <b className="text-ink-soft">antes</b> de esos dos descuentos, por eso acá el precio da un poco más alto.
+                De cada $&nbsp;100 que cobrás, lo que te queda después del vino, IIBB y la comisión. Ojo: en «Vinos y stock» el margen se mide <b className="text-ink-soft">antes</b> de IIBB y
+                comisión; por eso acá el precio da un poco más alto.
               </>
             }
             value={state.margin}
@@ -222,7 +223,7 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
             }
             footer={
               product ? (
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="min-w-0 flex-1 text-[13.5px] text-ink-soft">
                     {sameAsCurrent ? (
                       <>
@@ -235,7 +236,7 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
                       </>
                     )}
                   </p>
-                  <Button variant="primary" icon={Check} onClick={applyPrice} loading={save.isPending} disabled={sameAsCurrent}>
+                  <Button variant="primary" icon={Check} onClick={applyPrice} loading={save.isPending} disabled={sameAsCurrent} className="w-full sm:w-auto">
                     Usar este precio
                   </Button>
                 </div>

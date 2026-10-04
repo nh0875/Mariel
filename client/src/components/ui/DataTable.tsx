@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import clsx from 'clsx'
 import { normalize } from './Combobox'
@@ -12,7 +12,7 @@ export interface Column<T> {
   value?: (row: T) => string | number | null | undefined
   align?: 'left' | 'right' | 'center'
   /** Ocultar en pantallas chicas. */
-  hideBelow?: 'sm' | 'md' | 'lg'
+  hideBelow?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
   sortable?: boolean
   /** Contenido de la fila de totales para esta columna. */
   footer?: ReactNode
@@ -20,7 +20,13 @@ export interface Column<T> {
   width?: string
 }
 
-const HIDE: Record<string, string> = { sm: 'hidden sm:table-cell', md: 'hidden md:table-cell', lg: 'hidden lg:table-cell' }
+const HIDE: Record<string, string> = {
+  sm: 'hidden sm:table-cell',
+  md: 'hidden md:table-cell',
+  lg: 'hidden lg:table-cell',
+  xl: 'hidden xl:table-cell',
+  '2xl': 'hidden 2xl:table-cell',
+}
 
 /**
  * Tabla con búsqueda, orden por columna (clic en el encabezado), paginado y fila de totales.
@@ -39,6 +45,7 @@ export function DataTable<T>({
   className,
   dense,
   rowClassName,
+  onFilteredRowsChange,
 }: {
   rows: T[]
   columns: Column<T>[]
@@ -55,6 +62,8 @@ export function DataTable<T>({
   className?: string
   dense?: boolean
   rowClassName?: (row: T) => string | undefined
+  /** Avisa qué filas quedan después de buscar (para sumar totales de lo que se ve). */
+  onFilteredRowsChange?: (rows: T[]) => void
 }) {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState(initialSort ?? null)
@@ -89,6 +98,11 @@ export function DataTable<T>({
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, sort, columns])
+
+  useEffect(() => {
+    onFilteredRowsChange?.(filtered)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered])
 
   const pages = Math.max(1, Math.ceil(sorted.length / pageSize))
   const current = Math.min(page, pages - 1)
@@ -140,6 +154,7 @@ export function DataTable<T>({
                         'px-3.5 py-2.5 text-[12.5px] font-extrabold tracking-wide whitespace-nowrap text-ink-soft uppercase',
                         c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : 'text-left',
                         c.hideBelow && HIDE[c.hideBelow],
+                        c.className,
                       )}
                       aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >

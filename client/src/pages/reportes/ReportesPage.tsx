@@ -34,7 +34,7 @@ div:has(> aside.vh-no-print) { display: block !important; }
 main { max-width: none !important; padding: 0 !important; }
 button[aria-label^="¿Qué es"] { display: none !important; }
 .vh-pnl-scroll { overflow: visible !important; }
-.vh-pnl th, .vh-pnl td { padding-left: 4px !important; padding-right: 4px !important; font-size: 10.5px !important; position: static !important; }
+.vh-pnl th, .vh-pnl td { padding-left: 4px !important; padding-right: 4px !important; font-size: 10.5px !important; position: static !important; box-shadow: none !important; }
 .vh-pnl th[scope='row'] { min-width: 150px !important; }
 `
 

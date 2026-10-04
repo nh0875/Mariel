@@ -29,18 +29,29 @@ export function Badge({ tone = 'neutral', children, className, icon }: { tone?: 
  * Estado de cobro/pago con ícono + texto (nunca solo color).
  * kind="sale" dice "Cobrada/Por cobrar"; kind="pay" dice "Pagada/Por pagar".
  */
-export function StatusBadge({ status, overdue, kind = 'pay' }: { status: PaymentStatus; overdue?: boolean; kind?: 'sale' | 'pay' }) {
+export function StatusBadge({
+  status,
+  overdue,
+  kind = 'pay',
+  masculine,
+}: {
+  status: PaymentStatus
+  overdue?: boolean
+  kind?: 'sale' | 'pay'
+  /** Para "gasto" (masculino): "Pagado" / "Vencido". */
+  masculine?: boolean
+}) {
   if (status === 'pagado') {
     return (
       <Badge tone="good" icon={<CircleCheck size={13} strokeWidth={2.6} aria-hidden />}>
-        {kind === 'sale' ? 'Cobrada' : 'Pagada'}
+        {kind === 'sale' ? (masculine ? 'Cobrado' : 'Cobrada') : masculine ? 'Pagado' : 'Pagada'}
       </Badge>
     )
   }
   if (overdue) {
     return (
       <Badge tone="bad" icon={<AlertTriangle size={13} strokeWidth={2.6} aria-hidden />}>
-        Vencida
+        {masculine ? 'Vencido' : 'Vencida'}
       </Badge>
     )
   }

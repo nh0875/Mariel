@@ -5,12 +5,12 @@ import { Link } from 'react-router-dom'
 import { CalendarHeart, HandCoins, Pencil, Repeat, Trash2, Truck, X } from 'lucide-react'
 import clsx from 'clsx'
 import { ApiError, api } from '@/lib/api'
-import { dateLong, date as fmtDate, money, monthName } from '@/lib/format'
+import { dateLong, date as fmtDate, monthName } from '@/lib/format'
 import { useLocalState } from '@/lib/hooks'
 import { useAccounts, useApi, useApiMutation } from '@/lib/queries'
 import { Badge, Button, ErrorState, InfoTip, Loading, Modal, useConfirm } from '@/components/ui'
 import { SettlementModal } from '@/components/forms/SettlementModal'
-import { ExpenseStatusBadge } from './parts'
+import { ExpenseStatusBadge, money } from './parts'
 import { categoryIcon, NATURE_SHORT, NATURE_TERM, type ExpenseDetail, type ExpensePaymentRow } from './types'
 
 export function ExpenseDetailModal({
@@ -171,7 +171,15 @@ export function ExpenseDetailModal({
               ].map((x) => (
                 <div key={x.label} className="min-w-0 rounded-2xl bg-cream-deep px-3 py-2.5 sm:px-4">
                   <p className="text-[12.5px] font-bold text-ink-soft">{x.label}</p>
-                  <p className={clsx('vh-num truncate text-[1.1rem] font-extrabold text-ink sm:text-[1.3rem]', x.tone)} title={x.value}>
+                  {/* Montos muy largos: letra más chica y que corte en renglones en vez de esconder cifras con "…". */}
+                  <p
+                    className={clsx(
+                      'vh-num font-extrabold break-all text-ink',
+                      x.value.length > 13 ? 'text-[0.95rem] leading-tight' : 'text-[1.1rem] sm:text-[1.3rem]',
+                      x.tone,
+                    )}
+                    title={x.value}
+                  >
                     {x.value}
                   </p>
                 </div>

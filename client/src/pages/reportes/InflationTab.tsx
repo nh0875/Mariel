@@ -92,6 +92,15 @@ function inflationInsights(d: InflationReport): Insight[] {
   return out
 }
 
+/** Mes que todavía no terminó: no se compara con el anterior (sus ventas están incompletas). */
+function InProgress() {
+  return (
+    <span className="text-[12.5px] text-muted" title="El mes todavía no terminó: compararlo con un mes completo daría una caída que no es real.">
+      en curso
+    </span>
+  )
+}
+
 function RateEditor({
   row,
   draft,
@@ -110,7 +119,7 @@ function RateEditor({
   const value = draft !== undefined ? draft : row.rate
   const dirty = draft !== undefined && draft !== row.rate
   const invalid = dirty && draft != null && (draft < -50 || draft > 500)
-  const canSave = dirty && draft != null && !invalid
+  const canSave = dirty && draft != null && !invalid && !saving
   return (
     <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
       <NumberInput
@@ -241,21 +250,38 @@ export function InflationTab({ period }: { period: Period }) {
             ),
           },
           { key: 'sales_today_pesos', header: `En pesos de ${base}`, align: 'right', hideBelow: 'sm', sortable: false, cell: (m) => <b>{money0(m.sales_today_pesos)}</b> },
-          { key: 'nominal', header: 'En pesos', align: 'right', hideBelow: 'lg', sortable: false, cell: (m) => <Growth value={m.nominal_growth_vs_prev} /> },
-          { key: 'real', header: 'Real', align: 'right', hideBelow: 'sm', sortable: false, cell: (m) => <Growth value={m.real_growth_vs_prev} /> },
+          { key: 'nominal', header: 'En pesos', align: 'right', hideBelow: 'lg', sortable: false, cell: (m) => (m.partial ? <InProgress /> : <Growth value={m.nominal_growth_vs_prev} />) },
+          { key: 'real', header: 'Real', align: 'right', hideBelow: 'sm', sortable: false, cell: (m) => (m.partial ? <InProgress /> : <Growth value={m.real_growth_vs_prev} />) },
         ]
 
         return (
           <>
             {intro}
-            {d.missing_months.length > 0 && (
+            {!hasSales && (
+              <div className="vh-card mb-6">
+                <EmptyState
+                  compact
+                  icon={Store}
+                  title="No hay ventas en este período"
+                  action={
+                    <Button icon={Store} onClick={() => navigate('/ventas?nuevo=1')}>
+                      Cargar una venta
+                    </Button>
+                  }
+                >
+                  Cuando haya ventas, acá vas a ver si crecieron de verdad o solo subieron los precios. Mientras tanto podés ir cargando la inflación de cada mes en la tabla de abajo: los montos se
+                  ajustan solos.
+                </EmptyState>
+              </div>
+            )}
+            {hasSales && d.missing_months.length > 0 && (
               <div className="mb-5 flex gap-3 rounded-2xl border border-warn/30 bg-warn-soft px-4 py-3 text-[14px] text-ink" role="status">
                 <TriangleAlert size={19} className="mt-0.5 shrink-0 text-warn" aria-hidden />
                 <div className="min-w-0">
                   {missingPast.length > 0 && (
                     <p>
                       <b>Falta cargar la inflación de {missingPast.length === 1 ? 'un mes' : `${missingPast.length} meses`}:</b> {listMonths(missingPast)}. Mientras tanto los tomamos como 0 %, así que
-                      los montos en pesos de hoy quedan un poco bajos.
+                      los montos ajustados quedan un poco bajos.
                     </p>
                   )}
                   {missingCurrent.length > 0 && (
@@ -268,30 +294,32 @@ export function InflationTab({ period }: { period: Period }) {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-              <StatTile
-                label="Inflación acumulada"
-                term="inflacion"
-                tone="orange"
-                value={pct(d.inflation_accum, 1)}
-                hint={`De ${d.months[0].label} a ${d.months.at(-1)!.label}, con los datos cargados.`}
-              />
-              <StatTile label="Ventas como se registraron" tone="sky" value={<Amount value={d.totals.sales} />} hint="Sumando los pesos de cada mes, tal cual." />
-              <StatTile label={`Ventas en pesos de ${base}`} value={<Amount value={d.totals.sales_today_pesos} />} hint="Cada mes llevado a precios de hoy." />
-              <StatTile
-                label="Crecimiento real"
-                value={
-                  real.value == null ? (
-                    '—'
-                  ) : (
-                    <span
-                      className={real.value <= -0.005 ? 'text-bad' : real.value >= 0.005 ? 'text-good' : undefined}
-                    >{`${real.value > 0 ? '+' : real.value < 0 ? '−' : ''}${pct(Math.abs(real.value), 1)}`}</span>
-                  )
-                }
-                hint={real.label}
-              />
-            </div>
+            {hasSales && (
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+                <StatTile
+                  label="Inflación"
+                  term="inflacion"
+                  tone="orange"
+                  value={pct(d.inflation_accum, 1)}
+                  hint={`Acumulada de ${d.months[0].label} a ${d.months.at(-1)!.label}, con los datos cargados.`}
+                />
+                <StatTile label="Ventas" tone="sky" value={<Amount value={d.totals.sales} />} hint="Como se registraron: sumando los pesos de cada mes, tal cual." />
+                <StatTile label="Ventas ajustadas" value={<Amount value={d.totals.sales_today_pesos} />} hint={`En pesos de ${base}: cada mes llevado a los precios de ese mes.`} />
+                <StatTile
+                  label="Crecimiento real"
+                  value={
+                    real.value == null ? (
+                      '—'
+                    ) : (
+                      <span
+                        className={real.value <= -0.005 ? 'text-bad' : real.value >= 0.005 ? 'text-good' : undefined}
+                      >{`${real.value > 0 ? '+' : real.value < 0 ? '−' : ''}${pct(Math.abs(real.value), 1)}`}</span>
+                    )
+                  }
+                  hint={real.label}
+                />
+              </div>
+            )}
 
             <Insights className="mt-5" items={inflationInsights(d)} />
 
@@ -325,10 +353,11 @@ export function InflationTab({ period }: { period: Period }) {
                     { key: 'nominal', label: 'Como se registraron', color: CHART_COLORS.extra },
                   ]}
                 />
+                {d.months.some((m) => m.partial) && d.months.length > 1 && <p className="px-2 pt-1 text-[12.5px] text-muted">* Mes en curso: todavía no terminó, por eso da más bajo.</p>}
               </ChartCard>
             )}
 
-            <section className="mt-6" aria-label="Inflación de cada mes">
+            <section className={hasSales ? 'mt-6' : undefined} aria-label="Inflación de cada mes">
               <BlockTitle title="Inflación de cada mes">
                 Cargá el % de cada mes (por ejemplo <b className="text-ink">2,7</b>) y tocá <Check size={14} className="inline align-[-2px]" aria-label="guardar" /> o Enter. El dato oficial es el IPC
                 del INDEC, que sale a mediados del mes siguiente.
@@ -342,22 +371,6 @@ export function InflationTab({ period }: { period: Period }) {
                 </p>
               </div>
             </section>
-            {!hasSales && (
-              <div className="mt-5">
-                <EmptyState
-                  compact
-                  icon={Store}
-                  title="No hay ventas en este período"
-                  action={
-                    <Button icon={Store} onClick={() => navigate('/ventas?nuevo=1')}>
-                      Cargar una venta
-                    </Button>
-                  }
-                >
-                  Igual podés ir cargando la inflación de cada mes: cuando haya ventas, los montos se ajustan solos.
-                </EmptyState>
-              </div>
-            )}
           </>
         )
       }}

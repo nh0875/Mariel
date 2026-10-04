@@ -89,7 +89,8 @@ function reportPeriod(req: Request): ReportPeriod {
   return effectivePeriod(p.from, p.to)
 }
 
-const isCurrentPartialMonth = (month: string) => month === today().slice(0, 7) && today() < endOfMonth(today())
+const currentMonth = () => today().slice(0, 7)
+const isCurrentPartialMonth = (month: string) => month === currentMonth() && today() < endOfMonth(today())
 
 // ───────────────────────── Estado de resultados ─────────────────────────
 
@@ -133,9 +134,7 @@ export function pnlReport(from: string, to: string): Omit<PnlReport, 'period'> {
     c.total += r.amount || 0
     c.count += r.n || 0
   }
-  const expenses_by_category = [...map.values()]
-    .map((c) => ({ ...c, total: round2(c.total) }))
-    .sort((a, b) => (a.nature === b.nature ? b.total - a.total : a.nature === 'fijo' ? -1 : 1))
+  const expenses_by_category = [...map.values()].map((c) => ({ ...c, total: round2(c.total) })).sort((a, b) => (a.nature === b.nature ? b.total - a.total : a.nature === 'fijo' ? -1 : 1))
   return { months, total, expenses_by_category }
 }
 
@@ -438,7 +437,11 @@ export function clientsReport(from: string, to: string): Omit<ClientsReport, 'pe
       last_purchase: r.last_purchase,
     }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'es'))
-  const topShare = (n: number) => safeDiv(clients.slice(0, n).reduce((s, c) => s + c.total, 0), totalSales)
+  const topShare = (n: number) =>
+    safeDiv(
+      clients.slice(0, n).reduce((s, c) => s + c.total, 0),
+      totalSales,
+    )
   return {
     clients,
     walk_in: {
@@ -456,6 +459,7 @@ export function clientsReport(from: string, to: string): Omit<ClientsReport, 'pe
 
 export interface ExpensesReport {
   period: ReportPeriod
+  /** monthly_avg = lo de esa categoría en los meses completos ÷ months_for_avg (igual que fixed_avg). */
   by_category: { category: string; nature: string; total: number; count: number; share: number; monthly_avg: number }[]
   by_month: { month: string; label: string; fixed: number; variable: number; total: number; sales: number; pct_of_sales: number | null; partial: boolean }[]
   totals: { total: number; fixed: number; variable: number; sales: number }
@@ -474,15 +478,6 @@ export interface ExpensesReport {
 export function expensesReport(from: string, to: string): Omit<ExpensesReport, 'period'> {
   const months = monthlySeries(from, to)
   const s = periodSummary(from, to)
-  const nMonths = Math.max(1, months.length)
-  const by_category = expensesByCategory(from, to).map((c) => ({
-    category: c.category,
-    nature: c.nature === 'fijo' ? 'fijo' : 'variable',
-    total: c.amount,
-    count: c.count,
-    share: safeDiv(c.amount, s.expenses),
-    monthly_avg: round2(c.amount / nMonths),
-  }))
   const by_month = months.map((m) => ({
     month: m.month,
     label: m.label,
@@ -493,9 +488,32 @@ export function expensesReport(from: string, to: string): Omit<ExpensesReport, '
     pct_of_sales: m.sales > 0 ? m.expenses / m.sales : null,
     partial: isCurrentPartialMonth(m.month),
   }))
-  const complete = by_month.length > 1 ? by_month.filter((m) => !m.partial) : by_month
+  // Promedios por mes: solo con meses completos (el mes en curso y los que no llegaron no cuentan, si hay otros).
+  const complete = by_month.length > 1 ? by_month.filter((m) => !m.partial && m.month <= currentMonth()) : by_month
   const forAvg = complete.length ? complete : by_month
-  const fixed_avg = round2(safeDiv(forAvg.reduce((x, m) => x + m.fixed, 0), forAvg.length))
+  const avgMonths = new Set(forAvg.map((m) => m.month))
+  const fixed_avg = round2(
+    safeDiv(
+      forAvg.reduce((x, m) => x + m.fixed, 0),
+      forAvg.length,
+    ),
+  )
+  // Lo de cada categoría en esos mismos meses, así "Por mes" se calcula igual que "Fijos por mes".
+  const catInAvg = new Map<string, number>()
+  for (const r of all<{ category: string; m: string; amount: number }>(
+    `SELECT category, substr(date, 1, 7) AS m, SUM(amount) AS amount FROM expenses WHERE date BETWEEN ? AND ? GROUP BY category, m`,
+    [from, to],
+  )) {
+    if (avgMonths.has(r.m)) catInAvg.set(r.category, (catInAvg.get(r.category) ?? 0) + (r.amount || 0))
+  }
+  const by_category = expensesByCategory(from, to).map((c) => ({
+    category: c.category,
+    nature: c.nature === 'fijo' ? 'fijo' : 'variable',
+    total: c.amount,
+    count: c.count,
+    share: safeDiv(c.amount, s.expenses),
+    monthly_avg: round2(safeDiv(catInAvg.get(c.category) ?? 0, forAvg.length)),
+  }))
   const contribution = s.sales - s.cogs - s.fees - s.shrinkage - s.expenses_variable
   const contribution_margin = safeDiv(contribution, s.sales)
   return {
@@ -524,9 +542,9 @@ export interface InflationMonthRow {
   /** Por cuánto se multiplican los pesos de ese mes para llevarlos a pesos del último mes. */
   factor: number
   sales_today_pesos: number
-  /** Crecimiento sacando la inflación, contra el mes anterior (0..1). */
+  /** Crecimiento sacando la inflación, contra el mes anterior (0..1). null en el primer mes, en el mes en curso y si el anterior no vendió. */
   real_growth_vs_prev: number | null
-  /** Crecimiento en pesos "de cada mes", contra el mes anterior (0..1). */
+  /** Crecimiento en pesos "de cada mes", contra el mes anterior (0..1). null en los mismos casos. */
   nominal_growth_vs_prev: number | null
   /** Mes en curso (todavía no terminó: sus ventas están incompletas). */
   partial: boolean
@@ -548,11 +566,7 @@ export interface InflationReport {
 export function inflationReport(from: string, to: string): Omit<InflationReport, 'period'> {
   const series = monthlySeries(from, to)
   const keys = series.map((m) => m.month)
-  const rates = new Map(
-    keys.length
-      ? all<InflationRate>('SELECT month, rate FROM inflation WHERE month BETWEEN ? AND ?', [keys[0], keys[keys.length - 1]]).map((r) => [r.month, r.rate])
-      : [],
-  )
+  const rates = new Map(keys.length ? all<InflationRate>('SELECT month, rate FROM inflation WHERE month BETWEEN ? AND ?', [keys[0], keys[keys.length - 1]]).map((r) => [r.month, r.rate]) : [])
   // Índice: 100 en el primer mes; cada mes siguiente se multiplica por (1 + inflación del mes).
   const raw: number[] = []
   let idx = 100
@@ -577,14 +591,20 @@ export function inflationReport(from: string, to: string): Omit<InflationReport,
     }
   })
   months.forEach((m, i) => {
-    if (i === 0) return
+    // El mes en curso no se compara: todavía no terminó y siempre "caería" (ej: −85 % con 4 días de ventas).
+    if (i === 0 || m.partial) return
     const prev = months[i - 1]
     // Comparar en pesos de hoy es lo mismo que: (ventas / ventas anteriores) ÷ (1 + inflación del mes) − 1.
     const prevReal = prev.sales * (lastIdx / raw[i - 1])
     m.real_growth_vs_prev = prev.sales > 0 ? (m.sales * (lastIdx / raw[i])) / prevReal - 1 : null
     m.nominal_growth_vs_prev = prev.sales > 0 ? m.sales / prev.sales - 1 : null
   })
-  const missing_months = months.slice(1).filter((m) => m.rate == null).map((m) => m.month)
+  const missing_months = months
+    .slice(1)
+    .filter((m) => m.rate == null)
+    .map((m) => m.month)
+  const missingPast = months.slice(1).filter((m) => m.rate == null && !m.partial).length
+  const missingCurrent = months.slice(1).some((m) => m.rate == null && m.partial)
   const base = months.length ? months[months.length - 1].month : null
   const totals = {
     sales: round2(months.reduce((s, m) => s + m.sales, 0)),
@@ -594,7 +614,12 @@ export function inflationReport(from: string, to: string): Omit<InflationReport,
     ? `Llevamos las ventas de cada mes a "pesos de ${monthLabelLong(base)}": multiplicamos cada mes por la inflación acumulada desde ese mes hasta ${monthLabelLong(base)}. ` +
       `Ejemplo: si después de un mes hubo dos meses de 10 %, sus ventas se multiplican por 1,1 × 1,1 = 1,21. ` +
       `Así se pueden comparar meses distintos sin que la inflación te engañe. Crecimiento real = (ventas del mes ÷ ventas del mes anterior) ÷ (1 + inflación del mes) − 1.` +
-      (missing_months.length ? ` Faltan cargar ${missing_months.length} ${missing_months.length === 1 ? 'mes' : 'meses'}: mientras tanto se toman como 0 % y los montos ajustados quedan un poco bajos.` : '')
+      (months.some((m) => m.partial) && months.length > 1 ? ' El mes en curso no se compara con el anterior: todavía no terminó.' : '') +
+      (missingPast
+        ? ` Faltan cargar ${missingPast} ${missingPast === 1 ? 'mes' : 'meses'}${missingCurrent ? ' (más el mes en curso)' : ''}: mientras tanto se toman como 0 % y los montos ajustados quedan un poco bajos.`
+        : missingCurrent
+          ? ' El mes en curso todavía no tiene inflación cargada (el INDEC la publica a mediados del mes siguiente): mientras tanto cuenta como 0 %.'
+          : '')
     : 'No hay meses para mostrar en este período.'
   return { months, missing_months, inflation_accum: lastIdx / 100 - 1, totals, base_month: base, explanation }
 }
@@ -759,8 +784,7 @@ function writePnl(p: ReportPeriod): Writer {
         const isTotal = c === lastCol
         if (l.key === 'gross_profit') cell.value = { formula: `${L}${r('sales')}-${L}${r('cogs')}`, result }
         else if (l.key === 'gross_margin') cell.value = { formula: `IF(${L}${r('sales')}=0,0,${L}${r('gross_profit')}/${L}${r('sales')})`, result }
-        else if (l.key === 'net_result')
-          cell.value = { formula: `${L}${r('gross_profit')}-${L}${r('fees')}-${L}${r('shrinkage')}-${L}${r('expenses_fixed')}-${L}${r('expenses_variable')}`, result }
+        else if (l.key === 'net_result') cell.value = { formula: `${L}${r('gross_profit')}-${L}${r('fees')}-${L}${r('shrinkage')}-${L}${r('expenses_fixed')}-${L}${r('expenses_variable')}`, result }
         else if (l.key === 'net_margin') cell.value = { formula: `IF(${L}${r('sales')}=0,0,${L}${r('net_result')}/${L}${r('sales')})`, result }
         else if (isTotal && ms.length > 0) cell.value = { formula: `SUM(B${first + i}:${lastMonthL}${first + i})`, result }
       }
@@ -960,9 +984,7 @@ function writeChannels(p: ReportPeriod): Writer {
         { header: 'Venta promedio de ese día', key: 'avg_per_day', type: 'money', total: false, width: 18 },
       ],
       rows: d.weekdays,
-      notes: [
-        'Venta promedio = ventas de ese día de la semana ÷ cuántos de esos días tuvo el período (hasta hoy). Así no influye que un mes tenga 5 sábados y otro 4.',
-      ],
+      notes: ['Venta promedio = ventas de ese día de la semana ÷ cuántos de esos días tuvo el período (hasta hoy). Así no influye que un mes tenga 5 sábados y otro 4.'],
     })
   }
 }
@@ -984,7 +1006,7 @@ function writeClients(p: ReportPeriod): Writer {
         ? [
             {
               client_id: null,
-              name: 'Ventas sin cliente cargado (consumidor final)',
+              name: 'Ventas sin cliente cargado (mostrador)',
               kind: 'consumidor',
               kind_label: '—',
               total: d.walk_in.total,
@@ -1017,7 +1039,9 @@ function writeClients(p: ReportPeriod): Writer {
       notes: [
         '"Lo que te dejó" = lo que compró − costo del vino − comisiones de cobro (antes de los gastos generales).',
         'Última compra: la más reciente en toda la historia (no solo en el período). Si hace mucho que no vuelve, es un buen momento para escribirle.',
-        `La última fila son las ventas sin cliente cargado: ${Math.round(d.walk_in.share * 100)} % de tus ventas. Si cargás aunque sea el nombre, vas a saber quién vuelve.`,
+        d.walk_in.count > 0
+          ? `La última fila son las ventas sin cliente cargado (las de mostrador, "consumidor final" en el ticket): ${Math.round(d.walk_in.share * 100)} % de tus ventas. Si cargás aunque sea el nombre, vas a saber quién vuelve.`
+          : 'Todas las ventas del período tienen cliente cargado.',
       ],
     })
   }
@@ -1055,7 +1079,7 @@ function writeExpenses(p: ReportPeriod): Writer {
       ],
       rows: d.by_category,
       notes: [
-        `Promedio por mes = total ÷ ${d.by_month.length} ${d.by_month.length === 1 ? 'mes' : 'meses'} del período.`,
+        `Promedio por mes = lo gastado en esa categoría en ${d.months_for_avg === 1 ? 'el mes' : `los ${d.months_for_avg} meses`}${d.months_for_avg < d.by_month.length ? ' completos (el mes en curso no cuenta: todavía pueden faltar gastos)' : ' del período'} ÷ ${d.months_for_avg}. Es el mismo criterio que "Gastos fijos promedio por mes".`,
         'Comprar vino no es un gasto (es stock) y los retiros de los dueños tampoco: por eso no aparecen acá.',
       ],
     })
@@ -1105,7 +1129,7 @@ function writeInflation(p: ReportPeriod): Writer {
         { header: 'Inflación del mes', key: 'rate', type: 'percent', total: false, width: 12, value: (m) => (m.rate == null ? null : m.rate / 100) },
         { header: 'Índice de precios', key: 'index', type: 'number', total: false, width: 12 },
         { header: 'Multiplicador', key: 'factor', type: 'number', total: false, width: 12 },
-        { header: 'Ventas en pesos de hoy', key: 'sales_today_pesos', type: 'money', width: 18 },
+        { header: d.base_month ? `Ventas en pesos de ${monthLabelLong(d.base_month)}` : 'Ventas ajustadas', key: 'sales_today_pesos', type: 'money', width: 20 },
         { header: 'Crecimiento en pesos', key: 'nominal_growth_vs_prev', type: 'percent', total: false, width: 13 },
         { header: 'Crecimiento real', key: 'real_growth_vs_prev', type: 'percent', total: false, width: 13 },
       ],
@@ -1113,7 +1137,7 @@ function writeInflation(p: ReportPeriod): Writer {
       notes: [
         d.explanation,
         'Índice de precios: 100 en el primer mes; cada mes se multiplica por (1 + inflación del mes). Multiplicador = índice del último mes ÷ índice de ese mes.',
-        'Crecimiento en pesos y crecimiento real son contra el mes anterior. Si el crecimiento real es negativo, vendiste menos "en cantidad de cosas" aunque los pesos hayan subido.',
+        'Crecimiento en pesos y crecimiento real son contra el mes anterior (el mes en curso queda vacío porque todavía no terminó). Si el crecimiento real es negativo, vendiste menos "en cantidad de cosas" aunque los pesos hayan subido.',
         d.missing_months.length
           ? `Meses sin inflación cargada (se toman como 0 %): ${d.missing_months.map((m) => monthLabelLong(m)).join(', ')}. Cargalos en Reportes → Inflación.`
           : 'Todos los meses necesarios tienen la inflación cargada.',
@@ -1205,15 +1229,7 @@ router.get('/reports/full/export', async (req, res) => {
       ws.getRow(5 + i).alignment = { wrapText: true, vertical: 'top' }
     }
   }
-  await sendWriters(res, fileFor('reporte-completo', p), [
-    writeIndex,
-    writePnl(p),
-    writeProducts(p),
-    writeChannels(p),
-    writeClients(p),
-    writeExpenses(p),
-    writeInflation(p),
-  ])
+  await sendWriters(res, fileFor('reporte-completo', p), [writeIndex, writePnl(p), writeProducts(p), writeChannels(p), writeClients(p), writeExpenses(p), writeInflation(p)])
 })
 
 export default router

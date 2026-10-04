@@ -115,12 +115,23 @@ function ProductsContent({
   onNewSale: () => void
 }) {
   const sold = rows.filter((r) => !r.idle)
+  const filtered = filter === 'todos' ? rows : rows.filter((r) => (filter === 'Q' ? r.idle : !r.idle && r.abc === filter))
+  // Los totales de abajo de la tabla son de lo que se está viendo (si filtrás la clase A, suman la clase A).
   const totals = useMemo(() => {
-    const revenue = sold.reduce((s, r) => s + r.revenue, 0)
-    const cost = sold.reduce((s, r) => s + r.cost, 0)
-    const profit = sold.reduce((s, r) => s + r.profit, 0)
-    return { bottles: sold.reduce((s, r) => s + r.bottles, 0), revenue, cost, profit, margin: revenue > 0 ? profit / revenue : 0 }
-  }, [sold])
+    const xs = filtered.filter((r) => !r.idle)
+    const revenue = xs.reduce((s, r) => s + r.revenue, 0)
+    const cost = xs.reduce((s, r) => s + r.cost, 0)
+    const profit = xs.reduce((s, r) => s + r.profit, 0)
+    return {
+      bottles: xs.reduce((s, r) => s + r.bottles, 0),
+      revenue,
+      cost,
+      profit,
+      margin: revenue > 0 ? profit / revenue : null,
+      share: xs.reduce((s, r) => s + r.share, 0),
+      any: xs.length > 0,
+    }
+  }, [filtered])
   const classes = (['A', 'B', 'C', 'Q'] as const).map((k) => {
     const rs = rows.filter((r) => (k === 'Q' ? r.idle : !r.idle && r.abc === k))
     return {
@@ -132,7 +143,6 @@ function ProductsContent({
     }
   })
   const quad = quadrants(rows)
-  const filtered = filter === 'todos' ? rows : rows.filter((r) => (filter === 'Q' ? r.idle : !r.idle && r.abc === filter))
 
   const intro = (
     <TabIntro title="Rentabilidad por vino" actions={<ExportButton path="/reports/products/export" params={{ from: period.from, to: period.to }} />}>
@@ -240,14 +250,14 @@ function ProductsContent({
       value: (r) => `${r.name} ${r.winery ?? ''}`,
     },
     { key: 'bottles', header: 'Botellas', align: 'right', hideBelow: 'sm', cell: (r) => int(r.bottles), footer: int(totals.bottles) },
-    { key: 'revenue', header: 'Ventas', align: 'right', hideBelow: 'md', cell: (r) => (r.idle ? '—' : money0(r.revenue)), footer: money0(totals.revenue) },
-    { key: 'cost', header: 'Costo', align: 'right', hideBelow: 'lg', cell: (r) => (r.idle ? '—' : money0(r.cost)), footer: money0(totals.cost) },
+    { key: 'revenue', header: 'Ventas', align: 'right', hideBelow: 'md', cell: (r) => (r.idle ? '—' : money0(r.revenue)), footer: totals.any ? money0(totals.revenue) : '—' },
+    { key: 'cost', header: 'Costo', align: 'right', hideBelow: 'lg', cell: (r) => (r.idle ? '—' : money0(r.cost)), footer: totals.any ? money0(totals.cost) : '—' },
     {
       key: 'profit',
       header: 'Ganancia',
       align: 'right',
       cell: (r) => (r.idle ? <span className="text-muted">—</span> : <Amount value={r.profit} className={clsx('font-bold', r.profit < 0 && 'text-bad')} />),
-      footer: money0(totals.profit),
+      footer: totals.any ? <Amount value={totals.profit} className={totals.profit < 0 ? 'text-bad' : undefined} /> : '—',
     },
     {
       key: 'margin',
@@ -256,9 +266,17 @@ function ProductsContent({
       hideBelow: 'sm',
       cell: (r) => (r.idle ? '—' : <span className={r.margin < 0 ? 'text-bad' : undefined}>{pct(r.margin, 0)}</span>),
       value: (r) => (r.idle ? null : r.margin),
-      footer: pct(totals.margin, 0),
+      footer: totals.margin == null ? '—' : pct(totals.margin, 0),
     },
-    { key: 'share', header: '% de la ganancia', align: 'right', hideBelow: 'lg', cell: (r) => (r.idle ? '—' : pct(r.share, 1)), value: (r) => (r.idle ? null : r.share) },
+    {
+      key: 'share',
+      header: '% de la ganancia',
+      align: 'right',
+      hideBelow: 'lg',
+      cell: (r) => (r.idle ? '—' : pct(r.share, 1)),
+      value: (r) => (r.idle ? null : r.share),
+      footer: totals.any ? pct(totals.share, 0) : '—',
+    },
     { key: 'abc', header: 'Clase', align: 'center', cell: (r) => <AbcBadge abc={r.abc} idle={r.idle} />, value: (r) => (r.idle ? 'D' : r.abc) },
     {
       key: 'days_of_stock',
@@ -333,6 +351,24 @@ function ProductsContent({
           searchPlaceholder="Buscar vino o bodega…"
           pageSize={30}
           initialSort={undefined}
+          empty={
+            <div className="vh-card">
+              <EmptyState
+                compact
+                icon={filter === 'Q' ? PackageX : Wine}
+                title={filter === 'Q' ? 'No hay vinos quietos' : `No hay vinos en la clase ${filter}`}
+                action={
+                  <Button size="sm" onClick={() => setFilter('todos')}>
+                    Ver todos los vinos
+                  </Button>
+                }
+              >
+                {filter === 'Q'
+                  ? 'Todos los vinos que tenés en stock se vendieron al menos una vez en el período. ¡Bien!'
+                  : 'Con las ventas de este período ningún vino quedó en esta clase. Mirá la lista completa.'}
+              </EmptyState>
+            </div>
+          }
           toolbar={
             <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filtrar por clase">
               {(['todos', 'A', 'B', 'C', 'Q'] as Filter[]).map((f) => (

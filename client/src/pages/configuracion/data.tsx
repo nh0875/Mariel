@@ -117,7 +117,10 @@ export function BackupsSection() {
       cell: (b) => (
         <div className="min-w-0">
           <p className="vh-num font-bold whitespace-nowrap text-ink">{dateTime(b.created_at)}</p>
-          <p className="text-[12.5px] text-muted">{timeAgo(b.created_at)}</p>
+          <p className="text-[12.5px] text-muted">
+            {timeAgo(b.created_at)}
+            <span className="sm:hidden"> · {b.label}</span>
+          </p>
         </div>
       ),
     },
@@ -134,6 +137,7 @@ export function BackupsSection() {
             size="sm"
             icon={Download}
             title="Bajar este archivo (para guardarlo en un pendrive o llevarlo a otra compu)"
+            aria-label={`Descargar la copia del ${dateTime(b.created_at)}`}
             onClick={() => downloadFile(`/backups/${encodeURIComponent(b.file)}/download`).catch((e) => toast.error((e as Error).message))}
           >
             <span className="hidden sm:inline">Descargar</span>
@@ -153,9 +157,9 @@ export function BackupsSection() {
       title="Copias de seguridad"
       why={
         <>
-          Tus datos viven en un archivo en esta computadora. Por si se borra, se rompe o te equivocás, <b>todos los días la primera vez que abrís el programa se guarda una copia completa automática</b>{' '}
-          (se guardan las últimas {data?.keep ?? 30}). También se hace una copia antes de borrar todo, cargar el ejemplo o restaurar. Para tener una copia fuera de la compu, descargala y guardala en un
-          pendrive o en tu mail.
+          Tus datos viven en un archivo en esta computadora. Por si se borra, se rompe o te equivocás,{' '}
+          <b>todos los días la primera vez que abrís el programa se guarda una copia completa automática</b> (se guardan las últimas {data?.keep ?? 30}). También se hace una copia antes de borrar
+          todo, cargar el ejemplo o restaurar. Para tener una copia fuera de la compu, descargala y guardala en un pendrive o en tu mail.
         </>
       }
       extraActions={
@@ -220,8 +224,8 @@ export function BackupsSection() {
             }
           />
           <p className="mt-3 text-[13px] text-muted">
-            <b className="text-ink-soft">¿Cuándo restaurar?</b> Si borraste algo por error o los datos quedaron mal, elegí la copia de antes del problema y tocá «Restaurar». Para pasar el sistema a otra
-            computadora, descargá una copia acá y en la otra compu usá «Restaurar desde un archivo».
+            <b className="text-ink-soft">¿Cuándo restaurar?</b> Si borraste algo por error o los datos quedaron mal, elegí la copia de antes del problema y tocá «Restaurar». Para pasar el sistema a
+            otra computadora, descargá una copia acá y en la otra compu usá «Restaurar desde un archivo».
           </p>
         </>
       )}
@@ -231,17 +235,29 @@ export function BackupsSection() {
 
 // ───────────────────────── Tus datos ─────────────────────────
 
-function ActionRow({ icon: Icon, title, children, action, tone = 'neutral' }: { icon: typeof Database; title: string; children: React.ReactNode; action: React.ReactNode; tone?: 'neutral' | 'danger' }) {
+function ActionRow({
+  icon: Icon,
+  title,
+  children,
+  action,
+  tone = 'neutral',
+}: {
+  icon: typeof Database
+  title: string
+  children: React.ReactNode
+  action: React.ReactNode
+  tone?: 'neutral' | 'danger'
+}) {
   return (
-    <div className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center ${tone === 'danger' ? 'border-bad/30 bg-bad-soft/40' : 'border-line bg-paper'}`}>
+    <div className={`flex flex-wrap items-start gap-3 rounded-2xl border p-4 sm:flex-nowrap sm:items-center ${tone === 'danger' ? 'border-bad/30 bg-bad-soft/40' : 'border-line bg-paper'}`}>
       <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone === 'danger' ? 'bg-bad-soft text-bad' : 'bg-cream-deep text-brown'}`} aria-hidden>
         <Icon size={20} />
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-[calc(100%-52px)] sm:basis-auto">
         <p className="font-extrabold text-ink">{title}</p>
         <div className="text-[14px] leading-snug text-ink-soft [&_b]:text-ink">{children}</div>
       </div>
-      <div className="shrink-0">{action}</div>
+      <div className="shrink-0 pl-[52px] sm:pl-0">{action}</div>
     </div>
   )
 }
@@ -365,7 +381,15 @@ export function DataSection() {
           Un archivo con 16 hojas (vinos, ventas con su detalle, compras, gastos, caja, clientes, proveedores, eventos, metas…) y una hoja «Léeme» que explica cada una. Ideal para el contador o para
           tener tus datos en un formato que se abre en cualquier compu.
         </ActionRow>
-        <ActionRow icon={FlaskConical} title="Cargar datos de ejemplo" action={<Button icon={FlaskConical} onClick={askDemo} loading={demo.isPending}>{demo.isPending ? 'Cargando ejemplo…' : 'Cargar datos de ejemplo'}</Button>}>
+        <ActionRow
+          icon={FlaskConical}
+          title="Cargar datos de ejemplo"
+          action={
+            <Button icon={FlaskConical} onClick={askDemo} loading={demo.isPending}>
+              {demo.isPending ? 'Cargando ejemplo…' : 'Cargar datos de ejemplo'}
+            </Button>
+          }
+        >
           Reemplaza todo por 14 meses de una vinoteca inventada, para que pruebes sin miedo y veas cómo se ven los reportes con datos.
         </ActionRow>
         <ActionRow

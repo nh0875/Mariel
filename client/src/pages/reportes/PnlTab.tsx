@@ -219,27 +219,58 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
   // Arranca mostrando los meses más recientes (a la derecha); se desliza para ver los anteriores.
   const scroller = useRef<HTMLDivElement>(null)
   const [scrollable, setScrollable] = useState(false)
+  // Sombra en el borde de las columnas fijas cuando hay meses "escondidos" debajo: así se entiende
+  // que la tabla se desliza (y no que los números están cortados).
+  const [edges, setEdges] = useState({ left: false, right: false })
+  const measure = () => {
+    const el = scroller.current
+    if (!el) return
+    const max = el.scrollWidth - el.clientWidth
+    setEdges((e) => {
+      const next = { left: el.scrollLeft > 2, right: el.scrollLeft < max - 2 }
+      return next.left === e.left && next.right === e.right ? e : next
+    })
+  }
   useLayoutEffect(() => {
     const el = scroller.current
     if (!el) return
     el.scrollLeft = el.scrollWidth
     setScrollable(el.scrollWidth > el.clientWidth + 4)
+    measure()
   }, [months.length, full, detail])
-  const totalTh = 'border-l border-line bg-cream-deep sm:sticky sm:right-0 sm:z-[2]'
-  const totalTd = 'border-l border-line bg-cream-deep sm:sticky sm:right-0 sm:z-[1]'
+  const leftShadow = edges.left && 'shadow-[7px_0_8px_-6px_rgba(59,36,20,0.22)]'
+  const rightShadow = edges.right && 'sm:shadow-[-7px_0_8px_-6px_rgba(59,36,20,0.22)]'
+  const totalTh = clsx('border-l border-line bg-cream-deep sm:sticky sm:right-0 sm:z-[2]', rightShadow)
+  const totalTd = clsx('border-l border-line bg-cream-deep sm:sticky sm:right-0 sm:z-[1]', rightShadow)
+
+  // Con pocos meses la tabla no se estira a todo el ancho (si no, el número queda lejísimo de su concepto).
+  const narrow = months.length <= 4
 
   return (
     <>
-      <div ref={scroller} className="vh-scroll vh-pnl-scroll overflow-x-auto rounded-2xl border border-line bg-paper">
-        <table className="vh-pnl w-full border-separate border-spacing-0 text-[14px]">
+      <div ref={scroller} onScroll={measure} className={clsx('vh-scroll vh-pnl-scroll overflow-x-auto rounded-2xl border border-line bg-paper', narrow && 'w-fit max-w-full')}>
+        <table className="vh-pnl w-full border-separate border-spacing-0 text-[13px] sm:text-[14px]">
           <caption className="sr-only">Estado de resultados mes a mes</caption>
           <thead>
             <tr>
-              <th scope="col" className="sticky left-0 z-[2] border-b border-line bg-cream px-3.5 py-2.5 text-left text-[12.5px] font-extrabold tracking-wide text-ink-soft uppercase">
+              <th
+                scope="col"
+                className={clsx(
+                  'sticky left-0 z-[2] border-b border-line bg-cream px-2.5 py-2.5 text-left text-[12px] sm:px-3.5 sm:text-[12.5px] font-extrabold tracking-wide text-ink-soft uppercase',
+                  leftShadow,
+                )}
+              >
                 Concepto
               </th>
               {months.map((m) => (
-                <th key={m.month} scope="col" className="border-b border-line bg-cream px-2.5 py-2.5 text-right text-[12.5px] font-extrabold tracking-wide whitespace-nowrap text-ink-soft uppercase">
+                <th
+                  key={m.month}
+                  scope="col"
+                  className={clsx(
+                    'border-b border-line bg-cream px-2 py-2.5 text-right text-[12px] font-extrabold tracking-wide whitespace-nowrap text-ink-soft uppercase sm:px-2.5 sm:text-[12.5px]',
+                    narrow && 'sm:min-w-[8.5rem]',
+                  )}
+                >
                   {m.label}
                   {isPartial(m.month) && <span title="Mes en curso">*</span>}
                 </th>
@@ -262,9 +293,10 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
                     <th
                       scope="row"
                       className={clsx(
-                        'sticky left-0 z-[1] min-w-[150px] px-3 py-2.5 text-left align-middle sm:min-w-[215px]',
+                        'sticky left-0 z-[1] min-w-[132px] px-2.5 py-2.5 text-left align-middle sm:min-w-[215px] sm:px-3',
                         rowBg,
                         border,
+                        leftShadow,
                         line.strong ? 'font-extrabold text-ink' : line.pct ? 'font-semibold text-ink-soft italic' : 'font-semibold text-ink',
                       )}
                     >
@@ -283,7 +315,7 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
                     {months.map((m) => (
                       <td
                         key={m.month}
-                        className={clsx('vh-num px-2.5 py-2.5 text-right whitespace-nowrap', rowBg, border, line.strong && 'font-extrabold', tone(line, m[line.key]))}
+                        className={clsx('vh-num px-2 py-2.5 text-right whitespace-nowrap sm:px-2.5', rowBg, border, line.strong && 'font-extrabold', tone(line, m[line.key]))}
                         title={line.pct ? undefined : money0(m[line.key])}
                       >
                         {value(line, m[line.key], m.sales)}
@@ -300,7 +332,7 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
                   </tr>
                   {cats.map((c) => (
                     <tr key={`${line.key}-${c.category}`}>
-                      <th scope="row" className="sticky left-0 z-[1] border-t border-line/40 bg-paper py-1.5 pr-3 pl-10 text-left text-[13px] font-normal text-ink-soft">
+                      <th scope="row" className={clsx('sticky left-0 z-[1] border-t border-line/40 bg-paper py-1.5 pr-3 pl-10 text-left text-[13px] font-normal text-ink-soft', leftShadow)}>
                         {c.category}
                       </th>
                       {months.map((m) => (
@@ -366,13 +398,13 @@ export function PnlTab({ period }: { period: Period }) {
                   </div>
                 }
               >
-                Cuando cargues ventas y gastos, acá vas a ver mes a mes cuánto ganaste y por qué. Si ya cargaste cosas, probá con otro período (por ejemplo, «Últimos 12 meses»).
+                Cuando cargues ventas y gastos, acá vas a ver mes a mes cuánto ganaste y por qué. Si ya cargaste cosas, probá con otro período (por ejemplo, «Desde siempre»).
               </EmptyState>
             </>
           )
         }
         const rows = d.months.map((m) => ({
-          label: m.label,
+          label: isPartial(m.month) ? `${m.label}*` : m.label,
           resultado: m.net_result,
           ventas: m.sales,
           salio: Math.round(totalOut(m)),
@@ -555,7 +587,9 @@ export function PnlTab({ period }: { period: Period }) {
               </div>
             )}
             <p className="mt-3 text-[12.5px] text-muted">
-              {int(d.months.length)} {d.months.length === 1 ? 'mes' : 'meses'} · Comprar vino no es gasto: se vuelve costo recién cuando vendés la botella. Por eso las compras no aparecen acá.
+              {int(d.months.length)} {d.months.length === 1 ? 'mes' : 'meses'}
+              {d.months.length > 1 && d.months.some((m) => isPartial(m.month)) && ' (* mes en curso: es normal que dé más bajo, todavía no terminó)'} · Comprar vino no es gasto: se vuelve costo recién
+              cuando vendés la botella. Por eso las compras no aparecen acá.
             </p>
           </>
         )

@@ -4,8 +4,23 @@ import { CHART_COLORS } from '@shared/constants'
 import { breakEven, variableCostPerBottle, type CalculatorContext } from '@shared/pricing'
 import { ChartCard, ResultChart } from '@/components/charts'
 import { Field, InfoTip, MoneyInput } from '@/components/ui'
-import { int, pct } from '@/lib/format'
-import { ExampleNote, InputsCard, MiniStat, MobileResult, Note, PercentField, Ticket, TicketHero, TicketRow, baseNumbers, money, moneyCompact, monthsText } from './parts'
+import { int } from '@/lib/format'
+import {
+  ExampleNote,
+  InputsCard,
+  MiniStat,
+  MobileResult,
+  Note,
+  PercentField,
+  Ticket,
+  TicketHero,
+  TicketRow,
+  baseNumbers,
+  money,
+  moneyCompact,
+  monthsText,
+  pct,
+} from './parts'
 
 export interface EquilibrioState {
   fixed: number | null
@@ -20,6 +35,24 @@ export function defaultEquilibrio(ctx: CalculatorContext): EquilibrioState {
 }
 
 const nf = (v: number, d = 1) => new Intl.NumberFormat('es-AR', { maximumFractionDigits: d }).format(v)
+
+/**
+ * Redondea varios porcentajes de modo que sumen exactamente el total redondeado
+ * (si no, "2,24 + 0,68 + 9,08 = 12,01" no cierra a la vista).
+ */
+function roundParts(values: number[], decimals = 2): number[] {
+  const f = 10 ** decimals
+  const total = Math.round(values.reduce((a, b) => a + b, 0) * f)
+  const floors = values.map((v) => Math.floor(v * f + 1e-9))
+  let rest = total - floors.reduce((a, b) => a + b, 0)
+  const order = values.map((v, i) => ({ i, r: v * f - floors[i] })).sort((a, b) => b.r - a.r)
+  for (const o of order) {
+    if (rest <= 0) break
+    floors[o.i]++
+    rest--
+  }
+  return floors.map((x) => x / f)
+}
 
 /** Escala "linda" para el eje del gráfico (múltiplos de 1, 2, 5 × 10ⁿ). */
 function niceStep(max: number, steps: number): number {
@@ -53,6 +86,7 @@ export function EquilibrioTab({ ctx, state, set, onReset }: { ctx: CalculatorCon
         { label: 'gastos variables (envíos, impuestos, packaging…)', v: ctx.avg_variable_expenses },
       ].filter((x) => x.v > 0)
     : []
+  const varPartsPct = roundParts(varParts.map((x) => (x.v / salesBase) * 100))
 
   // Gráfico: resultado del mes según las botellas vendidas
   const maxB = Math.max(be.ok ? be.bottles * 2 : 0, actual ? actual * 1.3 : 0, 20)
@@ -108,7 +142,7 @@ export function EquilibrioTab({ ctx, state, set, onReset }: { ctx: CalculatorCon
             onChange={(v) => set({ variablePct: v })}
             hint={
               ctx.has_data && varParts.length
-                ? `Lo que se fue con cada venta además del vino en ${months}: ${varParts.map((x) => `${x.label} ${nf((x.v / salesBase) * 100, 2)} %`).join(' + ')} = ${nf(ctx.variable_pct_of_sales, 2)} % de lo que vendiste.`
+                ? `Lo que se fue con cada venta además del vino en ${months}: ${varPartsPct.map((v, i) => `${varParts[i].label} ${nf(v, 2)}\u00a0%`).join(' + ')} = ${nf(varPartsPct.reduce((a, b) => a + b, 0), 2)}\u00a0% de lo que vendiste.`
                 : 'Comisiones, envíos, packaging, roturas… como % de lo que vendés.'
             }
           />

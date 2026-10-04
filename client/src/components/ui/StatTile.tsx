@@ -35,7 +35,7 @@ export function StatTile({ label, value, term, delta, upIsGood = true, deltaLabe
     <div className={clsx('vh-card flex min-w-0 flex-col gap-1.5 p-4 sm:p-5', className)}>
       <div className="flex items-center gap-1.5">
         {tone && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONE_VAR[tone] }} aria-hidden />}
-        <span className="truncate text-[13.5px] font-bold text-ink-soft">{label}</span>
+        <span className="line-clamp-2 text-[13.5px] leading-snug font-bold text-ink-soft">{label}</span>
         {term && <InfoTip term={term} />}
       </div>
       <div className={clsx('leading-none font-extrabold tracking-tight text-ink', hero ? 'text-[2.4rem]' : 'text-[1.7rem]')}>{value}</div>

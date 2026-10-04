@@ -29,11 +29,25 @@ const RESULT = GROSS - FEES - SHRINK - EXPENSES
 const ROWS: CascadeRow[] = [
   { label: 'Ventas', value: SALES, term: 'ventas', color: CHART_COLORS.ventas, kind: 'base', note: '250 botellas a $ 12.000 en promedio (con descuentos y envíos cobrados).' },
   { label: '− Costo de lo vendido (CMV)', value: COGS, term: 'cmv', color: CHART_COLORS.costo, kind: 'minus', note: 'Esas 250 botellas a su costo promedio: $ 7.200 cada una.' },
-  { label: '= Ganancia bruta', value: GROSS, term: 'ganancia_bruta', color: CHART_COLORS.ganancia, kind: 'subtotal', note: `Margen bruto ${nb(pct(GROSS / SALES, 0))}: de cada $ 100 vendidos, $ 40 quedan para todo lo demás.` },
+  {
+    label: '= Ganancia bruta',
+    value: GROSS,
+    term: 'ganancia_bruta',
+    color: CHART_COLORS.ganancia,
+    kind: 'subtotal',
+    note: `Margen bruto ${nb(pct(GROSS / SALES, 0))}: de cada $ 100 vendidos, $ 40 quedan para todo lo demás.`,
+  },
   { label: '− Comisiones de cobro', value: FEES, term: 'comisiones', color: CHART_COLORS.gastos, kind: 'minus', note: 'Lo que se quedaron Mercado Pago y las tarjetas.' },
   { label: '− Mermas, degustaciones y regalos', value: SHRINK, term: 'mermas', color: CHART_COLORS.gastos, kind: 'minus', note: '5 botellas (2 rotas y 3 abiertas para degustar) a $ 7.200.' },
   { label: '− Gastos', value: EXPENSES, term: 'gastos', color: CHART_COLORS.gastos, kind: 'minus', note: 'Alquiler, sueldos, envíos, packaging, contador…' },
-  { label: '= Resultado del mes', value: RESULT, term: 'resultado', color: CHART_COLORS.ganancia, kind: 'total', note: `Margen neto ${nb(pct(RESULT / SALES, 1))}: de cada $ 100 vendidos, ganaste ${nb(money(Math.round((RESULT / SALES) * 10000) / 100))}.` },
+  {
+    label: '= Resultado del mes',
+    value: RESULT,
+    term: 'resultado',
+    color: CHART_COLORS.ganancia,
+    kind: 'total',
+    note: `Margen neto ${nb(pct(RESULT / SALES, 1))}: de cada $ 100 vendidos, ganaste ${nb(money(Math.round((RESULT / SALES) * 10000) / 100))}.`,
+  },
 ]
 
 function Cascade() {
@@ -46,7 +60,7 @@ function Cascade() {
               {r.label}
               <InfoTip term={r.term} />
             </span>
-            <span className={`vh-num ml-auto ${r.kind === 'total' ? 'text-[18px]' : 'text-[15.5px]'} font-extrabold text-ink`}>{nb(money(r.value))}</span>
+            <span className={`vh-num ml-auto whitespace-nowrap ${r.kind === 'total' ? 'text-[18px]' : 'text-[15.5px]'} font-extrabold text-ink`}>{nb(money(r.value))}</span>
           </div>
           <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-cream-deep" aria-hidden>
             <div className="h-full rounded-full" style={{ width: `${(r.value / SALES) * 100}%`, background: r.color, opacity: r.kind === 'minus' ? 0.85 : 1 }} />
@@ -74,9 +88,9 @@ function Idea({ icon: Icon, title, term, children }: { icon: typeof Calculator; 
 }
 
 const BRIDGE: [string, string, string][] = [
-  ['Le vendiste $ 400.000 a un restó que te paga el mes que viene', '+ $ 400.000', 'cuando te pague'],
+  ['Le vendiste $ 400.000 a un restó que te paga el mes que viene', '+ $ 400.000', '$ 0 (entra cuando te pague)'],
   ['Compraste vino por $ 1.500.000 para reponer', '$ 0 (es stock)', '− $ 1.500.000'],
-  ['Vendiste botellas que ya habías pagado antes', '− su costo (CMV)', '$ 0'],
+  ['El costo de las botellas que vendiste (las habías comprado y pagado antes)', '− $ 1.800.000 (CMV)', '$ 0 (ya las pagaste)'],
   ['Te llevaste $ 200.000 (retiro)', '$ 0', '− $ 200.000'],
   ['Te pagaron $ 350.000 de ventas del mes pasado', '$ 0 (ya contó)', '+ $ 350.000'],
 ]
@@ -98,7 +112,9 @@ export function HowItWorks() {
       <div className="grid grid-cols-[minmax(0,1fr)] gap-5 2xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <div className="vh-card p-5">
           <h3 className="text-[17px] font-extrabold text-ink">La cuenta del resultado, con un mes de ejemplo</h3>
-          <p className="mt-1 mb-4 text-[14px] text-ink-soft">Así arma el sistema el número más importante (el mismo que ves en Inicio y en Reportes). Las barras muestran cuánto es cada cosa al lado de las ventas.</p>
+          <p className="mt-1 mb-4 text-[14px] text-ink-soft">
+            Así arma el sistema el número más importante (el mismo que ves en Inicio y en Reportes). Las barras muestran cuánto es cada cosa al lado de las ventas.
+          </p>
           <Cascade />
         </div>
         <div className="space-y-5">
@@ -142,7 +158,8 @@ export function HowItWorks() {
             ]}
           />
           <p>
-            Si vendés 5, el CMV es 5 × $ 1.200 = <b>$ 6.000</b>. Si cargás una compra con fecha vieja o corregís algo, el sistema recalcula toda la historia del vino en orden: los números siempre cierran.
+            Si vendés 5, el CMV es 5 × $ 1.200 = <b>$ 6.000</b>. Si cargás una compra con fecha vieja o corregís algo, el sistema recalcula toda la historia del vino en orden: los números siempre
+            cierran.
           </p>
         </Idea>
         <Idea icon={Truck} title="El flete va al costo" term="flete_prorrateado">
@@ -160,16 +177,18 @@ export function HowItWorks() {
           <p>
             Si comprás 60 botellas por $ 480.000, la plata sale de la caja, pero <b>las botellas siguen siendo tuyas</b>: es stock, plata «guardada» en el depósito.
           </p>
-          <p>
-            Se convierte en costo recién cuando las vendés (CMV) o si se rompen, se regalan o se abren para degustar (mermas). Por eso un mes de mucha compra no aparece como un mes de pérdida.
-          </p>
+          <p>Se convierte en costo recién cuando las vendés (CMV) o si se rompen, se regalan o se abren para degustar (mermas). Por eso un mes de mucha compra no aparece como un mes de pérdida.</p>
         </Idea>
         <Idea icon={Calculator} title="Todo en pesos y con impuestos" term="iva">
           <p>
             Los montos se cargan <b>finales</b>, como salen en el ticket o la factura. Es la plata que realmente se mueve, y así la caja cierra con el banco.
           </p>
           <p>
-            El dólar es solo de referencia (se configura en <Link to="/configuracion#dolar" className="font-bold text-sky-deep hover:underline">Configuración</Link>), y la inflación se usa en Reportes para comparar meses «a pesos de hoy».
+            El dólar es solo de referencia (se configura en{' '}
+            <Link to="/configuracion#dolar" className="font-bold text-sky-deep hover:underline">
+              Configuración
+            </Link>
+            ), y la inflación se usa en Reportes para comparar meses «a pesos de hoy».
           </p>
         </Idea>
       </div>

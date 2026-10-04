@@ -7,7 +7,7 @@ import { round2 } from '@shared/calc'
 import { MARGIN_FAIR, arsToUsd, boxDeal, usdToArs, type CalculatorContext } from '@shared/pricing'
 import { ChartCard, ResultChart } from '@/components/charts'
 import { Card, Field, InfoTip, IntInput, MoneyInput, NumberInput } from '@/components/ui'
-import { date, pct, usd } from '@/lib/format'
+import { date, usd } from '@/lib/format'
 import {
   InputsCard,
   MiniStat,
@@ -25,6 +25,7 @@ import {
   defaultFeeKey,
   feeFor,
   money,
+  pct,
 } from './parts'
 
 export interface CajasState {
@@ -45,14 +46,14 @@ export function defaultCajas(ctx: CalculatorContext): CajasState {
   const b = baseNumbers(ctx)
   return {
     productId: null,
-    price: b.price,
-    cost: b.cost,
+    price: Math.round(b.price),
+    cost: round2(b.cost),
     units: ctx.units_per_box,
     discount: 10,
     iibb: ctx.pricing.iibb_pct,
     feeKey: defaultFeeKey(ctx),
     usdRate: ctx.usd_rate > 0 ? ctx.usd_rate : null,
-    convAmount: b.price * ctx.units_per_box,
+    convAmount: Math.round(b.price) * ctx.units_per_box,
     convDir: 'ars',
   }
 }

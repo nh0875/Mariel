@@ -87,7 +87,11 @@ export function SettlementModal({
         <Field label={c.question} required error={tooMuch ? `No puede ser más de ${money(balance)}.` : undefined} hint={partial ? `Queda un saldo de ${money(balance - (amount ?? 0))} para más adelante.` : undefined}>
           <MoneyInput value={amount} onChange={setAmount} />
         </Field>
-        <Field label={c.account} required>
+        <Field
+          label={c.account}
+          required
+          hint={!accountId ? (kind === 'sale' ? 'Elegí en qué cuenta entró la plata para poder guardar.' : 'Elegí de qué cuenta salió la plata para poder guardar.') : undefined}
+        >
           <AccountSelect value={accountId} onChange={setAccountId} placeholder="Elegí una cuenta…" />
         </Field>
         <Field label="Fecha">

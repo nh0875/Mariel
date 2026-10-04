@@ -61,11 +61,11 @@ export function useApiMutation<TVars = void, TRes = unknown>(
   return useMutation<TRes, Error, TVars>({
     mutationFn: fn,
     onSuccess: (res, vars) => {
+      opts.onSuccess?.(res, vars)
       qc.invalidateQueries()
       if (opts.success !== false && opts.success) {
         toast.success(typeof opts.success === 'function' ? opts.success(res, vars) : opts.success)
       }
-      opts.onSuccess?.(res, vars)
     },
     onError: (err) => {
       toast.error(err.message || 'No se pudo guardar.')

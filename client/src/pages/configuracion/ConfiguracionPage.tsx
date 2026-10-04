@@ -64,7 +64,7 @@ export default function ConfiguracionPage() {
         </p>
       </HelpBox>
 
-      <div className="mt-6 lg:grid lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-8">
+      <div className="mt-6 xl:grid xl:grid-cols-[210px_minmax(0,1fr)] xl:gap-8">
         <SectionIndex items={INDEX.map((i) => ({ ...i, dirty: dirty[i.id] }))} />
         <div className="min-w-0 space-y-6">
           {settings.isLoading ? (

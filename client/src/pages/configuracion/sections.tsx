@@ -2,24 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import {
-  ArrowRight,
-  ArrowRightLeft,
-  Banknote,
-  Boxes,
-  CircleDollarSign,
-  CreditCard,
-  DollarSign,
-  Landmark,
-  Percent,
-  Plus,
-  QrCode,
-  Store,
-  Tags,
-  Trash2,
-  Wallet,
-  type LucideIcon,
-} from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, Banknote, Boxes, CircleDollarSign, CreditCard, DollarSign, Landmark, Percent, Plus, QrCode, Store, Tags, Trash2, Wallet, type LucideIcon } from 'lucide-react'
 import type { AccountWithBalance, ExpenseCategorySetting, PaymentMethodSetting, Settings } from '@shared/types'
 import { ACCOUNT_KIND_LABELS, PAYMENT_METHOD_LABELS, type ExpenseNature, type PaymentMethod } from '@shared/constants'
 import type { SettingsInput } from '@shared/schemas'
@@ -27,30 +10,19 @@ import { today } from '@shared/dates'
 import { api } from '@/lib/api'
 import { date as fmtDate, int, money, pct, relativeDays, usd } from '@/lib/format'
 import { useAccounts, useApi, useApiMutation } from '@/lib/queries'
-import {
-  Badge,
-  Button,
-  ChoiceCards,
-  DateInput,
-  Field,
-  InfoTip,
-  IntInput,
-  Loading,
-  MoneyInput,
-  NumberInput,
-  Select,
-  TextInput,
-  useConfirm,
-} from '@/components/ui'
+import { Badge, Button, ChoiceCards, DateInput, Field, InfoTip, IntInput, Loading, MoneyInput, NumberInput, Select, TextInput, useConfirm } from '@/components/ui'
 import { Example, SectionCard, nb, norm, plural, useDraft, useReportDirty } from './parts'
 import type { CategoryUsage } from './types'
 
 type OnDirty = (id: string, dirty: boolean) => void
 
+/** Lo que acepta PUT /settings: las claves a guardar + (opcional) los renombres de categorías. */
+type SettingsPatch = SettingsInput & { category_renames?: { from: string; to: string }[] }
+
 /** Guarda una parte de la configuración y deja la respuesta en la caché al toque (sin esperar el refresco). */
 function useSaveSettings(success: string, after?: () => void) {
   const qc = useQueryClient()
-  return useApiMutation((patch: SettingsInput) => api.put<Settings>('/settings', patch), {
+  return useApiMutation((patch: SettingsPatch) => api.put<Settings>('/settings', patch), {
     success,
     onSuccess: (res) => {
       qc.setQueryData(['/settings', {}], res)
@@ -103,20 +75,40 @@ export function BusinessSection({ settings, onDirty }: { settings: Settings; onD
         <Field htmlFor="cfg-tagline" label="Frase de la marca" hint="La que acompaña al nombre (la «bajada»). Ej: «Viví el vino».">
           <TextInput id="cfg-tagline" value={draft.tagline} onChange={(e) => set('tagline', e.target.value)} maxLength={200} placeholder="Viví el vino" />
         </Field>
-        <Field htmlFor="cfg-owner" label="Dueña o dueño" hint={draft.owner.trim() ? `En Inicio te saludamos: «¡Hola, ${draft.owner.trim().split(' ')[0]}!»` : 'Para saludarte cuando abrís el sistema.'}>
+        <Field
+          htmlFor="cfg-owner"
+          label="Dueña o dueño"
+          hint={draft.owner.trim() ? `En Inicio te saludamos: «¡Hola, ${draft.owner.trim().split(' ')[0]}!»` : 'Para saludarte cuando abrís el sistema.'}
+        >
           <TextInput id="cfg-owner" value={draft.owner} onChange={(e) => set('owner', e.target.value)} maxLength={120} placeholder="Ej: Mariel" autoComplete="name" />
         </Field>
         <Field htmlFor="cfg-cuit" label="CUIT" error={errors.tax_id} hint="Opcional. Sale en los comprobantes.">
           <TextInput id="cfg-cuit" value={draft.tax_id} onChange={(e) => set('tax_id', e.target.value)} maxLength={30} placeholder="20-12345678-9" inputMode="numeric" aria-invalid={!!errors.tax_id} />
         </Field>
         <Field htmlFor="cfg-address" label="Dirección" hint="Opcional.">
-          <TextInput id="cfg-address" value={draft.address} onChange={(e) => set('address', e.target.value)} maxLength={200} placeholder="Ej: Av. Corrientes 1234, CABA" autoComplete="street-address" />
+          <TextInput
+            id="cfg-address"
+            value={draft.address}
+            onChange={(e) => set('address', e.target.value)}
+            maxLength={200}
+            placeholder="Ej: Av. Corrientes 1234, CABA"
+            autoComplete="street-address"
+          />
         </Field>
         <Field htmlFor="cfg-phone" label="Teléfono" hint="Opcional.">
           <TextInput id="cfg-phone" value={draft.phone} onChange={(e) => set('phone', e.target.value)} maxLength={60} placeholder="Ej: 11 5555-0101" inputMode="tel" autoComplete="tel" />
         </Field>
         <Field htmlFor="cfg-email" label="Email" error={errors.email} hint="Opcional." className="sm:col-span-2 lg:col-span-1">
-          <TextInput id="cfg-email" type="email" value={draft.email} onChange={(e) => set('email', e.target.value)} maxLength={120} placeholder="hola@tuvinoteca.com" autoComplete="email" aria-invalid={!!errors.email} />
+          <TextInput
+            id="cfg-email"
+            type="email"
+            value={draft.email}
+            onChange={(e) => set('email', e.target.value)}
+            maxLength={120}
+            placeholder="hola@tuvinoteca.com"
+            autoComplete="email"
+            aria-invalid={!!errors.email}
+          />
         </Field>
       </div>
 
@@ -136,8 +128,8 @@ export function BusinessSection({ settings, onDirty }: { settings: Settings; onD
           ]}
         />
         <p className="mt-3 rounded-xl border border-sky/40 bg-sky-soft/60 px-3.5 py-2.5 text-[14px] leading-snug text-ink-soft [&_b]:text-ink">
-          <b>Sea cual sea tu condición, cargá todos los montos con impuestos incluidos</b>, tal como salen en el ticket o la factura. ¿Por qué? Porque es la plata que efectivamente entra y sale: así la caja
-          cierra con el banco y los márgenes son los reales.{' '}
+          <b>Sea cual sea tu condición, cargá todos los montos con impuestos incluidos</b>, tal como salen en el ticket o la factura. ¿Por qué? Porque es la plata que efectivamente entra y sale: así
+          la caja cierra con el banco y los márgenes son los reales.{' '}
           {draft.fiscal_condition === 'responsable_inscripto' && 'Como sos responsable inscripto, recordá que parte de lo que cobrás es IVA que después pagás: tu contador hace esa cuenta aparte.'}
         </p>
       </div>
@@ -156,7 +148,7 @@ const METHOD_ICON: Record<PaymentMethod, LucideIcon> = {
   otro: CircleDollarSign,
 }
 
-const METHOD_GRID = 'md:grid-cols-[minmax(0,1.25fr)_112px_minmax(0,1fr)_104px]'
+const METHOD_GRID = '@2xl:grid-cols-[minmax(0,1.25fr)_112px_minmax(0,1fr)_104px]'
 
 /**
  * Cuenta donde entra la plata de un medio de pago. Muestra solo el nombre de la cuenta (el saldo acá
@@ -221,59 +213,87 @@ export function PaymentMethodsSection({ settings, onDirty }: { settings: Setting
       onReset={reset}
       onSave={() => save.mutate({ payment_methods: draft.map((m) => ({ ...m, label: m.label.trim(), fee_pct: Math.round(m.fee_pct * 100) / 100 })) })}
     >
-      <div className={`hidden gap-3 px-1.5 pb-2 md:grid ${METHOD_GRID}`}>
-        <span className="vh-label pl-[46px]">Cómo lo llamás</span>
-        <span className="vh-label">Comisión</span>
-        <span className="vh-label">Entra en la cuenta</span>
-        <span className="vh-label pr-2 text-right">De $ 10.000 quedan</span>
-      </div>
-      <ul className="space-y-3 md:space-y-2">
-        {draft.map((m) => {
-          const Icon = METHOD_ICON[m.key]
-          const net = 10000 * (1 - (m.fee_pct || 0) / 100)
-          return (
-            <li key={m.key} className={`grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-2xl border border-line p-3 md:items-center md:gap-y-0 md:rounded-xl md:border-0 md:bg-cream/50 md:p-1.5 ${METHOD_GRID}`}>
-              <div className="col-span-2 flex min-w-0 items-center gap-2.5 md:col-span-1">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-sky-soft text-sky-deep" aria-hidden>
-                  <Icon size={18} />
-                </span>
-                <TextInput value={m.label} onChange={(e) => set(m.key, { label: e.target.value })} maxLength={60} aria-label={`Nombre de ${PAYMENT_METHOD_LABELS[m.key]}`} aria-invalid={!m.label.trim()} />
-              </div>
-              <label className="flex min-w-0 flex-col gap-1 md:block">
-                <span className="text-[12.5px] font-bold text-ink-soft md:hidden">Comisión</span>
-                <NumberInput value={m.fee_pct} onChange={(v) => set(m.key, { fee_pct: v ?? 0 })} decimals={2} suffix="%" aria-label={`Comisión de ${m.label}`} aria-invalid={m.fee_pct < 0 || m.fee_pct > 50} />
-              </label>
-              <p className="flex min-w-0 flex-col items-end justify-end gap-1 text-[13.5px] text-ink-soft md:order-last md:block md:pr-2 md:text-right">
-                <span className="text-[12.5px] font-bold md:hidden">De $ 10.000 te quedan</span>
-                <b className="vh-num flex h-11 items-center text-[15px] whitespace-nowrap text-ink md:inline md:h-auto">{nb(money(net))}</b>
-              </p>
-              <label className="col-span-2 flex min-w-0 flex-col gap-1 md:col-span-1 md:block">
-                <span className="text-[12.5px] font-bold text-ink-soft md:hidden">Entra en la cuenta</span>
-                <AccountNameSelect value={m.account_id} onChange={(id) => set(m.key, { account_id: id })} label={m.label} />
-              </label>
-            </li>
-          )
-        })}
-      </ul>
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-xl border border-line bg-paper px-3.5 py-3 text-[13.5px] leading-snug text-ink-soft">
-          <p className="mb-1 font-extrabold text-ink">Valores de referencia</p>
-          <ul className="space-y-0.5">
-            <li>Mercado Pago (Point o QR): <b className="text-ink">~6 %</b></li>
-            <li>Tarjeta de crédito: <b className="text-ink">~3,5 %</b></li>
-            <li>Tarjeta de débito: <b className="text-ink">~1,5 %</b></li>
-            <li>Efectivo y transferencia: <b className="text-ink">0 %</b></li>
-          </ul>
-          <p className="mt-1.5">Cambian según el plan y el plazo de acreditación: <b className="text-ink">revisá lo que te cobra tu banco</b> o el resumen de Mercado Pago.</p>
+      <div className="@container">
+        <div className={`hidden gap-3 px-1.5 pb-2 @2xl:grid ${METHOD_GRID}`}>
+          <span className="vh-label pl-[46px]">Cómo lo llamás</span>
+          <span className="vh-label">Comisión</span>
+          <span className="vh-label">Entra en la cuenta</span>
+          <span className="vh-label pr-2 text-right">De $ 10.000 quedan</span>
         </div>
-        <div className="space-y-2">
-          {mp && mp.fee_pct > 0 && (
-            <Example>
-              Vendés <b>$ 20.000</b> por {mp.label} al {nb(pct(mp.fee_pct / 100, 2))} → la comisión es <b>{nb(money(mpFee))}</b> y te quedan <b>{nb(money(20000 - mpFee))}</b>. Esa comisión aparece como costo en el
-              resultado, no se pierde de vista.
-            </Example>
-          )}
-          <p className="text-[13px] text-muted">Los cambios rigen para las ventas que cargues de acá en adelante; las ventas ya cargadas guardan la comisión con la que se registraron.</p>
+        <ul className="space-y-3 @2xl:space-y-2">
+          {draft.map((m) => {
+            const Icon = METHOD_ICON[m.key]
+            const net = 10000 * (1 - (m.fee_pct || 0) / 100)
+            return (
+              <li
+                key={m.key}
+                className={`grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-2xl border border-line p-3 @2xl:items-center @2xl:gap-y-0 @2xl:rounded-xl @2xl:border-0 @2xl:bg-cream/50 @2xl:p-1.5 ${METHOD_GRID}`}
+              >
+                <div className="col-span-2 flex min-w-0 items-center gap-2.5 @2xl:col-span-1">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-sky-soft text-sky-deep" aria-hidden>
+                    <Icon size={18} />
+                  </span>
+                  <TextInput
+                    value={m.label}
+                    onChange={(e) => set(m.key, { label: e.target.value })}
+                    maxLength={60}
+                    aria-label={`Nombre de ${PAYMENT_METHOD_LABELS[m.key]}`}
+                    aria-invalid={!m.label.trim()}
+                  />
+                </div>
+                <label className="flex min-w-0 flex-col gap-1 @2xl:block">
+                  <span className="text-[12.5px] font-bold text-ink-soft @2xl:hidden">Comisión</span>
+                  <NumberInput
+                    value={m.fee_pct}
+                    onChange={(v) => set(m.key, { fee_pct: v ?? 0 })}
+                    decimals={2}
+                    suffix="%"
+                    aria-label={`Comisión de ${m.label}`}
+                    aria-invalid={m.fee_pct < 0 || m.fee_pct > 50}
+                  />
+                </label>
+                <p className="flex min-w-0 flex-col items-end justify-end gap-1 text-[13.5px] text-ink-soft @2xl:order-last @2xl:block @2xl:pr-2 @2xl:text-right">
+                  <span className="text-[12.5px] font-bold @2xl:hidden">De $ 10.000 te quedan</span>
+                  <b className="vh-num flex h-11 items-center text-[15px] whitespace-nowrap text-ink @2xl:inline @2xl:h-auto">{nb(money(net))}</b>
+                </p>
+                <label className="col-span-2 flex min-w-0 flex-col gap-1 @2xl:col-span-1 @2xl:block">
+                  <span className="text-[12.5px] font-bold text-ink-soft @2xl:hidden">Entra en la cuenta</span>
+                  <AccountNameSelect value={m.account_id} onChange={(id) => set(m.key, { account_id: id })} label={m.label} />
+                </label>
+              </li>
+            )
+          })}
+        </ul>
+        <div className="mt-4 grid gap-3 @2xl:grid-cols-2">
+          <div className="rounded-xl border border-line bg-paper px-3.5 py-3 text-[13.5px] leading-snug text-ink-soft">
+            <p className="mb-1 font-extrabold text-ink">Valores de referencia</p>
+            <ul className="space-y-0.5">
+              <li>
+                Mercado Pago (Point o QR): <b className="text-ink">~6 %</b>
+              </li>
+              <li>
+                Tarjeta de crédito: <b className="text-ink">~3,5 %</b>
+              </li>
+              <li>
+                Tarjeta de débito: <b className="text-ink">~1,5 %</b>
+              </li>
+              <li>
+                Efectivo y transferencia: <b className="text-ink">0 %</b>
+              </li>
+            </ul>
+            <p className="mt-1.5">
+              Cambian según el plan y el plazo de acreditación: <b className="text-ink">revisá lo que te cobra tu banco</b> o el resumen de Mercado Pago.
+            </p>
+          </div>
+          <div className="space-y-2">
+            {mp && mp.fee_pct > 0 && (
+              <Example>
+                Vendés <b>$ 20.000</b> por {mp.label} al {nb(pct(mp.fee_pct / 100, 2))} → la comisión es <b>{nb(money(mpFee))}</b> y te quedan <b>{nb(money(20000 - mpFee))}</b>. Esa comisión aparece
+                como costo en el resultado, no se pierde de vista.
+              </Example>
+            )}
+            <p className="text-[13px] text-muted">Los cambios rigen para las ventas que cargues de acá en adelante; las ventas ya cargadas guardan la comisión con la que se registraron.</p>
+          </div>
         </div>
       </div>
     </SectionCard>
@@ -340,9 +360,7 @@ export function AccountsSection({ settings }: { settings: Settings }) {
             </li>
           </ul>
           {(accounts ?? []).length > active.length && (
-            <p className="mt-2 text-[13px] text-muted">
-              Además tenés {plural((accounts ?? []).length - active.length, 'cuenta desactivada', 'cuentas desactivadas')}: las ves en Caja y bancos.
-            </p>
+            <p className="mt-2 text-[13px] text-muted">Además tenés {plural((accounts ?? []).length - active.length, 'cuenta desactivada', 'cuentas desactivadas')}: las ves en Caja y bancos.</p>
           )}
         </>
       )}
@@ -387,7 +405,7 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
   useReportDirty('categorias', dirty, onDirty)
   const save = useSaveSettings('Listo, guardamos las categorías de gastos', () => setTouched(false))
 
-  const usageOf = (name: string | null) => (name ? usage.data?.categories.find((c) => c.name === name) ?? usage.data?.others.find((c) => c.name === name) : undefined)
+  const usageOf = (name: string | null) => (name ? (usage.data?.categories.find((c) => c.name === name) ?? usage.data?.others.find((c) => c.name === name)) : undefined)
   const change = (fn: (d: CatDraft[]) => CatDraft[]) => {
     setTouched(true)
     setItems(fn)
@@ -429,8 +447,8 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
             ) : null}
             {u?.recurring ? (
               <p className="mt-2">
-                <b>Ojo:</b> {u.recurring === 1 ? 'un gasto fijo usa' : `${int(u.recurring)} gastos fijos usan`} esta categoría y {u.recurring === 1 ? 'se va' : 'se van'} a seguir generando con «{c.orig}». Si no querés eso, cambiales la
-                categoría en <b>Gastos → Gastos fijos del mes</b>.
+                <b>Ojo:</b> {u.recurring === 1 ? 'un gasto fijo usa' : `${int(u.recurring)} gastos fijos usan`} esta categoría y {u.recurring === 1 ? 'se va' : 'se van'} a seguir generando con «
+                {c.orig}». Si no querés eso, cambiales la categoría en <b>Gastos → Gastos fijos del mes</b>.
               </p>
             ) : null}
             <p className="mt-2">Solo deja de aparecer para elegir en los gastos nuevos. (Recordá tocar «Guardar» para que quede.)</p>
@@ -452,8 +470,8 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
       title="Categorías de gastos"
       why={
         <>
-          Agrupan tus gastos para ver <b>en qué se va la plata</b> (Reportes y Gastos). Marcá cada una como <b>fija</b> (se paga igual, vendas o no: alquiler, sueldos) o <b>variable</b> (acompaña a las
-          ventas: envíos, packaging). Con los fijos se calcula el punto de equilibrio <InfoTip term="punto_equilibrio" />.
+          Agrupan tus gastos para ver <b>en qué se va la plata</b> (Reportes y Gastos). Marcá cada una como <b>fija</b> (se paga igual, vendas o no: alquiler, sueldos) o <b>variable</b> (acompaña a
+          las ventas: envíos, packaging). Con los fijos se calcula el punto de equilibrio <InfoTip term="punto_equilibrio" />.
         </>
       }
       dirty={dirty}
@@ -469,65 +487,78 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
           expense_categories: clean(items),
           // Los gastos fijos (plantillas) pasan al nombre nuevo; los gastos ya cargados no cambian.
           category_renames: items.filter((c) => c.orig && c.name.trim() && c.name.trim() !== c.orig).map((c) => ({ from: c.orig!, to: c.name.trim() })),
-        } as SettingsInput)
+        })
       }
     >
       <p className="mb-3 text-[13.5px] text-ink-soft">
         {int(items.length)} categorías · {int(fixedCount)} fijas y {int(items.length - fixedCount)} variables.{' '}
         <span className="text-muted">Si renombrás o sacás una, los gastos ya cargados mantienen su nombre viejo (los gastos fijos, en cambio, pasan solos al nombre nuevo).</span>
       </p>
-      <ul className="space-y-2">
-        {items.map((c) => {
-          const u = usageOf(c.orig)
-          const renamed = c.orig && c.name.trim() && norm(c.name) !== norm(c.orig)
-          const used = (u?.expenses ?? 0) + (u?.recurring ?? 0)
-          return (
-            <li key={c.uid} className="grid grid-cols-[112px_minmax(0,1fr)_32px] items-center gap-x-2 gap-y-1.5 rounded-xl border border-line bg-paper p-2 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,260px)_32px]">
-              <TextInput
-                value={c.name}
-                onChange={(e) => change((d) => d.map((x) => (x.uid === c.uid ? { ...x, name: e.target.value } : x)))}
-                maxLength={80}
-                className="order-1 col-span-2 !h-10 md:order-none md:col-span-1"
-                aria-label="Nombre de la categoría"
-                aria-invalid={!c.name.trim()}
-              />
-              <Select
-                value={c.nature}
-                onChange={(v) => change((d) => d.map((x) => (x.uid === c.uid ? { ...x, nature: v as ExpenseNature } : x)))}
-                options={NATURE_OPTIONS}
-                className="order-3 md:order-none [&_select]:!h-10"
-                aria-label="Fijo o variable"
-              />
-              <p className="order-4 col-span-2 text-[12.5px] leading-snug text-muted md:order-none md:col-span-1">
-                {c.orig == null ? (
-                  <Badge tone="sky">Nueva: se agrega al guardar</Badge>
-                ) : renamed && used > 0 ? (
-                  <span className="font-semibold text-warn">
-                    {u?.expenses ? `${u.expenses === 1 ? 'El gasto ya cargado sigue' : `Los ${int(u.expenses)} gastos ya cargados siguen`} como «${c.orig}». ` : ''}
-                    {u?.recurring ? `${u.recurring === 1 ? 'El gasto fijo pasa' : `Los ${int(u.recurring)} gastos fijos pasan`} al nombre nuevo.` : ''}
-                  </span>
-                ) : used > 0 ? (
-                  <>
-                    {plural(u?.expenses ?? 0, 'gasto', 'gastos')}
-                    {u?.recurring ? ` y ${plural(u.recurring, 'gasto fijo', 'gastos fijos')}` : ''}
-                    {u?.amount ? (
-                      <>
-                        {' · '}
-                        <span className="whitespace-nowrap">{nb(money(u.amount))}</span>
-                      </>
-                    ) : null}
-                  </>
-                ) : usage.isLoading ? (
-                  '…'
-                ) : (
-                  'Todavía sin gastos'
-                )}
-              </p>
-              <Button size="sm" variant="ghost" icon={Trash2} onClick={() => remove(c)} aria-label={`Sacar ${c.name || 'categoría'}`} title="Sacar de la lista" className="order-2 !px-0 md:order-none" />
-            </li>
-          )
-        })}
-      </ul>
+      <div className="@container">
+        <ul className="space-y-2">
+          {items.map((c) => {
+            const u = usageOf(c.orig)
+            const renamed = c.orig && c.name.trim() && norm(c.name) !== norm(c.orig)
+            const used = (u?.expenses ?? 0) + (u?.recurring ?? 0)
+            return (
+              <li
+                key={c.uid}
+                className="grid grid-cols-[112px_minmax(0,1fr)_32px] items-center gap-x-2 gap-y-1.5 rounded-xl border border-line bg-paper p-2 @2xl:grid-cols-[minmax(0,1fr)_120px_minmax(0,260px)_32px]"
+              >
+                <TextInput
+                  value={c.name}
+                  onChange={(e) => change((d) => d.map((x) => (x.uid === c.uid ? { ...x, name: e.target.value } : x)))}
+                  maxLength={80}
+                  className="order-1 col-span-2 !h-10 @2xl:order-none @2xl:col-span-1"
+                  aria-label="Nombre de la categoría"
+                  aria-invalid={!c.name.trim()}
+                />
+                <Select
+                  value={c.nature}
+                  onChange={(v) => change((d) => d.map((x) => (x.uid === c.uid ? { ...x, nature: v as ExpenseNature } : x)))}
+                  options={NATURE_OPTIONS}
+                  className="order-3 @2xl:order-none [&_select]:!h-10"
+                  aria-label="Fijo o variable"
+                />
+                <p className="order-4 col-span-2 text-[12.5px] leading-snug text-muted @2xl:order-none @2xl:col-span-1">
+                  {c.orig == null ? (
+                    <Badge tone="sky">Nueva: se agrega al guardar</Badge>
+                  ) : renamed && used > 0 ? (
+                    <span className="font-semibold text-warn">
+                      {u?.expenses ? `${u.expenses === 1 ? 'El gasto ya cargado sigue' : `Los ${int(u.expenses)} gastos ya cargados siguen`} como «${c.orig}». ` : ''}
+                      {u?.recurring ? `${u.recurring === 1 ? 'El gasto fijo pasa' : `Los ${int(u.recurring)} gastos fijos pasan`} al nombre nuevo.` : ''}
+                    </span>
+                  ) : used > 0 ? (
+                    <>
+                      {plural(u?.expenses ?? 0, 'gasto', 'gastos')}
+                      {u?.recurring ? ` y ${plural(u.recurring, 'gasto fijo', 'gastos fijos')}` : ''}
+                      {u?.amount ? (
+                        <>
+                          {' · '}
+                          <span className="whitespace-nowrap">{nb(money(u.amount))}</span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : usage.isLoading ? (
+                    '…'
+                  ) : (
+                    'Todavía sin gastos'
+                  )}
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={Trash2}
+                  onClick={() => remove(c)}
+                  aria-label={`Sacar ${c.name || 'categoría'}`}
+                  title="Sacar de la lista"
+                  className="order-2 !px-0 @2xl:order-none"
+                />
+              </li>
+            )
+          })}
+        </ul>
+      </div>
 
       <div className="mt-4 rounded-2xl border border-dashed border-line-strong bg-cream/50 p-3">
         <p className="mb-2 text-[14px] font-bold text-ink">Agregar una categoría</p>
@@ -554,7 +585,11 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
             Agregar
           </Button>
         </div>
-        {addError ? <p className="mt-1.5 text-[13px] font-semibold text-bad">{addError}</p> : <p className="mt-1.5 text-[13px] text-muted">Apretá Enter para agregarla rápido. Después tocá «Guardar».</p>}
+        {addError ? (
+          <p className="mt-1.5 text-[13px] font-semibold text-bad">{addError}</p>
+        ) : (
+          <p className="mt-1.5 text-[13px] text-muted">Apretá Enter para agregarla rápido. Después tocá «Guardar».</p>
+        )}
       </div>
 
       {usage.data && usage.data.others.length > 0 && (
@@ -627,8 +662,8 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
             <NumberInput id="cfg-margin" value={draft.target_margin_pct} onChange={(v) => set('target_margin_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.target} />
           </Field>
           <Example>
-            Con {nb(pct(m, 1))}, un vino que te cuesta <b>$ 6.000</b> lo vendés a <b>{nb(money(Math.round(priceForM)))}</b> (precio = costo ÷ (1 − {nb(pct(m, 1))})). Ojo: es un recargo del {nb(pct(markup, 1))} sobre el
-            costo, no del {nb(pct(m, 1))}.
+            Con {nb(pct(m, 1))}, un vino que te cuesta <b>$ 6.000</b> lo vendés a <b>{nb(money(Math.round(priceForM)))}</b> (precio = costo ÷ (1 − {nb(pct(m, 1))})). Ojo: es un recargo del{' '}
+            {nb(pct(markup, 1))} sobre el costo, no del {nb(pct(m, 1))}.
           </Example>
         </div>
         <div className="space-y-2">
@@ -650,7 +685,13 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
           </Example>
         </div>
         <div className="space-y-2">
-          <Field htmlFor="cfg-iva" label="IVA" info="iva" error={errors.iva} hint="El general es 21 %. Es de referencia: el sistema no le suma IVA a nada, porque todo se carga con impuestos incluidos.">
+          <Field
+            htmlFor="cfg-iva"
+            label="IVA"
+            info="iva"
+            error={errors.iva}
+            hint="El general es 21 %. Es de referencia: el sistema no le suma IVA a nada, porque todo se carga con impuestos incluidos."
+          >
             <NumberInput id="cfg-iva" value={draft.iva_pct} onChange={(v) => set('iva_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.iva} />
           </Field>
           <Example>
@@ -692,7 +733,8 @@ export function UsdSection({ settings, onDirty }: { settings: Settings; onDirty?
       }
       why={
         <>
-          <b>Actualizala cuando quieras: se usa solo para mostrar equivalentes</b> en dólares: cuánta plata tenés en Caja y bancos y el precio de una caja en la Calculadora. El sistema trabaja siempre en pesos.
+          <b>Actualizala cuando quieras: se usa solo para mostrar equivalentes</b> en dólares: cuánta plata tenés en Caja y bancos y el precio de una caja en la Calculadora. El sistema trabaja siempre
+          en pesos.
         </>
       }
       dirty={dirty}
@@ -703,12 +745,13 @@ export function UsdSection({ settings, onDirty }: { settings: Settings; onDirty?
     >
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Field htmlFor="cfg-usd" label="Cotización (pesos por dólar)" hint="La que uses de referencia: oficial, MEP, blue… Si dejás 0, no se muestran equivalentes.">
-          <MoneyInput id="cfg-usd"
-            value={draft.usd_rate}
-            onChange={(v) => update((d) => ({ ...d, usd_rate: v ?? 0, usd_rate_date: v && v !== settings.usd_rate ? today() : d.usd_rate_date }))}
-          />
+          <MoneyInput id="cfg-usd" value={draft.usd_rate} onChange={(v) => update((d) => ({ ...d, usd_rate: v ?? 0, usd_rate_date: v && v !== settings.usd_rate ? today() : d.usd_rate_date }))} />
         </Field>
-        <Field htmlFor="cfg-usd-date" label="Fecha de la cotización" hint={draft.usd_rate_date ? `Cargada ${relativeDays(draft.usd_rate_date)} (${fmtDate(draft.usd_rate_date)}).` : 'Cuándo la miraste.'}>
+        <Field
+          htmlFor="cfg-usd-date"
+          label="Fecha de la cotización"
+          hint={draft.usd_rate_date ? `Cargada ${relativeDays(draft.usd_rate_date)} (${fmtDate(draft.usd_rate_date)}).` : 'Cuándo la miraste.'}
+        >
           <div className="flex gap-2">
             <DateInput id="cfg-usd-date" value={draft.usd_rate_date} onChange={(v) => update((d) => ({ ...d, usd_rate_date: v || null }))} max={today()} className="flex-1" />
             <Button onClick={() => update((d) => ({ ...d, usd_rate_date: today() }))}>Hoy</Button>
@@ -750,7 +793,8 @@ export function StockDefaultsSection({ settings, onDirty }: { settings: Settings
       title="Stock: valores para vinos nuevos"
       why={
         <>
-          Se completan solos cada vez que cargás un vino nuevo (después cada vino puede tener los suyos en su ficha). Así no te olvidás de ponerle un mínimo y el sistema te avisa a tiempo para reponer.
+          Se completan solos cada vez que cargás un vino nuevo (después cada vino puede tener los suyos en su ficha). Así no te olvidás de ponerle un mínimo y el sistema te avisa a tiempo para
+          reponer.
         </>
       }
       dirty={dirty}

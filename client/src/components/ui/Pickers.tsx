@@ -30,10 +30,11 @@ export function ProductSelect({
   invalid?: boolean
   placeholder?: string
 }) {
-  const { data: products = [] } = useProducts()
+  const { data: products = [] } = useProducts({ includeInactive: true })
   const options = useMemo(
     () =>
       products
+        .filter((p) => p.active || p.id === value)
         .filter((p) => !exclude?.includes(p.id) || p.id === value)
         .map((p) => ({
           value: p.id,

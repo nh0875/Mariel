@@ -32,9 +32,7 @@ function sale(date: string, productId: number, qty: number, price: number, extra
   return createSale(saleInput.parse({ date, payment_method: 'efectivo', items: [{ product_id: productId, qty, unit_price: price }], ...extra }))
 }
 function expense(date: string, amount: number, nature: 'fijo' | 'variable' = 'fijo', category?: string) {
-  return createExpense(
-    expenseInput.parse({ date, category: category ?? (nature === 'fijo' ? 'Alquiler' : 'Envíos y logística'), description: `Gasto ${nature}`, amount, nature }),
-  )
+  return createExpense(expenseInput.parse({ date, category: category ?? (nature === 'fijo' ? 'Alquiler' : 'Envíos y logística'), description: `Gasto ${nature}`, amount, nature }))
 }
 function client(name: string, kind = 'restaurante') {
   return run('INSERT INTO clients (name, kind) VALUES (?, ?)', [name, kind]).lastInsertRowid
@@ -325,6 +323,35 @@ describe('GET /reports/expenses', () => {
     expect(d.by_category[0].share).toBeCloseTo(0.9, 6)
   })
 
+  it('los promedios por mes (fijos y por categoría) usan solo meses completos: el mes en curso no los baja', async () => {
+    const cur = startOfMonth(today())
+    const prev1 = addMonths(cur, -1)
+    const prev2 = addMonths(cur, -2)
+    expense(addMonths(prev2, 0), 1000, 'fijo', 'Alquiler')
+    expense(prev1, 1000, 'fijo', 'Alquiler')
+    expense(cur, 600, 'fijo', 'Seguros') // solo en el mes en curso
+    const r = await t.get(`/reports/expenses?from=${prev2}&to=${endOfMonth(cur)}`)
+    expect(r.status).toBe(200)
+    const d = r.body
+    const alquiler = d.by_category.find((c: any) => c.category === 'Alquiler')
+    const seguros = d.by_category.find((c: any) => c.category === 'Seguros')
+    if (today() < endOfMonth(today())) {
+      // Mes en curso sin terminar: promedio de los 2 meses completos.
+      expect(d.months_for_avg).toBe(2)
+      expect(d.fixed_avg).toBe(1000)
+      expect(alquiler.monthly_avg).toBe(1000) // y no 2000 ÷ 3 = 666,67
+      expect(seguros.monthly_avg).toBe(0) // solo tuvo gastos en el mes en curso
+      expect(d.by_month.at(-1).partial).toBe(true)
+    } else {
+      // Último día del mes: el mes ya cuenta como completo.
+      expect(d.months_for_avg).toBe(3)
+      expect(alquiler.monthly_avg).toBeCloseTo(2000 / 3, 2)
+    }
+    // Suma de promedios por categoría = fijos promedio + variables promedio (mismo criterio).
+    const sumAvg = d.by_category.reduce((s: number, c: any) => s + c.monthly_avg, 0)
+    expect(sumAvg).toBeCloseTo(d.fixed_avg, 2)
+  })
+
   it('si no queda margen para cubrir los fijos, el punto de equilibrio es null', async () => {
     const m = wine('Caro', 10, 3000)
     sale('2025-03-02', m, 1, 2000) // vendido abajo del costo
@@ -376,6 +403,45 @@ describe('GET /reports/inflation — pesos de hoy', () => {
     expect(r.body.months[1].sales).toBe(0)
     expect(r.body.months[2].real_growth_vs_prev).toBeNull() // el mes anterior no vendió
     expect(r.body.explanation).toMatch(/Faltan cargar 1 mes/)
+  })
+})
+
+describe('GET /reports/inflation — mes en curso', () => {
+  it('el mes en curso no se compara con el anterior y el aviso de faltantes lo nombra aparte', async () => {
+    const cur = startOfMonth(today())
+    const prev1 = addMonths(cur, -1)
+    const prev2 = addMonths(cur, -2)
+    const m = wine('Malbec', 500, 500)
+    sale(prev2, m, 10, 1000)
+    sale(prev1, m, 10, 1000)
+    sale(today(), m, 1, 1000) // pocos días de ventas: en pesos "cae" un 90 %
+    await t.put(`/inflation/${monthKey(prev1)}`, { rate: 5 })
+    const r = await t.get(`/reports/inflation?from=${prev2}&to=${endOfMonth(cur)}`)
+    expect(r.status).toBe(200)
+    const last = r.body.months.at(-1)
+    expect(last.month).toBe(monthKey(today()))
+    expect(r.body.missing_months).toEqual([monthKey(today())])
+    if (today() < endOfMonth(today())) {
+      expect(last.partial).toBe(true)
+      expect(last.real_growth_vs_prev).toBeNull()
+      expect(last.nominal_growth_vs_prev).toBeNull()
+      expect(r.body.explanation).toMatch(/El mes en curso no se compara/)
+      expect(r.body.explanation).toMatch(/El mes en curso todavía no tiene inflación cargada/)
+      expect(r.body.explanation).not.toMatch(/Faltan cargar/)
+    } else {
+      expect(last.nominal_growth_vs_prev).toBeCloseTo(-0.9, 6)
+    }
+    // El mes anterior (completo) sí se compara: mismas ventas con 5 % de inflación → −4,76 % real.
+    expect(r.body.months[1].real_growth_vs_prev).toBeCloseTo(1 / 1.05 - 1, 6)
+  })
+
+  it('el Excel nombra el mes al que se llevan los montos (no "pesos de hoy" a secas)', async () => {
+    const m = wine('Malbec', 100, 500)
+    sale('2025-01-10', m, 1, 1000)
+    sale('2025-02-10', m, 1, 1000)
+    const wb = await workbook('/reports/inflation/export?from=2025-01-01&to=2025-02-28')
+    const ws = wb.getWorksheet('Inflación')!
+    expect(ws.getCell('F4').value).toBe('Ventas en pesos de febrero 2025')
   })
 })
 
@@ -478,6 +544,24 @@ describe('Exportar a Excel', () => {
     expect(sheetNames(await workbook(`/reports/clients/export${qs}`))).toEqual(['Clientes'])
     expect(sheetNames(await workbook(`/reports/expenses/export${qs}`))).toEqual(['Gastos por categoría', 'Gastos fijos y variables'])
     expect(sheetNames(await workbook(`/reports/inflation/export${qs}`))).toEqual(['Inflación'])
+  })
+
+  it('clientes: la fila de ventas sin cliente se llama distinto del tipo "Consumidor final" y la nota no la nombra si no existe', async () => {
+    const m = wine('Malbec', 100, 1000)
+    const c = client('Martín', 'consumidor')
+    sale('2025-02-01', m, 2, 2000, { client_id: c })
+    let ws = (await workbook(`/reports/clients/export${qs}`)).getWorksheet('Clientes')!
+    const texts = () => {
+      const out: string[] = []
+      ws.eachRow((row) => row.eachCell((cell) => typeof cell.value === 'string' && out.push(cell.value)))
+      return out
+    }
+    expect(texts().some((x) => /sin cliente cargado \(mostrador\)/.test(x))).toBe(false)
+    expect(texts().some((x) => /Todas las ventas del período tienen cliente cargado/.test(x))).toBe(true)
+    sale('2025-02-02', m, 1, 2000)
+    ws = (await workbook(`/reports/clients/export${qs}`)).getWorksheet('Clientes')!
+    expect(ws.getCell('A6').value).toBe('Ventas sin cliente cargado (mostrador)')
+    expect(ws.getCell('A5').value).toBe('Martín')
   })
 
   it('el reporte completo tiene un Índice primero y todas las hojas, con links', async () => {

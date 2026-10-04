@@ -74,7 +74,7 @@ export function SectionIndex({ items, title = 'En esta página' }: { items: Inde
   }
   return (
     <>
-      <nav aria-label={title} className="vh-no-print sticky top-24 hidden self-start lg:block">
+      <nav aria-label={title} className="vh-no-print sticky top-24 hidden self-start xl:block">
         <p className="vh-label mb-2 px-3">{title}</p>
         <ul className="space-y-0.5 border-l-2 border-line">
           {items.map((it) => {
@@ -100,7 +100,7 @@ export function SectionIndex({ items, title = 'En esta página' }: { items: Inde
           })}
         </ul>
       </nav>
-      <nav aria-label={title} className="vh-no-print vh-scroll -mx-4 mb-1 flex gap-1.5 overflow-x-auto px-4 pb-1 lg:hidden">
+      <nav aria-label={title} className="vh-no-print vh-scroll -mx-4 mb-1 flex gap-1.5 overflow-x-auto px-4 pb-1 xl:hidden">
         {items.map((it) => (
           <a
             key={it.id}

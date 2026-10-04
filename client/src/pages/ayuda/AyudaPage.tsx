@@ -81,7 +81,7 @@ function StartSteps() {
     },
     {
       title: 'Cargá los gastos fijos una vez y generalos cada mes',
-      text: 'Alquiler, sueldos, contador, internet: los cargás una sola vez en «Gastos fijos» y cada mes los generás con un clic.',
+      text: 'Alquiler, sueldos, contador, internet: los cargás una sola vez en Gastos → «Gastos fijos del mes» y cada mes los generás con un clic.',
       done: known ? count('recurring_expenses') > 0 : null,
       cta: { label: 'Ir a Gastos', to: '/gastos' },
     },
@@ -389,7 +389,7 @@ export default function AyudaPage() {
         </p>
       </HelpBox>
 
-      <div className="mt-6 lg:grid lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-8">
+      <div className="mt-6 xl:grid xl:grid-cols-[210px_minmax(0,1fr)] xl:gap-8">
         <SectionIndex items={index} />
         <div className="min-w-0 space-y-12">
           <Section id="empeza-por-aca" title="Empezá por acá" intro="Seis pasos, en este orden. Los que ya hiciste aparecen marcados.">

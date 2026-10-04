@@ -5,12 +5,13 @@ import { ArrowDownRight, ArrowUpRight, Lightbulb, Minus, PieChart, Plus } from '
 import clsx from 'clsx'
 import { CHART_COLORS } from '@shared/constants'
 import { monthKey, today } from '@shared/dates'
-import { dateShort, money, pct, pctDelta } from '@/lib/format'
+import { dateShort, int, pct, pctDelta } from '@/lib/format'
 import { usePeriod } from '@/lib/period'
 import { useApi } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, InfoTip, Loading, PeriodPicker, type Column } from '@/components/ui'
 import { ChartCard, ColumnChart, DonutChart, Legend, RankBars } from '@/components/charts'
 import { categoryIcon, categoryShort, natureShort, natureTone, type ExpensesSummary } from './types'
+import { money } from './parts'
 
 type CatRow = ExpensesSummary['by_category'][number]
 
@@ -149,7 +150,16 @@ export function CategoriesTab({ onPickCategory, onNew }: { onPickCategory: (cate
         key: 'sales',
         text: (
           <>
-            De cada $ 100 que vendiste, <b>$ {Math.round(s.vs_sales * 100)}</b> se fueron en gastos ({pct(s.vs_sales)} de las ventas).
+            {s.vs_sales > 1 ? (
+              <>
+                <b>Gastaste más de lo que vendiste</b>: los gastos fueron el {pct(s.vs_sales, 0)} de las ventas. Así no se llega a cubrir ni los gastos, aunque el vino se venda
+                con buen margen.
+              </>
+            ) : (
+              <>
+                De cada $ 100 que vendiste, <b className="whitespace-nowrap">$ {int(Math.round(s.vs_sales * 100))}</b> se fueron en gastos ({pct(s.vs_sales)} de las ventas).
+              </>
+            )}
           </>
         ),
       })

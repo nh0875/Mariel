@@ -8,7 +8,7 @@ import type { Period } from '@shared/dates'
 import { int, pct } from '@/lib/format'
 import { Button, Card, DataTable, EmptyState, ExportButton, InfoTip, type Column } from '@/components/ui'
 import { ChartCard, ColumnChart, DonutChart } from '@/components/charts'
-import { Amount, BlockTitle, Insights, money0, ReportGuard, TabIntro, useReport, type Insight } from './parts'
+import { Amount, BlockTitle, Insights, money0, pesos, ReportGuard, TabIntro, useReport, type Insight } from './parts'
 import type { ChannelRow, ChannelsReport, PaymentMethodRow } from './types'
 
 function channelInsights(d: ChannelsReport): Insight[] {
@@ -34,8 +34,8 @@ function channelInsights(d: ChannelsReport): Insight[] {
         tone: 'info',
         text: (
           <>
-            Por cada $ 100 vendidos, <b>{best.label}</b> te deja $ {Math.round(best.margin * 100)} y <b>{worst.label}</b> $ {Math.round(worst.margin * 100)} (después del vino y las comisiones).{' '}
-            {worst.share > 0.2 ? 'Como vendés mucho por ahí, revisá sus precios o descuentos.' : 'Tenelo en cuenta antes de hacer promos en ese canal.'}
+            Por cada {pesos(100)} vendidos, <b>{best.label}</b> te deja {pesos(Math.round(best.margin * 100))} y <b>{worst.label}</b> {pesos(Math.round(worst.margin * 100))} (después del vino y las
+            comisiones). {worst.share > 0.2 ? 'Como vendés mucho por ahí, revisá sus precios o descuentos.' : 'Tenelo en cuenta antes de hacer promos en ese canal.'}
           </>
         ),
       })
@@ -185,7 +185,7 @@ export function ChannelsTab({ period }: { period: Period }) {
               <ChartCard
                 className="min-w-0"
                 title="¿De dónde vienen las ventas?"
-                subtitle={d.channels.length > 5 ? 'Parte de las ventas de cada canal. «Otros canales» junta a los más chicos (en «Ver tabla» están todos).' : 'Parte de las ventas de cada canal.'}
+                subtitle="Qué parte de lo vendido vino de cada canal."
                 table={{
                   columns: [
                     { key: 'label', header: 'Canal' },
@@ -196,11 +196,12 @@ export function ChannelsTab({ period }: { period: Period }) {
                 }}
               >
                 <DonutChart data={donutData(d.channels)} />
+                {d.channels.filter((c) => c.sales > 0).length > 5 && <p className="px-2 pt-3 text-[12.5px] text-muted">«Otros canales» junta a los más chicos. En «Ver tabla» están todos.</p>}
               </ChartCard>
               <ChartCard
                 className="min-w-0"
                 title="¿Qué días vendés más?"
-                subtitle="Venta promedio de cada día de la semana: ventas de ese día ÷ cuántos hubo en el período. Así no influye que un mes tenga 5 sábados y otro 4."
+                subtitle="Cuánto vendés en un día típico de cada tipo."
                 table={{
                   columns: [
                     { key: 'label', header: 'Día' },
@@ -218,6 +219,7 @@ export function ChannelsTab({ period }: { period: Period }) {
                   height={240}
                   series={[{ key: 'promedio', label: 'Venta promedio del día', color: CHART_COLORS.ventas }]}
                 />
+                <p className="px-2 pt-2 text-[12.5px] text-muted">Promedio = ventas de ese día ÷ cuántos hubo en el período (hasta hoy). Así no influye que un mes tenga 5 sábados y otro 4.</p>
               </ChartCard>
             </div>
 

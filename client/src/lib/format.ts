@@ -14,8 +14,12 @@ export function money(n: number | null | undefined, opts: { decimals?: 0 | 2 | '
   if (n == null || !Number.isFinite(n)) return '—'
   const decimals = opts.decimals ?? 'auto'
   const useCents = decimals === 2 || (decimals === 'auto' && Math.abs(n % 1) > 0.004)
-  const s = (useCents ? moneyFmt2 : moneyFmt0).format(n).replace(/ /g, ' ')
-  return opts.sign && n > 0 ? `+${s}` : s
+  const fmt = useCents ? moneyFmt2 : moneyFmt0
+  // Espacio duro entre "$" y el número: nunca se cortan en dos renglones.
+  const abs = fmt.format(Math.abs(n)).replace(/\s/g, '\u00a0')
+  // Negativos como "−$ 1.234" (signo menos tipográfico). Si redondeado da 0, sin signo.
+  if (n < 0 && fmt.format(Math.abs(n)) !== fmt.format(0)) return `−${abs}`
+  return opts.sign && n > 0 ? `+${abs}` : abs
 }
 
 /** Plata abreviada para gráficos y números grandes: "$ 1,2 M", "$ 350 mil". */
@@ -23,10 +27,11 @@ export function moneyCompact(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
   const abs = Math.abs(n)
   const sign = n < 0 ? '−' : ''
-  if (abs >= 1_000_000_000) return `${sign}$ ${numFmt.format(Math.round(abs / 100_000_000) / 10)} mil M`
-  if (abs >= 1_000_000) return `${sign}$ ${numFmt.format(Math.round(abs / 100_000) / 10)} M`
-  if (abs >= 10_000) return `${sign}$ ${intFmt.format(Math.round(abs / 1000))} mil`
-  return `${sign}$ ${intFmt.format(Math.round(abs))}`
+  const NB = '\u00a0'
+  if (abs >= 1_000_000_000) return `${sign}$${NB}${numFmt.format(Math.round(abs / 100_000_000) / 10)}${NB}mil${NB}M`
+  if (abs >= 1_000_000) return `${sign}$${NB}${numFmt.format(Math.round(abs / 100_000) / 10)}${NB}M`
+  if (abs >= 10_000) return `${sign}$${NB}${intFmt.format(Math.round(abs / 1000))}${NB}mil`
+  return `${sign}$${NB}${intFmt.format(Math.round(abs))}`
 }
 
 export function usd(n: number | null | undefined): string {

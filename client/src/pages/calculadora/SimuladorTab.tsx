@@ -6,8 +6,22 @@ import clsx from 'clsx'
 import { priceChangeToKeepResult, simulate, type CalculatorContext, type SimulationResult } from '@shared/pricing'
 import { ChartCard, ResultChart } from '@/components/charts'
 import { Badge, Button, Field, InfoTip, IntInput, MoneyInput, Money } from '@/components/ui'
-import { int, pct, pctDelta } from '@/lib/format'
-import { ExampleNote, InputsCard, MobileResult, Note, PercentField, SliderField, Ticket, TicketHero, baseNumbers, money, monthsText } from './parts'
+import { int } from '@/lib/format'
+import {
+  ExampleNote,
+  InputsCard,
+  MobileResult,
+  Note,
+  PercentField,
+  SliderField,
+  Ticket,
+  TicketHero,
+  baseNumbers,
+  money,
+  monthsText,
+  pct,
+  pctDelta,
+} from './parts'
 
 export type ScenarioKey = 'bodega15' | 'promo2x1' | 'alquiler25' | null
 
@@ -222,7 +236,8 @@ export function SimuladorTab({ ctx, state, set, onReset }: { ctx: CalculatorCont
               <TicketHero
                 label="Resultado del mes con los cambios"
                 info={<InfoTip term="resultado" />}
-                value={<Money value={r.after.result} decimals={0} tone="auto" />}
+                value={money(r.after.result, { decimals: 0 })}
+                valueClassName={r.after.result < -0.004 ? 'text-bad' : r.after.result > 0.004 ? 'text-good' : 'text-ink'}
                 badge={
                   changed && Math.abs(r.delta.result) >= 1 ? (
                     <Badge tone={r.delta.result > 0 ? 'good' : 'bad'} className="!px-3 !py-1 !text-[14px]">

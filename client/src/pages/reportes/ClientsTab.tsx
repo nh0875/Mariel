@@ -124,23 +124,28 @@ export function ClientsTab({ period }: { period: Period }) {
           <>
             {intro}
             <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-              <StatTile label="Clientes que compraron" value={int(d.totals.clients)} tone="sky" hint={`Con cliente cargado: ${plural(d.totals.count - d.walk_in.count, 'venta', 'ventas')}.`} />
-              <StatTile label="Peso de tus 5 mejores" value={d.clients.length ? pct(d.totals.top5_share, 0) : '—'} hint="De todas tus ventas del período. Más de la mitad = dependés de pocos." />
               <StatTile
-                label="Sin cliente cargado"
+                label="Clientes"
+                value={int(d.totals.clients)}
+                tone="sky"
+                hint={`Te compraron en el período (${plural(d.totals.count - d.walk_in.count, 'venta', 'ventas')} con cliente cargado).`}
+              />
+              <StatTile label="Tus 5 mejores" value={d.clients.length ? pct(d.totals.top5_share, 0) : '—'} hint="Lo que pesan en todas tus ventas del período. Más de la mitad = dependés de pocos." />
+              <StatTile
+                label="Sin cliente"
                 value={pct(d.walk_in.share, 0)}
                 tone="mustard"
                 hint={
                   <>
-                    {plural(d.walk_in.count, 'venta', 'ventas')} por <Amount value={d.walk_in.total} /> («consumidor final» de mostrador).
+                    {plural(d.walk_in.count, 'venta', 'ventas')} por <Amount value={d.walk_in.total} /> sin cliente cargado (las de mostrador).
                   </>
                 }
               />
               <StatTile
-                label="Ticket promedio con cliente"
+                label="Ticket promedio"
                 term="ticket_promedio"
                 value={<Amount value={d.clients.length ? d.clients.reduce((s, c) => s + c.total, 0) / Math.max(1, d.totals.count - d.walk_in.count) : 0} />}
-                hint="Lo que gasta en promedio un cliente identificado por compra."
+                hint="De las ventas con cliente cargado: lo que gasta en promedio cada uno por compra."
               />
             </div>
 
@@ -150,14 +155,14 @@ export function ClientsTab({ period }: { period: Period }) {
               <Card
                 title={
                   <span className="inline-flex items-center gap-1.5">
-                    Consumidor final
+                    Ventas sin cliente
                     <InfoTip
                       title="Ventas sin cliente"
-                      text="Son las ventas donde no elegiste ningún cliente (típico del mostrador). Se cuentan igual en tus ventas y en el resultado; lo único que se pierde es saber quién te compró."
+                      text="Son las ventas donde no elegiste ningún cliente (típico del mostrador: en el ticket figura «consumidor final»). Se cuentan igual en tus ventas y en el resultado; lo único que se pierde es saber quién te compró."
                     />
                   </span>
                 }
-                subtitle="Ventas sin cliente cargado"
+                subtitle="Las de mostrador, donde no elegiste a nadie"
               >
                 <p className="text-[2.2rem] leading-none font-extrabold text-ink">{pct(d.walk_in.share, 0)}</p>
                 <p className="mt-1 text-[13.5px] text-ink-soft">de tus ventas del período</p>

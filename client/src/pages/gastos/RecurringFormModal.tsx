@@ -4,10 +4,10 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Repeat, Trash2, Waves } from 'lucide-react'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
 import { api } from '@/lib/api'
-import { money } from '@/lib/format'
 import { useApiMutation, useSettings } from '@/lib/queries'
 import { AccountSelect, Button, Checkbox, ChoiceCards, Combobox, Field, IntInput, Modal, MoneyInput, TextInput, useConfirm } from '@/components/ui'
 import type { RecurringRow } from './types'
+import { money } from './parts'
 
 interface FormState {
   description: string

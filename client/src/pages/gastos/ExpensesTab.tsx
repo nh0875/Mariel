@@ -7,11 +7,11 @@ import type { ExpenseWithStatus } from '@shared/types'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
 import { monthKey, today } from '@shared/dates'
 import { api } from '@/lib/api'
-import { dateShort, int, money, moneyCompact, monthName, pct } from '@/lib/format'
+import { dateShort, int, monthName, pct } from '@/lib/format'
 import { usePeriod } from '@/lib/period'
 import { useApi, useApiMutation, useSettings } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, Loading, PeriodPicker, Select, type Column } from '@/components/ui'
-import { Callout, KpiTile, ExpenseStatusBadge, useMinWidth } from './parts'
+import { Callout, KpiTile, ExpenseStatusBadge, useMinWidth, money, moneyCompact } from './parts'
 import {
   categoryIcon,
   categoryShort,
@@ -294,7 +294,15 @@ export function ExpensesTab({
             hint={
               s.vs_sales != null ? (
                 <>
-                  De cada $ 100 que vendiste, <b className="text-ink-soft">$ {Math.round(s.vs_sales * 100)}</b> se fueron en gastos
+                  {s.vs_sales > 1 ? (
+                    <>
+                      <b className="text-bad">Gastaste más de lo que vendiste</b>: {money(s.total, { decimals: 0 })} de gastos contra {money(s.sales, { decimals: 0 })} de ventas
+                    </>
+                  ) : (
+                    <>
+                      De cada $ 100 que vendiste, <b className="whitespace-nowrap text-ink-soft">$ {int(Math.round(s.vs_sales * 100))}</b> se fueron en gastos
+                    </>
+                  )}
                   {showDelta && cmp?.previous.vs_sales != null && <> · antes {pct(cmp.previous.vs_sales, 0)}</>}
                 </>
               ) : (
@@ -313,7 +321,12 @@ export function ExpensesTab({
               s.pending_count === 0 ? (
                 <>
                   {s.count > 0 ? '¡Todo pagado en este período!' : 'No hay nada por pagar en este período.'}
-                  {s.payables_total > 0.01 && <> De gastos anteriores debés {money(s.payables_total, { decimals: 0 })}.</>}
+                  {s.payables_total > 0.01 && (
+                    <>
+                      {' '}
+                      De gastos anteriores debés <span className="whitespace-nowrap">{money(s.payables_total, { decimals: 0 })}</span>.
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -324,7 +337,12 @@ export function ExpensesTab({
                       · {s.overdue_count} vencido{s.overdue_count === 1 ? '' : 's'}
                     </b>
                   )}
-                  {s.payables_total > s.pending + 0.01 && <> · en total debés {money(s.payables_total, { decimals: 0 })} de gastos</>}
+                  {s.payables_total > s.pending + 0.01 && (
+                    <>
+                      {' '}
+                      · en total debés <span className="whitespace-nowrap">{money(s.payables_total, { decimals: 0 })}</span> de gastos
+                    </>
+                  )}
                   {filters.status !== 'por_pagar' && (
                     <button
                       type="button"

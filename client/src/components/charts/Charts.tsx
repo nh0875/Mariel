@@ -178,8 +178,9 @@ export function TrendChart({
  */
 export function DonutChart({ data, height = 220, format = 'money' }: { data: { label: string; value: number }[]; height?: number; format?: ValueFormat }) {
   const sorted = [...data].filter((d) => d.value > 0).sort((a, b) => b.value - a.value)
-  const top = sorted.slice(0, 5)
-  const rest = sorted.slice(5).reduce((s, d) => s + d.value, 0)
+  // Hasta 6 porciones se muestran tal cual; si hay más, las chicas se juntan en "Otros".
+  const top = sorted.length <= 6 ? sorted : sorted.slice(0, 5)
+  const rest = sorted.length <= 6 ? 0 : sorted.slice(5).reduce((s, d) => s + d.value, 0)
   const slices = rest > 0 ? [...top, { label: 'Otros', value: rest }] : top
   const total = slices.reduce((s, d) => s + d.value, 0)
   if (!slices.length) return <p className="py-10 text-center text-sm text-muted">Sin datos en este período.</p>
@@ -199,7 +200,7 @@ export function DonutChart({ data, height = 220, format = 'money' }: { data: { l
       </div>
       <ul className="w-full min-w-0 flex-1 space-y-1.5">
         {slices.map((s, i) => (
-          <li key={s.label} className="flex items-center gap-2 text-[14px]">
+          <li key={i} className="flex items-center gap-2 text-[14px]">
             <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: CHART_SERIES[i % CHART_SERIES.length] }} aria-hidden />
             <span className="min-w-0 flex-1 truncate text-ink">{s.label}</span>
             <span className="vh-num font-bold text-ink">{fmt(s.value, format)}</span>

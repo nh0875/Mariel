@@ -5,9 +5,15 @@ import clsx from 'clsx'
 
 const SIZES = { sm: 'max-w-md', md: 'max-w-xl', lg: 'max-w-3xl', xl: 'max-w-5xl' }
 
+// Pila de ventanas abiertas: Esc y Tab solo afectan a la de más arriba
+// (ej: un "¿Seguro?" encima de un formulario no cierra también el formulario).
+const openStack: number[] = []
+let seq = 0
+
 /**
  * Ventana sobre la pantalla (para formularios y detalles).
- * Se cierra con Esc, con la X o tocando afuera (si no hay cambios sin guardar: pasá dismissable={false}).
+ * Se cierra con Esc, con la X o tocando afuera. Con dismissable={false} solo se cierra con la X
+ * o los botones (útil si hay cambios sin guardar).
  */
 export function Modal({
   open,
@@ -32,9 +38,14 @@ export function Modal({
   const panel = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const dismissRef = useRef(dismissable)
+  dismissRef.current = dismissable
 
   useEffect(() => {
     if (!open) return
+    const myId = ++seq
+    openStack.push(myId)
+    const isTop = () => openStack[openStack.length - 1] === myId
     const prevFocus = document.activeElement as HTMLElement | null
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -43,9 +54,10 @@ export function Modal({
       ;(first ?? panel.current)?.focus()
     }, 30)
     const onKey = (e: KeyboardEvent) => {
+      if (!isTop()) return
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onCloseRef.current()
+        if (dismissRef.current) onCloseRef.current()
       }
       if (e.key === 'Tab' && panel.current) {
         const f = panel.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
@@ -64,6 +76,8 @@ export function Modal({
     document.addEventListener('keydown', onKey)
     return () => {
       window.clearTimeout(t)
+      const idx = openStack.indexOf(myId)
+      if (idx >= 0) openStack.splice(idx, 1)
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = prevOverflow
       prevFocus?.focus?.()

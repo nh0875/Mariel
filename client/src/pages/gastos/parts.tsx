@@ -5,11 +5,18 @@ import clsx from 'clsx'
 import { addMonths, monthKey } from '@shared/dates'
 import type { ExpenseCategorySetting } from '@shared/types'
 import type { GlossaryKey } from '@/lib/glossary'
-import { monthName, pctDelta } from '@/lib/format'
+import { money as kitMoney, moneyCompact as kitMoneyCompact, monthName, pctDelta } from '@/lib/format'
 import { TONE_VAR, type Tone } from '@/lib/nav'
 import { Badge, InfoTip } from '@/components/ui'
 import type { PaymentStatus } from '@shared/constants'
 import { categoryIcon, splitCategory } from './types'
+
+/**
+ * money() / moneyCompact() del kit, pero con espacio que no corta renglón: así "$" nunca queda
+ * solo al final de una línea y el número en la siguiente (pasa en frases y explicaciones).
+ */
+export const money: typeof kitMoney = (n, opts) => kitMoney(n, opts).replace(/ /g, '\u00a0')
+export const moneyCompact: typeof kitMoneyCompact = (n) => kitMoneyCompact(n).replace(/ /g, '\u00a0')
 
 /**
  * Tarjeta con un número importante. Igual que StatTile del kit, pero el "?" puede ser del

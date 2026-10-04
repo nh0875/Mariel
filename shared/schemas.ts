@@ -36,7 +36,17 @@ z.setErrorMap((issue, ctx) => {
   }
 })
 
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'tiene que ser una fecha válida')
+/** 'YYYY-MM-DD' que además exista en el calendario (rechaza 2026-02-30). */
+export function isRealDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const [y, m, d] = s.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d
+}
+const date = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'tiene que ser una fecha válida')
+  .refine(isRealDate, 'esa fecha no existe (revisá el día y el mes)')
 const month = z.string().regex(/^\d{4}-\d{2}$/, 'tiene que ser un mes válido (AAAA-MM)')
 const optDate = date.nullish().transform((v) => v || null)
 const optText = (max = 500) =>

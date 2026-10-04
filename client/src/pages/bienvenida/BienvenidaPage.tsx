@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, Banknote, CircleCheck, FileSpreadsheet, FlaskConical, Landmark, Lock, Rocket, Wallet, Wine } from 'lucide-react'
 import clsx from 'clsx'
 import type { AccountWithBalance, PaymentMethodSetting, Settings } from '@shared/types'
+import type { PaymentMethod } from '@shared/constants'
 import { api } from '@/lib/api'
 import { money } from '@/lib/format'
 import { useApi, useApiMutation, useSettings } from '@/lib/queries'
@@ -37,17 +38,22 @@ function Swashes() {
 
 function Dots({ step }: { step: Step }) {
   return (
-    <ol className="flex items-center gap-2" aria-label={`Paso ${step + 1} de ${STEP_LABELS.length}`}>
-      {STEP_LABELS.map((l, i) => (
-        <li key={l} className="flex items-center gap-2">
-          <span
-            className={clsx('block h-2.5 rounded-full transition-all', i === step ? 'w-7 bg-brown' : i < step ? 'w-2.5 bg-brown/60' : 'w-2.5 bg-line-strong')}
-            aria-current={i === step ? 'step' : undefined}
-          />
-          <span className={clsx('hidden text-[12.5px] font-bold sm:inline', i === step ? 'text-ink' : 'text-muted')}>{l}</span>
-        </li>
-      ))}
-    </ol>
+    <div className="flex items-center gap-3">
+      <ol className="flex items-center gap-2" aria-label={`Paso ${step + 1} de ${STEP_LABELS.length}`}>
+        {STEP_LABELS.map((l, i) => (
+          <li key={l} className="flex items-center gap-2">
+            <span
+              className={clsx('block h-2.5 rounded-full transition-all', i === step ? 'w-7 bg-brown' : i < step ? 'w-2.5 bg-brown/60' : 'w-2.5 bg-line-strong')}
+              aria-current={i === step ? 'step' : undefined}
+            />
+            <span className={clsx('hidden text-[12.5px] font-bold sm:inline', i === step ? 'text-ink' : 'text-muted')}>{l}</span>
+          </li>
+        ))}
+      </ol>
+      <span className="text-[12.5px] font-bold text-ink-soft sm:hidden" aria-hidden>
+        Paso {step + 1} de {STEP_LABELS.length}: {STEP_LABELS[step]}
+      </span>
+    </div>
   )
 }
 
@@ -106,21 +112,18 @@ export default function BienvenidaPage() {
     }
   }, [settings, bizLoaded])
 
-  // ── Paso 3: saldos y comisiones
-  const [balances, setBalances] = useState<Record<number, number | null>>({})
-  const [fees, setFees] = useState<PaymentMethodSetting[] | null>(null)
+  // ── Paso 3: saldos y comisiones. Se guarda solo lo que la persona cambia: el resto sale siempre de lo
+  // guardado (así, si se borran los datos de ejemplo en el medio, no quedan saldos viejos de la demo).
+  const [balanceEdits, setBalanceEdits] = useState<Record<number, number | null>>({})
+  const [feeEdits, setFeeEdits] = useState<Partial<Record<PaymentMethod, number>>>({})
   const accounts = useMemo(() => (accountsQ.data ?? []).filter((a) => a.active), [accountsQ.data])
-  useEffect(() => {
-    if (accountsQ.data) setBalances((b) => (Object.keys(b).length ? b : Object.fromEntries(accountsQ.data.map((a) => [a.id, a.initial_balance]))))
-  }, [accountsQ.data])
-  useEffect(() => {
-    if (settings && !fees) setFees(settings.payment_methods)
-  }, [settings, fees])
+  const balanceOf = (a: AccountWithBalance) => (a.id in balanceEdits ? (balanceEdits[a.id] ?? 0) : a.initial_balance)
+  const fees: PaymentMethodSetting[] = (settings?.payment_methods ?? []).map((m) => ({ ...m, fee_pct: feeEdits[m.key] ?? m.fee_pct }))
 
   const [tried, setTried] = useState(false)
   const bizError = !biz.name.trim() ? 'Poné el nombre de tu negocio (después lo podés cambiar).' : null
-  const feeError = fees?.find((m) => m.fee_pct < 0 || m.fee_pct > 50)
-  const total = accounts.reduce((s, a) => s + (balances[a.id] ?? 0), 0)
+  const feeError = fees.find((m) => m.fee_pct < 0 || m.fee_pct > 50)
+  const total = accounts.reduce((s, a) => s + balanceOf(a), 0)
   const hasData = (sys.data?.counts ?? []).some((c) => ['products', 'sales', 'purchases', 'expenses'].includes(c.table) && c.count > 0)
 
   const putSettings = async (patch: Partial<Settings> | Record<string, unknown>) => {
@@ -137,7 +140,14 @@ export default function BienvenidaPage() {
     },
     { success: '¡Listo! Estás viendo una vinoteca de ejemplo. Tocá lo que quieras: no se rompe nada.', onSuccess: () => navigate('/') },
   )
-  const resetDemo = useApiMutation(() => api.post('/data/reset'), { success: 'Listo, borramos los datos de ejemplo.', onSuccess: () => setStep(1) })
+  const resetDemo = useApiMutation(() => api.post('/data/reset'), {
+    success: 'Listo, borramos los datos de ejemplo.',
+    onSuccess: () => {
+      setBalanceEdits({})
+      setFeeEdits({})
+      setStep(1)
+    },
+  })
   const saveBiz = useApiMutation(() => putSettings({ business: { name: biz.name.trim(), owner: biz.owner.trim(), fiscal_condition: biz.fiscal_condition } }), {
     onSuccess: () => setStep(2),
   })
@@ -145,12 +155,25 @@ export default function BienvenidaPage() {
     async () => {
       await Promise.all(
         accounts
-          .filter((a) => (balances[a.id] ?? 0) !== a.initial_balance)
-          .map((a) => api.put(`/accounts/${a.id}`, { name: a.name, kind: a.kind, initial_balance: balances[a.id] ?? 0, active: a.active })),
+          .filter((a) => a.id in balanceEdits && balanceOf(a) !== a.initial_balance)
+          .map((a) => api.put(`/accounts/${a.id}`, { name: a.name, kind: a.kind, initial_balance: balanceOf(a), active: a.active })),
       )
-      if (fees) await putSettings({ payment_methods: fees.map((m) => ({ ...m, fee_pct: Math.round(m.fee_pct * 100) / 100 })) })
+      const changed = Object.keys(feeEdits) as PaymentMethod[]
+      if (changed.length) {
+        // Solo las comisiones que tocaste, sobre lo guardado ahora (la cuenta de cada medio no se toca).
+        const fresh = await api.get<Settings>('/settings')
+        await putSettings({
+          payment_methods: fresh.payment_methods.map((m) => (feeEdits[m.key] != null ? { ...m, fee_pct: Math.round(feeEdits[m.key]! * 100) / 100 } : m)),
+        })
+      }
     },
-    { onSuccess: () => setStep(3) },
+    {
+      onSuccess: () => {
+        setBalanceEdits({})
+        setFeeEdits({})
+        setStep(3)
+      },
+    },
   )
   const finish = useApiMutation((to: string) => putSettings({ onboarding: { completed: true } }).then(() => to), {
     onSuccess: (to) => {
@@ -164,6 +187,7 @@ export default function BienvenidaPage() {
   })
 
   const chooseDemo = async () => {
+    if (demo.isPending) return
     if (hasData && !settings?.onboarding.demo_loaded) {
       const ok = await confirm({
         title: '¿Reemplazar tus datos por los de ejemplo?',
@@ -219,7 +243,7 @@ export default function BienvenidaPage() {
 
         {step === 0 && (
           <main className="flex flex-1 flex-col items-center text-center">
-            <img src="/logo-vinoh.jpg" alt="VINOH! Viví el vino" className="w-60 sm:w-80" />
+            <img src="/logo-vinoh.jpg" alt="VINOH! Viví el vino" className="w-60 mix-blend-multiply sm:w-80" />
             <p className="vh-eyebrow mt-4 justify-center">Finanzas</p>
             <h1 className="mt-5 font-display text-[2.6rem] leading-none text-ink sm:text-[3.4rem]">
               ¡Te damos la{' '}
@@ -236,20 +260,21 @@ export default function BienvenidaPage() {
                 icon={FlaskConical}
                 tone="sky"
                 title="Quiero probar con datos de ejemplo"
-                text="Cargamos 14 meses de una vinoteca inventada para que veas cómo funciona todo. Después lo borrás con un clic."
+                text="Cargamos 14 meses de una vinoteca inventada para que veas cómo funciona todo. Cuando quieras, la borrás desde Configuración y empezás con lo tuyo."
                 onClick={chooseDemo}
               />
               <BigChoice
                 icon={Rocket}
                 tone="coral"
                 title="Quiero empezar con mis datos"
-                text="Te hacemos tres preguntas (dos minutos) y arrancás cargando tus vinos."
+                text="Dos pasos cortos (tu negocio y tu plata, un par de minutos) y arrancás cargando tus vinos."
                 onClick={chooseOwn}
                 loading={resetDemo.isPending}
               />
             </div>
-            <p className="mt-8 inline-flex items-center gap-2 text-[13.5px] text-muted">
-              <Lock size={15} aria-hidden /> Todo queda guardado en esta computadora. Nada se sube a internet.
+            <p className="mt-8 max-w-md text-center text-[13.5px] text-muted">
+              <Lock size={15} className="mr-1.5 inline -translate-y-px" aria-hidden />
+              Todo queda guardado en esta computadora. Nada se sube a internet.
             </p>
           </main>
         )}
@@ -275,7 +300,16 @@ export default function BienvenidaPage() {
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <Field htmlFor="bv-name" label="Nombre del negocio" required error={tried ? bizError : null} hint="Como querés que aparezca en los Excel.">
-                <TextInput id="bv-name" value={biz.name} onChange={(e) => setBiz({ ...biz, name: e.target.value })} maxLength={120} placeholder="Ej: VINOH!" aria-invalid={tried && !!bizError} data-autofocus autoFocus />
+                <TextInput
+                  id="bv-name"
+                  value={biz.name}
+                  onChange={(e) => setBiz({ ...biz, name: e.target.value })}
+                  maxLength={120}
+                  placeholder="Ej: VINOH!"
+                  aria-invalid={tried && !!bizError}
+                  data-autofocus
+                  autoFocus
+                />
               </Field>
               <Field htmlFor="bv-owner" label="¿Cómo te llamás?" hint={owner ? `Te vamos a saludar: «¡Hola, ${owner}!»` : 'Para saludarte cuando abrís el sistema.'}>
                 <TextInput id="bv-owner" value={biz.owner} onChange={(e) => setBiz({ ...biz, owner: e.target.value })} maxLength={120} placeholder="Ej: Mariel" autoComplete="given-name" />
@@ -340,7 +374,7 @@ export default function BienvenidaPage() {
                           <p className="text-[13px] text-muted">{ACCOUNT_HINT[a.kind]}</p>
                         </div>
                       </div>
-                      <MoneyInput value={balances[a.id] ?? 0} onChange={(v) => setBalances((b) => ({ ...b, [a.id]: v }))} aria-label={`Saldo de hoy en ${a.name}`} />
+                      <MoneyInput value={balanceOf(a)} onChange={(v) => setBalanceEdits((b) => ({ ...b, [a.id]: v }))} aria-label={`Saldo de hoy en ${a.name}`} />
                     </li>
                   )
                 })}
@@ -361,12 +395,12 @@ export default function BienvenidaPage() {
                 Con esto el sistema descuenta solo la comisión de cada venta. Dejamos valores típicos: <b className="text-ink">revisá lo que te cobra tu banco</b> o Mercado Pago.
               </p>
               <ul className="grid gap-2 sm:grid-cols-2">
-                {(fees ?? []).map((m) => (
+                {fees.map((m) => (
                   <li key={m.key} className="flex items-center gap-2 rounded-xl bg-cream/70 px-3 py-2">
                     <span className="min-w-0 flex-1 text-[14.5px] font-bold text-ink">{m.label}</span>
                     <NumberInput
                       value={m.fee_pct}
-                      onChange={(v) => setFees((f) => (f ?? []).map((x) => (x.key === m.key ? { ...x, fee_pct: v ?? 0 } : x)))}
+                      onChange={(v) => setFeeEdits((f) => ({ ...f, [m.key]: v ?? 0 }))}
                       suffix="%"
                       decimals={2}
                       className="w-28 shrink-0"

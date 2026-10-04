@@ -9,7 +9,7 @@ import type { CalculatorContext, MarginLevel, MarginVerdict } from '@shared/pric
 import { MARGIN_FAIR, MARGIN_HEALTHY, baseFromContext } from '@shared/pricing'
 import { Badge, Button, Field, NumberInput, ProductSelect, Select } from '@/components/ui'
 import type { GlossaryKey } from '@/lib/glossary'
-import { money as moneyBase, moneyCompact as moneyCompactBase, monthName, pct } from '@/lib/format'
+import { money as moneyBase, moneyCompact as moneyCompactBase, monthName, pct as pctBase, pctDelta as pctDeltaBase } from '@/lib/format'
 
 // ───────────────────────── Formatos ─────────────────────────
 
@@ -23,11 +23,22 @@ export function money(n: number | null | undefined, opts?: Parameters<typeof mon
 export function moneyCompact(n: number | null | undefined): string {
   return moneyCompactBase(n).replace(/ /g, '\u00a0')
 }
+/** pct() de lib/format sin que el "%" quede solo en el renglón de abajo. */
+export function pct(ratio: number | null | undefined, decimals?: number): string {
+  return pctBase(ratio, decimals).replace(/ %/g, '\u00a0%')
+}
+export function pctDelta(ratio: number | null | undefined): string {
+  return pctDeltaBase(ratio).replace(/ %/g, '\u00a0%')
+}
 
 // ───────────────────────── Valores de base ─────────────────────────
 
-/** Números de ejemplo para cuando todavía no hay ventas cargadas. */
-export const EXAMPLE = { cost: 6000, price: 10000, bottles: 400, fixed: 1_200_000, variable_pct: 10 }
+/**
+ * Números de ejemplo para cuando todavía no hay ventas cargadas: una vinoteca chica que gana
+ * poco (450 botellas → resultado $ 150.000 por mes; el equilibrio está en 400 botellas).
+ * Con un ejemplo que diera justo $ 0, el simulador y sus gráficos no mostrarían nada.
+ */
+export const EXAMPLE = { cost: 6000, price: 10000, bottles: 450, fixed: 1_200_000, variable_pct: 10 }
 
 export interface BaseNumbers {
   /** true = no hay ventas en los últimos 3 meses completos: los números son de ejemplo. */
@@ -272,7 +283,8 @@ export function ExampleNote({ base, children }: { base: BaseNumbers; children?: 
   if (!base.isExample) return null
   return (
     <Note tone="info" title="Estos números son de ejemplo">
-      {children ?? 'Todavía no hay ventas cargadas en los últimos 3 meses completos. Cuando cargues ventas y gastos, la calculadora se completa sola con tus promedios.'}
+      {children ??
+        'Todavía no hay ventas en los últimos 3 meses completos (el mes en curso cuenta recién cuando termina). Cuando cargues ventas y gastos, la calculadora se completa sola con tus promedios.'}
       <span className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
         <Link to="/ventas?nuevo=1" className="font-bold text-sky-deep hover:underline">
           Cargar una venta →
@@ -362,7 +374,28 @@ export function Ticket({
   )
 }
 
-export function TicketHero({ label, value, sub, badge, info }: { label: ReactNode; value: ReactNode; sub?: ReactNode; badge?: ReactNode; info?: ReactNode }) {
+/** Achica la letra de los números muy largos (ej: "$ 1.820.225.436.800") para que no se corten. */
+function bigNumberSize(value: ReactNode, sizes: [string, string, string]): string {
+  const len = typeof value === 'string' ? value.length : 0
+  return len > 17 ? sizes[2] : len > 12 ? sizes[1] : sizes[0]
+}
+
+export function TicketHero({
+  label,
+  value,
+  sub,
+  badge,
+  info,
+  valueClassName,
+}: {
+  label: ReactNode
+  value: ReactNode
+  sub?: ReactNode
+  badge?: ReactNode
+  info?: ReactNode
+  /** Color del número (ej: text-good / text-bad para resultados). */
+  valueClassName?: string
+}) {
   return (
     <div className="min-w-0">
       <p className="text-[14px] font-bold text-ink-soft">
@@ -370,7 +403,15 @@ export function TicketHero({ label, value, sub, badge, info }: { label: ReactNod
         {info && <span className="ml-1.5 inline-block align-[-2px]">{info}</span>}
       </p>
       <div className="mt-1.5 flex flex-wrap items-end gap-x-3 gap-y-2">
-        <p className="vh-num text-[2.5rem] leading-none font-extrabold tracking-tight text-ink sm:text-[2.9rem]">{value}</p>
+        <p
+          className={clsx(
+            'vh-num max-w-full min-w-0 leading-none font-extrabold tracking-tight [overflow-wrap:anywhere]',
+            bigNumberSize(value, ['text-[2.5rem] sm:text-[2.9rem]', 'text-[2rem] sm:text-[2.5rem]', 'text-[1.6rem] sm:text-[2rem]']),
+            valueClassName ?? 'text-ink',
+          )}
+        >
+          {value}
+        </p>
         {badge && <div className="pb-1">{badge}</div>}
       </div>
       {sub && <div className="mt-2.5 text-[14.5px] leading-snug text-ink-soft">{sub}</div>}
@@ -407,7 +448,7 @@ export function MiniStat({ label, value, sub, info, className }: { label: ReactN
         {label}
         {info && <span className="ml-1 inline-block align-[-3px]">{info}</span>}
       </p>
-      <p className="vh-num mt-1 text-[1.3rem] leading-none font-extrabold text-ink">{value}</p>
+      <p className={clsx('vh-num mt-1 leading-none font-extrabold text-ink [overflow-wrap:anywhere]', bigNumberSize(value, ['text-[1.3rem]', 'text-[1.1rem]', 'text-[0.95rem]']))}>{value}</p>
       {sub && <p className="mt-1 text-[12.5px] leading-snug text-muted">{sub}</p>}
     </div>
   )
@@ -521,7 +562,8 @@ export function MobileResult({ label, value, targetId }: { label: string; value:
   useEffect(() => {
     const el = document.getElementById(targetId)
     if (!el || typeof IntersectionObserver === 'undefined') return
-    const io = new IntersectionObserver(([e]) => setHidden(e.isIntersecting), { threshold: 0.15 })
+    // Se esconde apenas el resultado asoma por encima de la barra (los 110 px de abajo no cuentan).
+    const io = new IntersectionObserver(([e]) => setHidden(e.isIntersecting), { threshold: 0, rootMargin: '0px 0px -110px 0px' })
     io.observe(el)
     return () => io.disconnect()
   }, [targetId])

@@ -4,7 +4,6 @@ import type { Product } from '@shared/types'
 import { MARGIN_FAIR, MARGIN_HEALTHY, analyzePrice, suggestPrice, type CalculatorContext } from '@shared/pricing'
 import { round2, safeDiv } from '@shared/calc'
 import { Field, InfoTip, IntInput, MoneyInput } from '@/components/ui'
-import { pct } from '@/lib/format'
 import { useProducts } from '@/lib/queries'
 import {
   InputsCard,
@@ -25,6 +24,7 @@ import {
   feeFor,
   money,
   monthsText,
+  pct,
 } from './parts'
 
 export interface GananciaState {
@@ -39,7 +39,8 @@ export interface GananciaState {
 
 export function defaultGanancia(ctx: CalculatorContext): GananciaState {
   const b = baseNumbers(ctx)
-  return { productId: null, list: 'minorista', price: b.price, cost: b.cost, iibb: ctx.pricing.iibb_pct, feeKey: defaultFeeKey(ctx), units: ctx.units_per_box }
+  // Un precio "de góndola" redondo para arrancar (el promedio exacto con centavos confunde acá).
+  return { productId: null, list: 'minorista', price: Math.round(b.price), cost: round2(b.cost), iibb: ctx.pricing.iibb_pct, feeKey: defaultFeeKey(ctx), units: ctx.units_per_box }
 }
 
 const nf = (v: number, d = 2) => new Intl.NumberFormat('es-AR', { maximumFractionDigits: d }).format(v)
