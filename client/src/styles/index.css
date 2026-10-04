@@ -1,0 +1,224 @@
+@import 'tailwindcss';
+@import '@fontsource/londrina-solid/400.css';
+@import '@fontsource/londrina-solid/900.css';
+@import '@fontsource-variable/nunito/wght.css';
+@import '@fontsource/oswald/500.css';
+
+/*
+  VINOH! — sistema visual
+  Colores sacados del logo: coral (V y !), mostaza (I y H), naranja (N), celeste (O),
+  marrón de las líneas y la bajada "VIVÍ EL VINO", fondo crema.
+  Cada grupo del menú tiene su color: así "lo celeste es plata que entra" y
+  "lo coral es plata que sale" se aprende sin leer.
+*/
+@theme {
+  --color-cream: #fdfaf5;
+  --color-cream-deep: #f7f0e6;
+  --color-paper: #ffffff;
+  --color-ink: #3b2414;
+  --color-ink-soft: #6b5546;
+  --color-muted: #948172;
+  --color-line: #ece2d6;
+  --color-line-strong: #dccdbd;
+  --color-brown: #a9520f;
+  --color-brown-deep: #87400a;
+
+  --color-coral: #fd807e;
+  --color-coral-soft: #ffe7e5;
+  --color-coral-deep: #d9504e;
+  --color-mustard: #eecb63;
+  --color-mustard-soft: #fcf3d6;
+  --color-mustard-deep: #9a7410;
+  --color-orange: #f0953c;
+  --color-orange-soft: #fdebd8;
+  --color-orange-deep: #b9620f;
+  --color-sky: #7eb9e3;
+  --color-sky-soft: #e3f0fa;
+  --color-sky-deep: #2e74ad;
+
+  --color-good: #1d7f45;
+  --color-good-soft: #dff3e6;
+  --color-warn: #9a6400;
+  --color-warn-soft: #fdf0d2;
+  --color-bad: #c03434;
+  --color-bad-soft: #fde4e3;
+
+  --font-display: 'Londrina Solid', 'Arial Rounded MT Bold', system-ui, sans-serif;
+  --font-sans: 'Nunito Variable', 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-label: 'Oswald', 'Arial Narrow', system-ui, sans-serif;
+
+  --radius-card: 1.25rem;
+  --shadow-card: 0 1px 0 rgb(59 36 20 / 0.04), 0 10px 30px -18px rgb(59 36 20 / 0.25);
+  --shadow-pop: 0 18px 50px -12px rgb(59 36 20 / 0.35);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15.5px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-mustard) 60%, transparent);
+  }
+  :focus-visible {
+    outline: 2.5px solid var(--color-sky-deep);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Títulos de página: la letra del logo con un trazo de color translúcido detrás,
+     como las letras superpuestas de VINOH!. */
+  .vh-title {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    line-height: 1;
+    position: relative;
+    display: inline-block;
+    isolation: isolate;
+  }
+  .vh-title .vh-swash {
+    position: absolute;
+    left: -0.18em;
+    right: -0.22em;
+    bottom: 0.02em;
+    height: 0.5em;
+    border-radius: 0.3em 0.6em 0.4em 0.7em;
+    background: var(--swash, var(--color-mustard));
+    opacity: 0.55;
+    mix-blend-mode: multiply;
+    transform: rotate(-1.4deg);
+    z-index: -1;
+  }
+  /* Bajada con líneas, como "── VIVÍ EL VINO ──" en el logo. */
+  .vh-eyebrow {
+    font-family: var(--font-label);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    font-size: 0.72rem;
+    color: var(--color-brown);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .vh-eyebrow::before,
+  .vh-eyebrow::after {
+    content: '';
+    height: 1.5px;
+    background: var(--color-brown);
+    opacity: 0.55;
+    flex: 0 0 1.75rem;
+  }
+  .vh-label {
+    font-family: var(--font-label);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 0.68rem;
+    color: var(--color-muted);
+  }
+  .vh-card {
+    background: var(--color-paper);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .vh-num {
+    font-variant-numeric: tabular-nums;
+  }
+  .vh-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .vh-scroll::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 99px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+}
+
+@keyframes vh-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes vh-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes vh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.vh-anim-pop {
+  animation: vh-pop 0.18s ease-out both;
+}
+.vh-anim-fade {
+  animation: vh-fade 0.2s ease-out both;
+}
+
+@media print {
+  .vh-no-print {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+  .vh-card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}
