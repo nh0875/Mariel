@@ -229,7 +229,9 @@ export function loadDemoData(ref: string = todayFn()): { sales: number; purchase
     // Eventos
     const eventRows = EVENTS.map((e) => {
       const m = addMonths(startOfMonth(ref), -e.monthsAgo)
-      const date = `${monthKey(m)}-${String(e.day).padStart(2, '0')}`
+      let date = `${monthKey(m)}-${String(e.day).padStart(2, '0')}`
+      // Los domingos el local está cerrado en la simulación: el evento pasa al sábado.
+      if (parseISODate(date).getDay() === 0) date = addDays(date, -1)
       const id = run('INSERT INTO events (name, date, kind, location, attendees, ticket_price, budget, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
         e.name,
         date,

@@ -214,7 +214,7 @@ export interface BackupRow extends BackupInfo {
 }
 
 function describeBackup(b: BackupInfo): BackupRow {
-  const m = /^vinoh-(.+)-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.db$/.exec(b.file)
+  const m = /^vinoh-(.+?)-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}(?:-\d{3})?(?:-\d+)?\.db$/.exec(b.file)
   const kind = m ? m[1] : 'otra'
   return { ...b, kind, label: BACKUP_KIND_LABELS[kind] ?? 'Copia de seguridad' }
 }

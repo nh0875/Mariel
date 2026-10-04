@@ -28,7 +28,7 @@ interface SystemCounts {
 function Swashes() {
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-      <span className="absolute -top-36 -left-48 h-64 w-[26rem] -rotate-12 rounded-[42%_58%_55%_45%] bg-coral/35 mix-blend-multiply sm:-top-20 sm:-left-24" />
+      <span className="absolute -top-48 -left-56 h-64 w-[26rem] -rotate-12 rounded-[42%_58%_55%_45%] bg-coral/35 mix-blend-multiply sm:-top-20 sm:-left-24" />
       <span className="absolute top-[30rem] -right-52 h-56 w-[22rem] rotate-[18deg] rounded-[55%_45%_40%_60%] bg-sky/35 mix-blend-multiply sm:top-24 sm:-right-28" />
       <span className="absolute -bottom-36 -left-40 h-60 w-[24rem] rotate-6 rounded-[50%_50%_60%_40%] bg-mustard/45 mix-blend-multiply sm:-bottom-24 sm:-left-16" />
       <span className="absolute -right-44 -bottom-32 h-52 w-[20rem] -rotate-[10deg] rounded-[45%_55%_50%_50%] bg-orange/30 mix-blend-multiply sm:-right-20 sm:-bottom-16" />

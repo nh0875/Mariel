@@ -88,7 +88,8 @@ export function InfoTip({ term, title, text, className, size = 15 }: InfoTipProp
         onClick={(e) => {
           e.preventDefault()
           e.stopPropagation()
-          setOpen((o) => !o)
+          // En compu el mouse ya lo abrió: el clic no lo cierra. Se cierra con Esc o tocando afuera.
+          setOpen(true)
         }}
         className={clsx('inline-flex shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:text-brown focus-visible:text-brown', className)}
       >

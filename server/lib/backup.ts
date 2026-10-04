@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { BACKUP_DIR, DB_PATH, IN_MEMORY, closeDatabase, db } from '../db'
-import { today } from '../../shared/dates'
+import { today, toISODate } from '../../shared/dates'
 import { DatabaseSync } from 'node:sqlite'
 
 const KEEP = 30
@@ -24,8 +24,13 @@ function sqlQuote(s: string) {
 export function createBackup(label = 'manual'): string {
   if (IN_MEMORY) throw new Error('No hay base en disco')
   fs.mkdirSync(BACKUP_DIR, { recursive: true })
-  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
-  const file = path.join(BACKUP_DIR, `vinoh-${label}-${stamp}.db`)
+  // Fecha y hora LOCAL (así "auto de hoy" coincide con today()), con milisegundos para que
+  // dos copias en el mismo segundo no se pisen.
+  const d = new Date()
+  const p2 = (n: number, l = 2) => String(n).padStart(l, '0')
+  const stamp = `${toISODate(d)}-${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}-${p2(d.getMilliseconds(), 3)}`
+  let file = path.join(BACKUP_DIR, `vinoh-${label}-${stamp}.db`)
+  for (let i = 2; fs.existsSync(file); i++) file = path.join(BACKUP_DIR, `vinoh-${label}-${stamp}-${i}.db`)
   db().exec(`VACUUM INTO ${sqlQuote(file)}`)
   prune()
   return file
@@ -92,9 +97,11 @@ export function isValidVinohDb(file: string): boolean {
 export function restoreFromFile(sourceFile: string) {
   if (IN_MEMORY) throw new Error('No hay base en disco')
   if (!isValidVinohDb(sourceFile)) throw new Error('El archivo no es una copia de seguridad de VINOH! válida.')
-  createBackup('antes-de-restaurar')
+  // Primero copiamos la copia elegida: al guardar el "antes de restaurar" se borran las copias
+  // más viejas, y podría ser justo la que estamos restaurando.
   const tmp = DB_PATH + '.restoring'
   fs.copyFileSync(sourceFile, tmp)
+  createBackup('antes-de-restaurar')
   closeDatabase()
   for (const ext of ['-wal', '-shm']) {
     try {

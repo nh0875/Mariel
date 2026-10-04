@@ -40,10 +40,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         size="sm"
         footer={
           <>
-            <Button variant="ghost" onClick={() => close(false)}>
+            {/* Si la acción es peligrosa, el foco arranca en "Cancelar" (un Enter distraído no borra nada). */}
+            <Button variant="ghost" onClick={() => close(false)} data-autofocus={opts?.danger ? true : undefined}>
               {opts?.cancelText ?? 'Cancelar'}
             </Button>
-            <Button variant={opts?.danger ? 'danger' : 'primary'} onClick={() => close(true)} data-autofocus>
+            <Button variant={opts?.danger ? 'danger' : 'primary'} onClick={() => close(true)} data-autofocus={opts?.danger ? undefined : true}>
               {opts?.confirmText ?? 'Sí, dale'}
             </Button>
           </>

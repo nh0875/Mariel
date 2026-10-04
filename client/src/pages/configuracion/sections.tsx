@@ -1,6 +1,6 @@
 // Secciones de Configuración que se editan y guardan por separado (cada una manda solo sus claves).
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, ArrowRightLeft, Banknote, Boxes, CircleDollarSign, CreditCard, DollarSign, Landmark, Percent, Plus, QrCode, Store, Tags, Trash2, Wallet, type LucideIcon } from 'lucide-react'
 import type { AccountWithBalance, ExpenseCategorySetting, PaymentMethodSetting, Settings } from '@shared/types'
@@ -303,6 +303,7 @@ export function PaymentMethodsSection({ settings, onDirty }: { settings: Setting
 // ───────────────────────── Cuentas ─────────────────────────
 
 export function AccountsSection({ settings }: { settings: Settings }) {
+  const navigate = useNavigate()
   const { data: accounts, isLoading, error } = useAccounts()
   const active = (accounts ?? []).filter((a) => a.active)
   const total = active.reduce((s, a) => s + a.balance, 0)
@@ -323,11 +324,9 @@ export function AccountsSection({ settings }: { settings: Settings }) {
         </>
       }
       extraActions={
-        <Link to="/caja">
-          <Button size="sm" iconRight={ArrowRight}>
-            Administrar en Caja y bancos
-          </Button>
-        </Link>
+        <Button size="sm" iconRight={ArrowRight} onClick={() => navigate('/caja')}>
+          Administrar en Caja y bancos
+        </Button>
       }
     >
       {isLoading ? (
