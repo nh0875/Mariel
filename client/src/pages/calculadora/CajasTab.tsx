@@ -6,7 +6,7 @@ import type { Product } from '@shared/types'
 import { round2 } from '@shared/calc'
 import { MARGIN_FAIR, arsToUsd, boxDeal, usdToArs, type CalculatorContext } from '@shared/pricing'
 import { ChartCard, ResultChart } from '@/components/charts'
-import { Card, Field, InfoTip, IntInput, MoneyInput, NumberInput, ProductSelect } from '@/components/ui'
+import { Card, Field, InfoTip, IntInput, MoneyInput, NumberInput } from '@/components/ui'
 import { date, pct, usd } from '@/lib/format'
 import {
   InputsCard,
@@ -20,6 +20,7 @@ import {
   TicketHero,
   TicketRow,
   VerdictBadge,
+  WinePicker,
   baseNumbers,
   defaultFeeKey,
   feeFor,
@@ -86,11 +87,7 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
           title="Una caja con descuento"
           subtitle="Ej: «llevando 6, 10 % off». ¿Cuánto te queda y hasta dónde podés descontar?"
           onReset={onReset}
-          note={
-            <Field label="Elegí un vino (opcional)" hint="Trae su precio minorista, su costo y cuántas botellas trae la caja.">
-              <ProductSelect value={state.productId} onChange={pick} placeholder="Buscá un vino de tu lista…" />
-            </Field>
-          }
+          note={<WinePicker value={state.productId} onChange={pick} hint="Trae su precio minorista, su costo y cuántas botellas trae la caja." />}
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Precio por botella" hint="El de lista, sin descuento.">
@@ -103,7 +100,15 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
           <Field label="Botellas por caja" error={(state.units ?? 0) < 1 ? 'La caja tiene que tener al menos 1 botella.' : undefined}>
             <IntInput value={state.units} onChange={(v) => set({ units: v })} suffix="bot." aria-label="Botellas por caja" />
           </Field>
-          <SliderField label="Descuento de la caja" hint="Sobre el precio de lista de toda la caja." value={state.discount} onChange={(v) => set({ discount: v })} min={0} max={40} ticks={['0 %', '20 %', '40 %']} />
+          <SliderField
+            label="Descuento de la caja"
+            hint="Sobre el precio de lista de toda la caja."
+            value={state.discount}
+            onChange={(v) => set({ discount: v })}
+            min={0}
+            max={40}
+            ticks={['0 %', '20 %', '40 %']}
+          />
           <div className="grid gap-4 sm:grid-cols-2">
             <PercentField label="Ingresos Brutos" info="iibb" value={state.iibb} onChange={(v) => set({ iibb: v })} max={20} />
             <PaymentMethodField ctx={ctx} value={state.feeKey} onChange={(feeKey) => set({ feeKey })} />
@@ -116,12 +121,12 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
             <TicketHero
               label="Te queda por caja"
               info={<InfoTip title="Lo que te queda por caja" text="Precio de la caja con descuento − costo de las botellas − Ingresos Brutos − comisión." />}
-              value={d.ok ? money(d.profit) : '—'}
-              badge={d.ok ? <VerdictBadge verdict={d.verdict} large /> : undefined}
+              value={d.ok ? money(d.profit, { decimals: 0 }) : '—'}
+              badge={d.ok && (state.cost ?? 0) > 0 ? <VerdictBadge verdict={d.verdict} large /> : undefined}
               sub={
                 d.ok ? (
                   <>
-                    Un <b className="text-ink">{pct(d.margin)}</b> de lo que cobrás. Sin descuento te quedaban {money(d.profit + d.profit_lost)} ({pct(d.margin_without_discount)}).
+                    Un <b className="text-ink">{pct(d.margin)}</b> de lo que cobrás. Sin descuento te quedaban {money(d.profit + d.profit_lost, { decimals: 0 })} ({pct(d.margin_without_discount)}).
                   </>
                 ) : (
                   d.error
@@ -141,24 +146,39 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
           {d.ok && (
             <>
               <div className="mt-5 grid grid-cols-2 gap-2.5">
-                <MiniStat label="Por botella" value={money(d.profit_per_bottle)} sub={`Antes: ${money((d.profit + d.profit_lost) / Math.max(1, d.units))}`} />
+                <MiniStat label="Por botella" value={money(d.profit_per_bottle, { decimals: 0 })} sub={`Sin descuento: ${money((d.profit + d.profit_lost) / Math.max(1, d.units), { decimals: 0 })}`} />
                 <MiniStat
                   label="El descuento te cuesta"
-                  info={<InfoTip title="Lo que te cuesta el descuento" text="Lo que dejás de ganar con la caja por hacer el descuento. Tiene sentido si te hace vender más botellas (o vender antes un vino que está parado)." />}
-                  value={money(d.profit_lost)}
+                  info={
+                    <InfoTip
+                      title="Lo que te cuesta el descuento"
+                      text="Lo que dejás de ganar con la caja por hacer el descuento. Tiene sentido si te hace vender más botellas (o vender antes un vino que está parado)."
+                    />
+                  }
+                  value={money(d.profit_lost, { decimals: 0 })}
                   sub="de ganancia por caja"
                 />
               </div>
-              <Note tone={d.profit < 0 ? 'bad' : overMax ? 'warn' : 'good'} className="mt-4" title="¿Hasta dónde podés descontar?">
-                {d.max_discount_pct > 0 ? (
-                  <>
-                    Hasta <b>{nf(d.max_discount_pct)} %</b> de descuento te sigue quedando un {pct(MARGIN_FAIR, 0)} de margen.{' '}
-                  </>
-                ) : (
-                  <>Sin descuento ya te queda menos de {pct(MARGIN_FAIR, 0)}: en este vino no conviene descontar. </>
-                )}
-                Con más de <b>{nf(d.break_even_discount_pct)} %</b> perdés plata con la caja.
-              </Note>
+              {(state.cost ?? 0) <= 0 ? (
+                <Note tone="warn" className="mt-4" title="Falta el costo">
+                  Sin el costo de la botella no podemos decirte hasta dónde descontar. Escribilo arriba o elegí un vino de tu lista.
+                </Note>
+              ) : d.margin_without_discount <= 0 ? (
+                <Note tone="bad" className="mt-4" title="¿Hasta dónde podés descontar?">
+                  Ni siquiera sin descuento te queda algo: con este precio ya perdés plata en cada caja. Revisá el precio en «¿A cuánto lo vendo?» antes de pensar en promos.
+                </Note>
+              ) : (
+                <Note tone={d.profit < 0 ? 'bad' : overMax ? 'warn' : 'good'} className="mt-4" title="¿Hasta dónde podés descontar?">
+                  {d.max_discount_pct > 0 ? (
+                    <>
+                      Hasta <b>{nf(d.max_discount_pct)} %</b> de descuento te sigue quedando un {pct(MARGIN_FAIR, 0)} de margen.{' '}
+                    </>
+                  ) : (
+                    <>Sin descuento ya te queda menos de {pct(MARGIN_FAIR, 0)}: en este vino no conviene descontar. </>
+                  )}
+                  Con más de <b>{nf(d.break_even_discount_pct)} %</b> perdés plata con la caja.
+                </Note>
+              )}
             </>
           )}
         </Ticket>
@@ -183,8 +203,8 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
 
       <Card
         title={
-          <span className="inline-flex items-center gap-1.5">
-            Pesos ↔ dólares <InfoTip term="dolar" />
+          <span>
+            Pesos ↔ dólares <InfoTip term="dolar" className="align-[-2px]" />
           </span>
         }
         subtitle="Para tener una referencia en dólares (ej: precios de bodegas o comparar en el tiempo). Escribí en cualquiera de los dos campos."
@@ -219,7 +239,15 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
           </Field>
           <ArrowRightLeft size={20} className="mt-10 hidden justify-self-center text-muted sm:block" aria-hidden />
           <Field label="Dólares">
-            <NumberInput value={usdValue} onChange={(v) => set({ convAmount: v, convDir: 'usd' })} prefix="US$" decimals={2} inputClassName="pl-12" aria-label="Monto en dólares" placeholder={rate > 0 ? '0' : 'Falta la cotización'} />
+            <NumberInput
+              value={usdValue}
+              onChange={(v) => set({ convAmount: v, convDir: 'usd' })}
+              prefix="US$"
+              decimals={2}
+              inputClassName="pl-12"
+              aria-label="Monto en dólares"
+              placeholder={rate > 0 ? '0' : 'Falta la cotización'}
+            />
           </Field>
         </div>
         {!(rate > 0) && (
@@ -229,7 +257,7 @@ export function CajasTab({ ctx, state, set, onReset }: { ctx: CalculatorContext;
         )}
       </Card>
 
-      <MobileResult label="Te queda por caja" value={d.ok ? money(d.profit) : '—'} targetId="calc-cajas-resultado" />
+      <MobileResult label="Te queda por caja" value={d.ok ? money(d.profit, { decimals: 0 }) : '—'} targetId="calc-cajas-resultado" />
     </div>
   )
 }

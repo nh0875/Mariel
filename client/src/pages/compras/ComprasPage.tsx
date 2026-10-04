@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { FilterX, Plus, ShoppingBasket } from 'lucide-react'
 import { CHART_COLORS } from '@shared/constants'
+import type { Supplier } from '@shared/types'
 import { safeDiv } from '@shared/calc'
 import { boxes, bottles as fmtBottles, date as fmtDate, dateShort, int, money, pct, relativeDays } from '@/lib/format'
 import { useNewParam } from '@/lib/hooks'
@@ -30,11 +31,12 @@ import {
 import { ChartCard, ColumnChart, Legend, RankBars } from '@/components/charts'
 import { PurchaseFormModal } from './PurchaseFormModal'
 import { PurchaseDetailModal } from './PurchaseDetailModal'
-import { CompareBar, Kpi, nb, tileMoney } from './parts'
+import { CompareBar, Kpi, dePhrase, nb, periodPhrase, tileMoney } from './parts'
 import { PURCHASE_COLOR, STATUS_FILTER_OPTIONS, itemsSummary, statusText, type PurchaseDetailOut, type PurchaseListRow, type PurchasesSummary, type StatusFilter } from './types'
 
 export default function ComprasPage() {
-  const { period, label: periodLabel } = usePeriod()
+  const { period, label: periodLabel, preset } = usePeriod()
+  const inPeriod = periodPhrase(preset, periodLabel)
   const [params, setParams] = useSearchParams()
   const [newOpen, openNew, closeNew] = useNewParam()
   const [presetSupplier, setPresetSupplier] = useState<number | null>(null)
@@ -80,9 +82,24 @@ export default function ComprasPage() {
   }
 
   const summary = useApi<PurchasesSummary>('/purchases/summary', { from: period.from, to: period.to })
-  const filters = { ...period, status: status || undefined, supplier_id: supplierId ?? undefined }
+  // "Por pagar" y "Vencidas" muestran TODO lo que debés, de cualquier fecha (como la tarjeta «Les debés»):
+  // una factura de hace dos meses que todavía no pagaste también es deuda de hoy.
+  const allDates = status === 'por_pagar' || status === 'vencida'
+  const filters = { ...(allDates ? {} : period), status: status || undefined, supplier_id: supplierId ?? undefined }
   const list = useApi<PurchaseListRow[]>('/purchases', filters)
   const { data: suppliers = [] } = useSuppliers()
+  // En el filtro solo tienen sentido los proveedores de vino o los que ya tienen compras (no el contador ni la inmobiliaria).
+  const supplierOptions = useMemo(
+    () =>
+      (suppliers as (Supplier & { purchases_count?: number })[])
+        .filter((x) => (x.purchases_count ?? 0) > 0 || x.kind === 'bodega' || x.kind === 'distribuidor' || x.id === supplierId)
+        .map((x) => ({ value: x.id, label: x.name, sublabel: x.active ? undefined : 'Desactivado' })),
+    [suppliers, supplierId],
+  )
+  const showOwed = (which: 'por_pagar' | 'vencida') => {
+    setStatus(which)
+    window.setTimeout(() => document.getElementById('compras-tabla')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
 
   const s = summary.data
   const rows = list.data ?? []
@@ -128,6 +145,7 @@ export default function ComprasPage() {
       cell: (r) => (
         <>
           <span className="font-bold">{money(r.total)}</span>
+          {r.status === 'parcial' && <span className="block text-[12px] whitespace-nowrap text-ink-soft">falta {money(r.balance)}</span>}
           <span className="mt-1 block sm:hidden">
             <StatusBadge status={r.status} overdue={r.overdue} />
           </span>
@@ -218,7 +236,7 @@ export default function ComprasPage() {
         <PeriodPicker />
         {s && s.count > 0 && (
           <p className="text-[13.5px] text-ink-soft">
-            {int(s.count)} {s.count === 1 ? 'compra' : 'compras'} en {periodLabel.toLowerCase()}
+            {int(s.count)} {s.count === 1 ? 'compra' : 'compras'} en {inPeriod}
           </p>
         )}
       </div>
@@ -298,6 +316,14 @@ export default function ComprasPage() {
                     ) : s.payables.next_due ? (
                       <> · próximo vencimiento {nb(dateShort(s.payables.next_due))}</>
                     ) : null}
+                    {' · '}
+                    <button
+                      type="button"
+                      className="font-bold whitespace-nowrap text-sky-deep hover:underline"
+                      onClick={() => showOwed(s.payables.overdue_count > 0 ? 'vencida' : 'por_pagar')}
+                    >
+                      Ver cuáles
+                    </button>
                   </>
                 )
               }
@@ -307,7 +333,7 @@ export default function ComprasPage() {
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <ChartCard
               title="Compras por proveedor"
-              subtitle={topSupplier ? `A quién le compraste más en ${periodLabel.toLowerCase()}.` : 'A quién le compraste en el período.'}
+              subtitle={topSupplier ? `A quién le compraste más en ${inPeriod}.` : 'A quién le compraste en el período.'}
               table={{
                 columns: [
                   { key: 'name', header: 'Proveedor' },
@@ -325,9 +351,9 @@ export default function ComprasPage() {
                 max={6}
                 emptyText="No cargaste compras en este período."
               />
-              {s.by_supplier.length > 6 && <p className="mt-3 text-[12.5px] text-muted">Mostramos los 6 principales. Tocá «Ver tabla» para ver todos.</p>}
+              {s.by_supplier.length > 6 && <p className="mt-3 px-2 text-[12.5px] text-muted sm:px-1">Mostramos los 6 principales. Tocá «Ver tabla» para ver todos.</p>}
               {topSupplier && s.by_supplier.length > 1 && (
-                <p className="mt-3 text-[13px] text-ink-soft">
+                <p className="mt-3 px-2 text-[13px] text-ink-soft sm:px-1">
                   <b className="text-ink">{topSupplier.name}</b> se lleva el {pct(safeDiv(topSupplier.total, s.total), 0)} de tus compras.
                   {safeDiv(topSupplier.total, s.total) > 0.6 && ' Depender mucho de un proveedor te deja con poco margen para negociar.'}
                 </p>
@@ -341,7 +367,7 @@ export default function ComprasPage() {
                   <InfoTip term="cmv" />
                 </span>
               }
-              subtitle={`Lo que compraste vs. lo que salió vendido (a costo) en ${periodLabel.toLowerCase()}.`}
+              subtitle={`Lo que compraste vs. lo que salió vendido (a costo) en ${inPeriod}.`}
             >
               <div className="space-y-3.5">
                 <CompareBar label="Compraste (entró al stock)" value={s.total} max={compareMax} color={PURCHASE_COLOR} />
@@ -353,15 +379,15 @@ export default function ComprasPage() {
                   'En este período no hubo compras ni ventas de vino.'
                 ) : stockChange >= 0 ? (
                   <>
-                    Tu stock (a costo) <b className="text-ink">creció ≈ {money(stockChange, { decimals: 0 })}</b>: esa plata no se perdió, está en botellas esperando venderse.
+                    Tu stock (a costo) <b className="text-ink">creció ≈ {nb(money(stockChange, { decimals: 0 }))}</b>: esa plata no se perdió, está en botellas esperando venderse.
                   </>
                 ) : (
                   <>
-                    Tu stock (a costo) <b className="text-ink">bajó ≈ {money(-stockChange, { decimals: 0 })}</b>: vendiste más de lo que repusiste. Fijate que no te falten tus
+                    Tu stock (a costo) <b className="text-ink">bajó ≈ {nb(money(-stockChange, { decimals: 0 }))}</b>: vendiste más de lo que repusiste. Fijate que no te falten tus
                     vinos más vendidos.
                   </>
                 )}{' '}
-                En tu ganancia cuenta el costo de lo vendido ({money(s.cogs, { decimals: 0 })}), no lo que compraste.
+                En tu ganancia cuenta el costo de lo vendido ({nb(money(s.cogs, { decimals: 0 }))}), no lo que compraste.
               </p>
               <p className="mt-3 flex flex-wrap items-center gap-x-1.5 rounded-xl bg-cream-deep px-3.5 py-2.5 text-[13.5px] text-ink-soft">
                 Hoy tenés <b className="vh-num text-ink">{money(s.stock_value.value, { decimals: 0 })}</b> invertidos en {int(s.stock_value.bottles)} botellas
@@ -411,7 +437,17 @@ export default function ComprasPage() {
         </>
       )}
 
-      <Card className="mt-4" title="Todas las compras" subtitle="Tocá una compra para ver el detalle, registrar un pago, editarla o borrarla." flush>
+      <Card
+        id="compras-tabla"
+        className="mt-4 scroll-mt-4"
+        title={allDates ? (status === 'vencida' ? 'Compras vencidas' : 'Compras por pagar') : `Compras ${dePhrase(inPeriod)}`}
+        subtitle={
+          allDates
+            ? 'Todas las que tienen saldo, de cualquier fecha (no solo del período). Tocá una para registrar el pago.'
+            : 'Tocá una compra para ver el detalle, registrar un pago, editarla o borrarla.'
+        }
+        flush
+      >
         <div className="px-4 pb-4 sm:px-5 sm:pb-5">
           {list.error ? (
             <ErrorState error={list.error} onRetry={() => list.refetch()} />
@@ -437,7 +473,7 @@ export default function ComprasPage() {
                     placeholder="Cualquier proveedor"
                     searchPlaceholder="Buscar proveedor…"
                     emptyText="No hay proveedores con ese nombre."
-                    options={suppliers.map((x) => ({ value: x.id, label: x.name }))}
+                    options={supplierOptions}
                   />
                   {filtersOn && (
                     <Button size="sm" variant="ghost" icon={FilterX} onClick={clearFilters} className="col-span-2 justify-self-start">
@@ -447,22 +483,26 @@ export default function ComprasPage() {
                 </div>
               }
               empty={
-                filtersOn ? (
+                allDates && !supplierId ? (
+                  <EmptyState compact icon={ShoppingBasket} title={status === 'vencida' ? 'No tenés compras vencidas' : 'No le debés nada a ningún proveedor'} action={<Button onClick={clearFilters}>Ver todas las compras</Button>}>
+                    {status === 'vencida' ? 'Todas las compras con saldo están dentro de su plazo. ¡Bien ahí!' : 'Todas las compras están pagadas. ¡Al día!'}
+                  </EmptyState>
+                ) : filtersOn ? (
                   <EmptyState compact icon={FilterX} title="No hay compras con esos filtros" action={<Button onClick={clearFilters}>Limpiar filtros</Button>}>
-                    Probá con otro estado o proveedor, o cambiá el período de arriba.
+                    Probá con otro estado o proveedor{allDates ? '' : ', o cambiá el período de arriba'}.
                   </EmptyState>
                 ) : (
                   <EmptyState
                     icon={ShoppingBasket}
-                    title="Todavía no hay compras en este período"
+                    title={s && !s.first_purchase_date ? 'Todavía no cargaste ninguna compra' : 'No hay compras en este período'}
                     action={
                       <Button icon={Plus} onClick={openNew}>
-                        Cargar una compra
+                        {s && !s.first_purchase_date ? 'Cargar la primera compra' : 'Cargar una compra'}
                       </Button>
                     }
                   >
                     Cuando te llegue vino, cargá la factura: elegís el proveedor, los vinos, cuántas botellas y a cuánto. El stock y el costo de cada botella se actualizan solos.
-                    Si buscás compras viejas, cambiá el período de arriba.
+                    {s?.first_purchase_date ? ` Tu primera compra cargada es del ${fmtDate(s.first_purchase_date)}: si buscás compras viejas, cambiá el período de arriba.` : ''}
                   </EmptyState>
                 )
               }
@@ -470,7 +510,16 @@ export default function ComprasPage() {
           )}
           {rows.length > 0 && totals.balance > 0.01 && (
             <p className="mt-3 text-[13px] text-ink-soft">
-              De estas compras falta pagar <b className="text-ink">{money(totals.balance)}</b>. Elegí «Por pagar» en el filtro para verlas juntas.
+              De estas compras falta pagar <b className="text-ink">{nb(money(totals.balance))}</b>.
+              {!allDates && (
+                <>
+                  {' '}
+                  <button type="button" className="font-bold text-sky-deep hover:underline" onClick={() => showOwed('por_pagar')}>
+                    Ver todo lo que debés
+                  </button>{' '}
+                  (de cualquier fecha).
+                </>
+              )}
             </p>
           )}
         </div>

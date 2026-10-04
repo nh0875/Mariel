@@ -11,7 +11,7 @@ import { round2, safeDiv } from '@shared/calc'
 import { addDays, today } from '@shared/dates'
 import type { AccountWithBalance, Product } from '@shared/types'
 import { api } from '@/lib/api'
-import { boxes, bottles as fmtBottles, date as fmtDate, int, money, pct } from '@/lib/format'
+import { boxes, bottles as fmtBottles, date as fmtDate, dateShort, int, money, pct } from '@/lib/format'
 import { useApi, useApiMutation, useSettings } from '@/lib/queries'
 import {
   AccountSelect,
@@ -31,7 +31,7 @@ import {
   useConfirm,
 } from '@/components/ui'
 import { SectionTitle, SummaryLine } from './parts'
-import { landedCosts, newAverageCost, type PurchaseDetailOut } from './types'
+import { landedCosts, newAverageCost, type LastPrice, type PurchaseDetailOut } from './types'
 
 // ───────────────────────── Estado del formulario ─────────────────────────
 
@@ -140,16 +140,31 @@ export function PurchaseFormModal({
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products])
   const originalItem = useMemo(() => new Map((purchase?.items ?? []).map((i) => [i.product_id, i])), [purchase])
 
-  // Si el vino preseleccionado (?vino=ID) llega después de abrir, completamos su costo.
+  // Precio sugerido para cada vino: el de su última factura (mejor si es del mismo proveedor).
+  // No usamos el costo promedio como primera opción porque ya incluye el flete de compras anteriores:
+  // si lo tomáramos como precio de factura, el flete se contaría dos veces y el costo subiría solo.
+  const lastPricesQ = useApi<LastPrice[]>('/purchases/last-prices', f.supplierId ? { supplier_id: f.supplierId } : undefined, { enabled: open && !editing })
+  const lastByProduct = useMemo(() => new Map((lastPricesQ.data ?? []).map((l) => [l.product_id, l])), [lastPricesQ.data])
+  const suggestedCost = (productId: number | null, prod?: Product | null): number | null => {
+    if (productId == null) return null
+    const last = lastByProduct.get(productId)
+    if (last) return round2(last.unit_cost)
+    const p = prod ?? productById.get(productId)
+    return p && p.unit_cost > 0 ? round2(p.unit_cost) : null
+  }
+
+  // Completar (o actualizar) el precio sugerido de los renglones que no tocaste: cuando llegan los datos,
+  // cuando viene un vino preseleccionado (?vino=ID) o cuando cambiás de proveedor.
   useEffect(() => {
-    if (!open) return
+    if (!open || editing || lastPricesQ.isFetching) return
     setF((s) => {
       let changed = false
       const rows = s.rows.map((r) => {
-        const p = r.productId ? productById.get(r.productId) : undefined
-        if (p && r.autoCost && r.cost == null && p.unit_cost > 0) {
+        if (!r.autoCost || r.productId == null) return r
+        const next = suggestedCost(r.productId)
+        if (next != null && next !== r.cost) {
           changed = true
-          return { ...r, cost: round2(p.unit_cost) }
+          return { ...r, cost: next }
         }
         return r
       })
@@ -159,7 +174,8 @@ export function PurchaseFormModal({
       if (JSON.stringify(s) === initialRef.current) initialRef.current = JSON.stringify(next)
       return next
     })
-  }, [open, productById])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, productById, lastByProduct, lastPricesQ.isFetching])
 
   const set = (patch: Partial<FormState>) => setF((s) => ({ ...s, ...patch }))
   const setRow = (key: number, patch: Partial<Row>) => setF((s) => ({ ...s, rows: s.rows.map((r) => (r.key === key ? { ...r, ...patch } : r)) }))
@@ -217,7 +233,8 @@ export function PurchaseFormModal({
         invoice_number: f.invoice.trim() || null,
         items: filled.map((r) => ({ product_id: r.productId, qty: r.qty ?? 1, unit_cost: r.cost ?? 0 })),
         shipping: f.shipping ?? 0,
-        due_date: f.paid === 'no' ? f.dueDate || null : null,
+        // Si está pagada, el vencimiento ya no importa, pero no lo borramos al editar (era «a 30 días», por ejemplo).
+        due_date: f.paid === 'no' ? f.dueDate || null : (purchase?.due_date ?? null),
         notes: f.notes.trim() || null,
         paid: f.paid === 'si',
         account_id: f.paid === 'si' ? accountId : null,
@@ -284,12 +301,22 @@ export function PurchaseFormModal({
     if (!purchase) return null
     if (purchase.status === 'pagado' && f.paid === 'no')
       return { tone: 'warn', text: `Esta compra figura pagada. Si elegís «No», se borran sus pagos (${money(purchase.paid)}) de la caja y vuelve a quedar por pagar.` }
-    if (purchase.status === 'pagado' && f.paid === 'si') return { tone: 'info', text: 'Sigue pagada: si cambia el total, el pago se actualiza solo al nuevo total.' }
-    if (purchase.status === 'parcial' && f.paid === 'si')
+    if (purchase.status === 'pagado' && f.paid === 'si')
       return {
         tone: 'info',
-        text: `Tenía pagos parciales por ${money(purchase.paid)}. Al marcarla pagada se reemplazan por un único pago por el total, desde la cuenta que elijas.`,
+        text:
+          purchase.payments.length > 1
+            ? 'Sigue pagada: sus pagos se mantienen con sus fechas. Si cambia el total, se ajusta el último pago.'
+            : 'Sigue pagada: el pago se mantiene con su fecha. Si cambia el total, el pago se ajusta solo al nuevo total.',
       }
+    if (purchase.status === 'parcial' && f.paid === 'si') {
+      const lastDate = purchase.payments[purchase.payments.length - 1]?.date ?? f.date
+      const restDate = f.date && lastDate < f.date ? f.date : lastDate
+      return {
+        tone: 'info',
+        text: `Se mantienen los pagos que ya registraste (${money(purchase.paid)}) y se agrega uno por lo que falta (${money(Math.max(calc.total - purchase.paid, 0))}) con fecha ${fmtDate(restDate)}, desde la cuenta que elijas. Si lo pagaste otro día, mejor usá «Registrar pago» desde el detalle.`,
+      }
+    }
     if (purchase.status === 'parcial' && f.paid === 'no')
       return { tone: 'info', text: `Se mantienen los pagos que ya registraste (${money(purchase.paid)}). El resto queda por pagar.` }
     return null
@@ -395,7 +422,7 @@ export function PurchaseFormModal({
                                 onChange={(id, prod: Product | null) =>
                                   setRow(r.key, {
                                     productId: id,
-                                    cost: r.autoCost || r.cost == null ? (prod && prod.unit_cost > 0 ? round2(prod.unit_cost) : null) : r.cost,
+                                    cost: r.autoCost || r.cost == null ? suggestedCost(id, prod) : r.cost,
                                     autoCost: r.autoCost || r.cost == null,
                                   })
                                 }
@@ -450,7 +477,14 @@ export function PurchaseFormModal({
                             <span className="sm:hidden text-muted">Subtotal {money(rowSub)}</span>
                           </div>
                           {p && r.autoCost && r.cost != null && !costErr && (
-                            <p className="mt-0.5 px-0.5 text-[12.5px] text-muted">Completamos el precio con tu costo actual: cambialo por el de la factura.</p>
+                            <p className="mt-0.5 px-0.5 text-[12.5px] text-muted">
+                              {(() => {
+                                const last = lastByProduct.get(p.id)
+                                if (last && round2(last.unit_cost) === r.cost)
+                                  return `Completamos con el precio de tu última compra${last.same_supplier ? ' a este proveedor' : last.supplier_name ? ` (a ${last.supplier_name})` : ''}, del ${dateShort(last.date)}: si la factura dice otro, cambialo.`
+                                return 'Completamos con tu costo actual (ya incluye fletes anteriores): poné el precio de la factura.'
+                              })()}
+                            </p>
                           )}
                           {r.cost === 0 && r.productId != null && (
                             <p className="mt-0.5 px-0.5 text-[12.5px] text-muted">Va sin cargo (bonificado): solo le toca su parte del flete.</p>
@@ -703,7 +737,25 @@ export function PurchaseFormModal({
                 {f.paid === 'si' ? (
                   <>
                     <Banknote size={14} className="mr-1 inline align-[-2px] text-good" aria-hidden />
-                    Sale de <b className="text-ink">{accountName ?? 'la cuenta de transferencias'}</b> el {fmtDate(f.date || today())}.
+                    {purchase && purchase.payments.length > 0 ? (
+                      purchase.status === 'pagado' ? (
+                        <>
+                          Ya está pagada
+                          {purchase.payments.length === 1 && (
+                            <> el {fmtDate(purchase.payments[0].date === purchase.date ? f.date || purchase.date : purchase.payments[0].date)}</>
+                          )}{' '}
+                          desde <b className="text-ink">{accountName ?? 'tu cuenta'}</b>.
+                        </>
+                      ) : (
+                        <>
+                          Se completa el pago desde <b className="text-ink">{accountName ?? 'la cuenta de transferencias'}</b>.
+                        </>
+                      )
+                    ) : (
+                      <>
+                        Sale de <b className="text-ink">{accountName ?? 'la cuenta de transferencias'}</b> el {fmtDate(f.date || today())}.
+                      </>
+                    )}
                   </>
                 ) : (
                   <>

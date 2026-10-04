@@ -8,17 +8,8 @@ import { CHART_COLORS } from '@shared/constants'
 import type { Product } from '@shared/types'
 import { round2 } from '@shared/calc'
 import type { ProductInput } from '@shared/schemas'
-import {
-  WHOLESALE_MIN_MARGIN,
-  analyzePrice,
-  markupTrap,
-  reviewPrices,
-  suggestPrice,
-  wholesaleFromRetail,
-  type CalculatorContext,
-  type PriceReviewRow,
-} from '@shared/pricing'
-import { Button, Card, DataTable, EmptyState, ExportButton, Field, InfoTip, MoneyInput, ProductSelect, useConfirm, type Column } from '@/components/ui'
+import { WHOLESALE_MIN_MARGIN, analyzePrice, markupTrap, reviewPrices, suggestPrice, wholesaleFromRetail, type CalculatorContext, type PriceReviewRow } from '@shared/pricing'
+import { Button, Card, DataTable, EmptyState, ExportButton, Field, InfoTip, MoneyInput, useConfirm, type Column } from '@/components/ui'
 import { api } from '@/lib/api'
 import { pct, pctDelta } from '@/lib/format'
 import { useApiMutation, useProducts } from '@/lib/queries'
@@ -37,6 +28,7 @@ import {
   TicketHero,
   TicketRow,
   VerdictBadge,
+  WinePicker,
   baseNumbers,
   defaultFeeKey,
   feeFor,
@@ -110,7 +102,7 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
     success: (_res, v) => `Listo: ${v.p.name} ahora sale ${money(v.retail)} (mayorista ${money(v.wholesale)}).`,
   })
 
-  const usePrice = async () => {
+  const applyPrice = async () => {
     if (!product || !r.ok) return
     const ok = await confirm({
       title: `¿Cambiar el precio de ${product.name}?`,
@@ -142,11 +134,7 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
         <InputsCard
           subtitle="Cambiá cualquier número y el precio se recalcula al toque."
           onReset={onReset}
-          note={
-            <Field label="Elegí un vino (opcional)" hint="Trae su costo actual, que ya incluye el flete de las compras. También podés escribir un costo a mano.">
-              <ProductSelect value={state.productId} onChange={pickProduct} showCost placeholder="Buscá un vino de tu lista…" />
-            </Field>
-          }
+          note={<WinePicker value={state.productId} onChange={pickProduct} showCost hint="Trae su costo actual, que ya incluye el flete de las compras. También podés escribir un costo a mano." />}
         >
           {product && (
             <p className="-mt-1 rounded-xl bg-cream px-3.5 py-2.5 text-[14px] text-ink-soft">
@@ -161,7 +149,17 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
             </p>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Costo por botella" info="costo_promedio" hint={state.productId ? 'Costo promedio actual del vino.' : 'Lo que te cuesta cada botella puesta en el depósito.'}>
+            <Field
+              label="Costo por botella"
+              info="costo_promedio"
+              hint={
+                state.productId
+                  ? 'Costo promedio actual del vino.'
+                  : ctx.has_data
+                    ? 'Arranca con el costo promedio de lo que vendiste. Escribí el de tu vino o elegilo arriba.'
+                    : 'Es un costo de ejemplo: escribí el tuyo o elegí un vino arriba.'
+              }
+            >
               <MoneyInput value={state.cost} onChange={(v) => set({ cost: v })} aria-label="Costo por botella" />
             </Field>
             <Field label="Flete por botella" info="flete_prorrateado" hint="Solo si no está incluido en el costo.">
@@ -171,7 +169,12 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
           <SliderField
             label="Margen que querés que te quede"
             info="margen_vs_markup"
-            hint="De cada $ 100 que cobrás, cuánto te queda después de pagar el vino, Ingresos Brutos y la comisión."
+            hint={
+              <>
+                De cada $&nbsp;100 que cobrás, cuánto te queda después de pagar el vino, Ingresos Brutos y la comisión. Ojo: en Configuración y en «Vinos y stock» el margen se mide{' '}
+                <b className="text-ink-soft">antes</b> de esos dos descuentos, por eso acá el precio da un poco más alto.
+              </>
+            }
             value={state.margin}
             onChange={(v) => set({ margin: v })}
             min={0}
@@ -232,7 +235,7 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
                       </>
                     )}
                   </p>
-                  <Button variant="primary" icon={Check} onClick={usePrice} loading={save.isPending} disabled={sameAsCurrent}>
+                  <Button variant="primary" icon={Check} onClick={applyPrice} loading={save.isPending} disabled={sameAsCurrent}>
                     Usar este precio
                   </Button>
                 </div>
@@ -312,8 +315,8 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
 
             <Note tone="info" className="mt-4" title="La trampa del markup">
               Si al costo de {money(cost + freight, { decimals: 0 })} le sumás un {nf(marginPct)} % (markup), lo vendés a {money(trap.naive_price, { decimals: 0 })} y te queda solo un{' '}
-              <b className="text-ink">{pct(trap.naive_margin)}</b>, no {nf(marginPct)} %. Para que te quede {nf(marginPct)} % hay que multiplicar el costo por <b className="text-ink">{nf(r.multiplier)}</b>.{' '}
-              <InfoTip term="margen_vs_markup" className="align-[-2px]" />
+              <b className="text-ink">{pct(trap.naive_margin)}</b>, no {nf(marginPct)} %. Para que te quede {nf(marginPct)} % hay que multiplicar el costo por{' '}
+              <b className="text-ink">{nf(r.multiplier)}</b>. <InfoTip term="margen_vs_markup" className="align-[-2px]" />
             </Note>
           </Ticket>
         ) : (
@@ -325,11 +328,16 @@ export function PrecioTab({ ctx, state, set, onReset }: { ctx: CalculatorContext
         )}
       </div>
 
-      <PriceReview ctx={ctx} state={state} fee={fee} onPick={(id) => {
-        const p = products.find((x) => x.id === id) ?? null
-        pickProduct(id, p)
-        document.getElementById('calculadora-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }} />
+      <PriceReview
+        ctx={ctx}
+        state={state}
+        fee={fee}
+        onPick={(id) => {
+          const p = products.find((x) => x.id === id) ?? null
+          pickProduct(id, p)
+          document.getElementById('calculadora-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }}
+      />
 
       <MobileResult label="Precio sugerido" value={r.ok ? money(r.price) : '—'} targetId="calc-precio-resultado" />
     </div>
@@ -347,7 +355,10 @@ function PriceReview({ ctx, state, fee, onPick }: { ctx: CalculatorContext; stat
     wholesale_discount_pct: state.wholesaleDiscount ?? 0,
   }
   const valid = params.target_margin_pct + params.iibb_pct + params.fee_pct < 100 && params.target_margin_pct >= 0
-  const rows = useMemo(() => (valid ? reviewPrices(ctx.products, params) : []), [ctx.products, valid, params.target_margin_pct, params.iibb_pct, params.fee_pct, params.round_to, params.wholesale_discount_pct]) // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = useMemo(
+    () => (valid ? reviewPrices(ctx.products, params) : []),
+    [ctx.products, valid, params.target_margin_pct, params.iibb_pct, params.fee_pct, params.round_to, params.wholesale_discount_pct],
+  ) // eslint-disable-line react-hooks/exhaustive-deps
   const below = rows.filter((r) => r.status === 'debajo').length
   const priced = rows.filter((r) => r.status === 'debajo' || r.status === 'ok').length
 
@@ -357,21 +368,30 @@ function PriceReview({ ctx, state, fee, onPick }: { ctx: CalculatorContext; stat
       header: 'Vino',
       value: (r) => `${r.name} ${r.winery ?? ''}`,
       cell: (r) => (
-        <span className="block min-w-[9rem]">
+        <span className="block min-w-[10rem]">
           <span className="block font-bold text-ink">
             {r.name}
             {r.vintage ? ` ${r.vintage}` : ''}
           </span>
           {r.winery && <span className="block text-[12.5px] text-muted">{r.winery}</span>}
+          {r.price_retail > 0 && r.cost > 0 && (
+            <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px] text-ink-soft sm:hidden">
+              <span>
+                Hoy {money(r.price_retail)} · te queda <span className="whitespace-nowrap">{pct(r.margin_retail)}</span>
+              </span>
+              <VerdictBadge verdict={r.verdict} />
+            </span>
+          )}
         </span>
       ),
     },
     { key: 'cost', header: 'Costo', align: 'right', hideBelow: 'md', cell: (r) => (r.cost > 0 ? money(r.cost) : <span className="text-muted">sin costo</span>) },
-    { key: 'price_retail', header: 'Precio hoy', align: 'right', cell: (r) => (r.price_retail > 0 ? money(r.price_retail) : <span className="text-muted">sin precio</span>) },
+    { key: 'price_retail', header: 'Precio hoy', align: 'right', hideBelow: 'sm', cell: (r) => (r.price_retail > 0 ? money(r.price_retail) : <span className="text-muted">sin precio</span>) },
     {
       key: 'margin_retail',
       header: 'Te queda hoy',
       align: 'right',
+      hideBelow: 'sm',
       value: (r) => (r.price_retail > 0 ? r.margin_retail : null),
       cell: (r) =>
         r.price_retail > 0 && r.cost > 0 ? (
@@ -383,7 +403,17 @@ function PriceReview({ ctx, state, fee, onPick }: { ctx: CalculatorContext; stat
           '—'
         ),
     },
-    { key: 'suggested_retail', header: 'Precio sugerido', align: 'right', cell: (r) => (r.suggested_retail != null ? <b>{money(r.suggested_retail)}</b> : '—') },
+    {
+      key: 'suggested_retail',
+      header: (
+        <>
+          <span className="sm:hidden">Sugerido</span>
+          <span className="hidden sm:inline">Precio sugerido</span>
+        </>
+      ),
+      align: 'right',
+      cell: (r) => (r.suggested_retail != null ? <b>{money(r.suggested_retail)}</b> : '—'),
+    },
     {
       key: 'diff_retail_pct',
       header: 'Diferencia',
@@ -405,20 +435,32 @@ function PriceReview({ ctx, state, fee, onPick }: { ctx: CalculatorContext; stat
   return (
     <Card
       title={
-        <span className="inline-flex flex-wrap items-center gap-1.5">
-          ¿Cómo están todos tus vinos con este margen?
+        <span>
+          ¿Cómo están todos tus vinos con este margen?{' '}
           <InfoTip
+            className="align-[-2px]"
             title="Revisión de precios"
             text="Usa los mismos números de arriba (margen, IIBB, comisión y redondeo) con el costo actual de cada vino. Tocá un vino para cargarlo en la calculadora. Es solo para mirar: no cambia ningún precio."
           />
         </span>
       }
       subtitle={
-        rows.length
-          ? below
-            ? `${below} de ${priced} ${priced === 1 ? 'vino con precio queda' : 'vinos con precio quedan'} por debajo del ${nf(params.target_margin_pct)} %. Arriba de todo están los que más conviene revisar.`
-            : `Todos tus vinos con precio llegan al ${nf(params.target_margin_pct)} %. ¡Bien ahí!`
-          : 'Compará el precio de cada vino con el sugerido.'
+        rows.length ? (
+          <>
+            {below
+              ? `${below} de ${priced} ${priced === 1 ? 'vino con precio queda' : 'vinos con precio quedan'} por debajo del ${nf(params.target_margin_pct)} % después de IIBB y comisión. Arriba de todo están los que más conviene revisar.`
+              : priced
+                ? `Todos tus vinos con precio llegan al ${nf(params.target_margin_pct)} % después de IIBB y comisión. ¡Bien ahí!`
+                : 'Tus vinos todavía no tienen precio y costo cargados para compararlos.'}
+            {below > 0 && (
+              <span className="mt-0.5 block text-[13px] text-muted">
+                En «Vinos y stock» el margen se ve antes de IIBB y comisión (margen bruto): por eso allá pueden aparecer menos vinos por debajo del objetivo.
+              </span>
+            )}
+          </>
+        ) : (
+          'Compará el precio de cada vino con el sugerido.'
+        )
       }
       actions={rows.length ? <ExportButton path="/calculator/prices/export" params={params} size="sm" /> : undefined}
       flush
@@ -432,6 +474,7 @@ function PriceReview({ ctx, state, fee, onPick }: { ctx: CalculatorContext; stat
             columns={columns}
             rowKey={(r) => r.id}
             onRowClick={(r) => onPick(r.id)}
+            searchable={rows.length > 0}
             initialSort={{ key: 'diff_retail_pct', dir: 'desc' }}
             searchPlaceholder="Buscar vino o bodega…"
             pageSize={10}

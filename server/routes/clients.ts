@@ -101,6 +101,13 @@ function aggregate(sales: SaleWithStatus[]): Map<number, ClientAgg> {
   return map
 }
 
+/** Promedio de días entre compras, contando días distintos (null si compró un solo día). Mínimo 1. */
+function frequencyDays(sales: SaleWithStatus[]): number | null {
+  const days = [...new Set(sales.map((s) => s.date))].sort()
+  if (days.length < 2) return null
+  return Math.max(1, Math.round(daysBetween(days[0], days[days.length - 1]) / (days.length - 1)))
+}
+
 export type ClientListRow = Client & ClientAgg
 
 function listClients(): ClientListRow[] {
@@ -202,8 +209,11 @@ router.get('/clients/:id', (req, res) => {
       first_purchase: a.first_purchase,
       last_purchase: a.last_purchase,
       days_since_last: a.last_purchase ? Math.max(0, daysBetween(a.last_purchase, t)) : null,
-      /** Cada cuántos días compra, en promedio (null si compró una sola vez). */
-      frequency_days: a.purchases_count >= 2 && a.first_purchase && a.last_purchase ? Math.round(daysBetween(a.first_purchase, a.last_purchase) / (a.purchases_count - 1)) : null,
+      /**
+       * Cada cuántos días compra, en promedio: días entre su primera y su última compra ÷ (días distintos en que compró − 1).
+       * Se cuentan días distintos (dos ventas el mismo día son una visita). null si compró un solo día.
+       */
+      frequency_days: frequencyDays(sales),
       balance: a.balance,
       overdue: a.overdue,
       pending_count: a.pending_count,

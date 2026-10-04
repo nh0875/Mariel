@@ -88,6 +88,7 @@ export default function EventoDetailPage() {
   const { event: ev, summary: s, sales, expenses, opened, after } = q.data
   const isUpcoming = ev.date > today()
   const isToday = ev.date === today()
+  const isPast = !isUpcoming && !isToday
   const hasData = s.sales_count + s.expenses_count + s.opened_count > 0
 
   const askDelete = async () => {
@@ -123,7 +124,7 @@ export default function EventoDetailPage() {
 
   // ─────────── Tablas ───────────
   const saleCols: Column<EventSale>[] = [
-    { key: 'date', header: 'Fecha', cell: (x) => <span className="whitespace-nowrap">{dateShort(x.date)}</span>, className: 'w-[1%]' },
+    { key: 'date', header: 'Fecha', cell: (x) => <span className="whitespace-nowrap">{dateShort(x.date)}</span>, className: 'w-[1%]', hideBelow: 'sm' },
     {
       key: 'items_label',
       header: 'Qué se vendió',
@@ -131,7 +132,10 @@ export default function EventoDetailPage() {
       cell: (x) => (
         <div className="min-w-0">
           <span className="font-semibold text-ink">{x.items_label}</span>
-          <span className="block text-[12.5px] text-muted">{x.client_name || 'Consumidor final'}</span>
+          <span className="block text-[12.5px] text-muted">
+            <MobileDate date={x.date} />
+            {x.client_name || 'Consumidor final'}
+          </span>
         </div>
       ),
     },
@@ -160,7 +164,7 @@ export default function EventoDetailPage() {
     { key: 'status', header: 'Cobro', value: (x) => x.status, cell: (x) => <StatusBadge status={x.status} overdue={x.overdue} kind="sale" />, hideBelow: 'md', className: 'w-[1%]' },
   ]
   const expenseCols: Column<ExpenseWithStatus>[] = [
-    { key: 'date', header: 'Fecha', cell: (x) => <span className="whitespace-nowrap">{dateShort(x.date)}</span>, className: 'w-[1%]' },
+    { key: 'date', header: 'Fecha', cell: (x) => <span className="whitespace-nowrap">{dateShort(x.date)}</span>, className: 'w-[1%]', hideBelow: 'sm' },
     {
       key: 'description',
       header: 'Gasto',
@@ -168,7 +172,10 @@ export default function EventoDetailPage() {
       cell: (x) => (
         <div className="min-w-0">
           <span className="font-semibold text-ink">{x.description}</span>
-          <span className="block text-[12.5px] text-muted">{x.category}</span>
+          <span className="block text-[12.5px] text-muted">
+            <MobileDate date={x.date} />
+            {x.category}
+          </span>
         </div>
       ),
     },
@@ -189,7 +196,7 @@ export default function EventoDetailPage() {
     { key: 'status', header: 'Pago', value: (x) => x.status, cell: (x) => <StatusBadge status={x.status} overdue={x.overdue} />, hideBelow: 'sm', className: 'w-[1%]' },
   ]
   const openedCols: Column<OpenedBottle>[] = [
-    { key: 'date', header: 'Fecha', cell: (x) => <span className="whitespace-nowrap">{dateShort(x.date)}</span>, className: 'w-[1%]' },
+    { key: 'date', header: 'Fecha', cell: (x) => <span className="whitespace-nowrap">{dateShort(x.date)}</span>, className: 'w-[1%]', hideBelow: 'sm' },
     {
       key: 'product_name',
       header: 'Vino',
@@ -199,7 +206,10 @@ export default function EventoDetailPage() {
           <Link to={`/vinos/${x.product_id}`} className="font-semibold text-ink hover:underline">
             {x.product_name}
           </Link>
-          <span className="block text-[12.5px] text-muted">{[x.product_winery, x.kind !== 'degustacion' ? x.kind_label : null, x.notes].filter(Boolean).join(' · ') || 'Degustación'}</span>
+          <span className="block text-[12.5px] text-muted">
+            <MobileDate date={x.date} />
+            {[x.product_winery, x.kind !== 'degustacion' ? x.kind_label : null, x.notes].filter(Boolean).join(' · ') || 'Degustación'}
+          </span>
         </div>
       ),
     },
@@ -313,6 +323,15 @@ export default function EventoDetailPage() {
             se ven separadas del vino.
           </span>
         </p>
+        {isPast && (
+          <p className="mt-2 flex items-start gap-2 text-[13.5px] leading-snug text-ink-soft">
+            <CalendarHeart size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
+            <span>
+              <b className="text-ink">Fecha:</b> el evento fue el {dateLong(ev.date)}. La venta y el gasto nuevos arrancan con la fecha de hoy: si son de ese día, cambiala, así
+              cuentan en el mes que corresponde.
+            </span>
+          </p>
+        )}
       </Card>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -323,11 +342,11 @@ export default function EventoDetailPage() {
             <Kpi
               label="Por persona"
               info={EXPLAIN.por_persona}
-              value={s.per_attendee != null ? money(s.per_attendee, { decimals: 0 }) : '—'}
-              valueClassName={s.per_attendee != null ? resultClass(s.per_attendee) : undefined}
+              value={hasData && s.per_attendee != null ? money(s.per_attendee, { decimals: 0 }) : '—'}
+              valueClassName={hasData && s.per_attendee != null ? resultClass(s.per_attendee) : undefined}
               hint={
                 ev.attendees ? (
-                  `${int(ev.attendees)} ${ev.attendees === 1 ? 'persona' : 'personas'}`
+                  `${int(ev.attendees)} ${ev.attendees === 1 ? 'persona' : 'personas'}${hasData ? '' : ' · falta cargar ventas y gastos'}`
                 ) : (
                   <button type="button" onClick={() => setEditOpen(true)} className="font-bold text-sky-deep hover:underline">
                     Cargá cuántos fueron
@@ -416,6 +435,7 @@ export default function EventoDetailPage() {
       <Card className="mt-4" flush>
         <div className="px-4 pt-4 sm:px-5 sm:pt-5">
           <Tabs<TabKey>
+            className="flex-wrap"
             value={tab}
             onChange={setTab}
             items={[
@@ -510,7 +530,12 @@ export default function EventoDetailPage() {
         </div>
       </Card>
 
-      <EventFormModal open={editOpen} event={ev} onClose={() => setEditOpen(false)} />
+      <EventFormModal
+        open={editOpen}
+        event={ev}
+        linked={{ sales: s.sales_count, expenses: s.expenses_count, openedOnDate: opened.filter((o) => o.date === ev.date).length }}
+        onClose={() => setEditOpen(false)}
+      />
       <OpenBottlesModal open={bottlesOpen} event={ev} onClose={() => setBottlesOpen(false)} />
       <Modal
         open={cantDelete}
@@ -533,19 +558,32 @@ export default function EventoDetailPage() {
             ])}
             . Si lo borrás, perdés la cuenta de cuánto te costó y cuánto te dejó.
           </p>
-          <p>
-            Si igual querés borrarlo: sacale el evento a esas ventas y gastos (o borralos) y quitá las botellas abiertas desde la pestaña de abajo. Después vas a poder borrarlo.
-          </p>
+          <p>Si igual querés borrarlo: {joinParts(unlinkSteps(s))}. Después vas a poder borrarlo.</p>
         </div>
       </Modal>
     </>
   )
 }
 
+/** Qué hay que hacer para poder borrar el evento, según lo que tenga cargado. */
+function unlinkSteps(s: EventSummary): string[] {
+  const steps: string[] = []
+  if (s.sales_count && s.expenses_count) steps.push('sacale el evento a esas ventas y gastos (o borralos) desde Ventas y Gastos')
+  else if (s.sales_count) steps.push(s.sales_count === 1 ? 'sacale el evento a esa venta (o borrala) desde Ventas' : 'sacale el evento a esas ventas (o borralas) desde Ventas')
+  else if (s.expenses_count) steps.push(s.expenses_count === 1 ? 'sacale el evento a ese gasto (o borralo) desde Gastos' : 'sacale el evento a esos gastos (o borralos) desde Gastos')
+  if (s.opened_count) steps.push('quitá las botellas abiertas desde la pestaña de abajo (vuelven al stock)')
+  return steps
+}
+
 function joinParts(parts: string[]): string {
   const p = parts.filter(Boolean)
   if (p.length <= 1) return p.join('')
   return `${p.slice(0, -1).join(', ')} y ${p[p.length - 1]}`
+}
+
+/** En celular la columna «Fecha» se esconde: la fecha va en la línea chica de abajo. */
+function MobileDate({ date }: { date: string }) {
+  return <span className="whitespace-nowrap sm:hidden">{nb(dateShort(date))} · </span>
 }
 
 function BackLink() {
@@ -588,13 +626,14 @@ function Line({
           {info && <InfoTip title={info.title} text={info.text} />}
         </div>
         {sub && <p className="text-[12.5px] text-muted">{sub}</p>}
-        <span className="mt-1.5 block h-1.5 w-full rounded-full bg-cream-deep">
-          <span className="block h-full rounded-full" style={{ width: `${value > 0 && scale > 0 ? Math.max(1.5, (value / scale) * 100) : 0}%`, background: color }} />
-        </span>
       </div>
       <span className="vh-num pt-px text-right font-bold whitespace-nowrap text-ink">
         {sign === '−' && value > 0 ? '−' : ''}
         {money(value, { decimals: 0 })}
+      </span>
+      {/* La barrita ocupa todo el ancho (debajo del concepto y del monto): así todas miden lo mismo y la escala es la misma. */}
+      <span className="col-span-2 col-start-2 mt-1.5 block h-1.5 rounded-full bg-cream-deep" aria-hidden>
+        <span className="block h-full rounded-full" style={{ width: `${value > 0 && scale > 0 ? Math.max(1.5, Math.min(100, (value / scale) * 100)) : 0}%`, background: color }} />
       </span>
     </li>
   )
@@ -622,7 +661,7 @@ function Breakdown({ s }: { s: EventSummary }) {
           sign="+"
           label="Ventas de vino"
           info={EXPLAIN.ventas_vino}
-          sub={`${fmtBottles(s.bottles_sold)} en ${s.sales_count === 1 ? '1 venta' : `${int(s.sales_count)} ventas`}`}
+          sub={s.sales_count ? `${fmtBottles(s.bottles_sold)} en ${s.sales_count === 1 ? '1 venta' : `${int(s.sales_count)} ventas`}` : 'Sin ventas cargadas'}
           value={s.wine_sales}
           color={CHART_COLORS.ventas}
           scale={scale}
@@ -668,10 +707,12 @@ function Breakdown({ s }: { s: EventSummary }) {
         ) : (
           <>
             <b className="text-ink">{resultPhrase(s.result)}.</b>{' '}
-            {s.result >= 0
+            {s.result >= -0.004
               ? s.investment > 0
-                ? `Lo que pusiste (${nb(money(s.investment, { decimals: 0 }))} entre gastos y botellas abiertas) volvió y sobró.`
-                : 'No tuvo gastos ni botellas abiertas cargadas.'
+                ? s.result > 0.004
+                  ? `Lo que pusiste (${nb(money(s.investment, { decimals: 0 }))} entre gastos y botellas abiertas) volvió y sobró.`
+                  : `Lo que entró alcanzó justo para cubrir lo que pusiste (${nb(money(s.investment, { decimals: 0 }))} entre gastos y botellas abiertas).`
+                : 'No tuvo gastos ni botellas abiertas cargadas: si los hubo, cargalos para ver el resultado real.'
               : s.revenue > 0
                 ? `Lo que entró no alcanzó a cubrir lo que costó. Mirá qué gasto se puede achicar o si conviene cobrar entrada.`
                 : 'Por ahora solo hay costos cargados: faltan las ventas del evento.'}

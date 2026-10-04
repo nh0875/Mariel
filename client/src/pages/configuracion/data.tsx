@@ -282,13 +282,13 @@ function ResetModal({ open, onClose, onConfirm, loading }: { open: boolean; onCl
           <b>Se borran:</b> vinos y stock, ventas, compras, gastos (y gastos fijos), movimientos de caja, clientes, proveedores, eventos, metas e inflación.
         </p>
         <p>
-          <b>Se mantiene:</b> la configuración (nombre del negocio, medios de pago, categorías, precios). Las cuentas vuelven a ser Caja, Banco y Mercado Pago en $ 0.
+          <b>Se mantiene:</b> la configuración (nombre del negocio, medios de pago, categorías, precios). Las cuentas vuelven a ser Caja, Banco y Mercado Pago en $ 0.
         </p>
         <p>
           Antes de borrar guardamos una <b>copia de seguridad</b> («Antes de borrar todo»). Después te llevamos a la bienvenida para cargar tus saldos iniciales.
         </p>
-        <Field label="Para confirmar, escribí BORRAR" hint="En mayúsculas o minúsculas, da igual.">
-          <TextInput value={text} onChange={(e) => setText(e.target.value)} placeholder="BORRAR" autoComplete="off" aria-label="Escribí BORRAR para confirmar" data-autofocus />
+        <Field htmlFor="cfg-borrar" label="Para confirmar, escribí BORRAR" hint="En mayúsculas o minúsculas, da igual.">
+          <TextInput id="cfg-borrar" value={text} onChange={(e) => setText(e.target.value)} placeholder="BORRAR" autoComplete="off" aria-label="Escribí BORRAR para confirmar" data-autofocus />
         </Field>
       </form>
     </Modal>

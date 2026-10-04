@@ -12,6 +12,27 @@ import { InfoTip } from '@/components/ui'
  */
 export const nb = (s: string) => s.replace(/ /g, '\u00a0')
 
+/**
+ * El período elegido dicho como en una frase ("en el mes pasado", "en los últimos 3 meses"…).
+ * Las etiquetas del selector ("Mes pasado", "Desde siempre") no se pueden pegar tal cual en una oración.
+ */
+export function periodPhrase(preset: string, label: string): string {
+  const map: Record<string, string> = {
+    este_mes: 'este mes',
+    mes_pasado: 'el mes pasado',
+    ultimos_3_meses: 'los últimos 3 meses',
+    ultimos_6_meses: 'los últimos 6 meses',
+    este_anio: 'este año',
+    anio_pasado: 'el año pasado',
+    ultimos_12_meses: 'los últimos 12 meses',
+    todo: 'todo el historial',
+  }
+  return map[preset] ?? `el período ${label.replace(' – ', ' al ')}`
+}
+
+/** "de" + frase, con contracción: "del mes pasado", "de este mes". */
+export const dePhrase = (phrase: string) => (phrase.startsWith('el ') ? `del ${phrase.slice(3)}` : `de ${phrase}`)
+
 /** Plata para las tarjetas: completa hasta $ 10 M, abreviada arriba de eso (el valor exacto queda en el title). */
 export const tileMoney = (n: number) => (Math.abs(n) >= 10_000_000 ? moneyCompact(n) : money(n, { decimals: 0 }))
 

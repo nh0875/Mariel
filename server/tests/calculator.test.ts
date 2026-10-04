@@ -12,7 +12,7 @@ import { updateSettings } from '../services/settings'
 import { contextWindow } from '../routes/calculator'
 import { expenseInput, saleInput } from '../../shared/schemas'
 import { addMonths, endOfMonth, monthKey, startOfMonth, today } from '../../shared/dates'
-import { breakEven, simulate, suggestPrice, variableCostPerBottle, type CalculatorContext } from '../../shared/pricing'
+import { baseFromContext, breakEven, simulate, suggestPrice, variableCostPerBottle, type CalculatorContext } from '../../shared/pricing'
 import { startTestServer, type TestServer } from './helpers'
 
 let t: TestServer
@@ -31,8 +31,7 @@ function wine(name: string, opts: { stock?: number; cost?: number; retail?: numb
 }
 const sale = (date: string, productId: number, qty: number, price: number, payment_method: 'efectivo' | 'mercadopago' = 'efectivo') =>
   createSale(saleInput.parse({ date, payment_method, items: [{ product_id: productId, qty, unit_price: price }] }))
-const expense = (date: string, amount: number, nature: 'fijo' | 'variable', category = 'Alquiler') =>
-  createExpense(expenseInput.parse({ date, category, description: category, amount, nature }))
+const expense = (date: string, amount: number, nature: 'fijo' | 'variable', category = 'Alquiler') => createExpense(expenseInput.parse({ date, category, description: category, amount, nature }))
 
 /** Día 10 del mes que está `offset` meses antes del actual. */
 const monthDay = (offset: number) => addMonths(startOfMonth(today()), offset).slice(0, 8) + '10'
@@ -49,6 +48,7 @@ describe('GET /calculator/context', () => {
       'avg_bottles',
       'avg_price_per_bottle',
       'avg_cost_per_bottle',
+      'avg_cogs',
       'avg_fixed_expenses',
       'avg_variable_expenses',
       'avg_fees',
@@ -99,6 +99,7 @@ describe('GET /calculator/context', () => {
     expect(c.avg_bottles).toBe(10)
     expect(c.avg_price_per_bottle).toBe(10000)
     expect(c.avg_cost_per_bottle).toBe(6000)
+    expect(c.avg_cogs).toBe(60000)
     expect(c.gross_margin).toBeCloseTo(0.4, 6)
     // Fijos 180.000 / 3; variables 5.000 / 3
     expect(c.avg_fixed_expenses).toBe(60000)
@@ -119,11 +120,10 @@ describe('GET /calculator/context', () => {
     const series = monthlySeries(w.from, w.to)
     expect(c.avg_net_result).toBeCloseTo(series.reduce((s, m) => s + m.net_result, 0) / 3, 2)
 
-    // Coherencia: el simulador sin cambios reproduce el resultado promedio real.
-    const sim = simulate({
-      base: { bottles: c.avg_bottles, avg_price: c.avg_price_per_bottle, avg_cost: c.avg_cost_per_bottle, fixed: c.avg_fixed_expenses, variable_pct: c.variable_pct_of_sales },
-    })
-    expect(sim.before.result).toBeCloseTo(c.avg_net_result, 0)
+    // Coherencia: el simulador sin cambios (con el mes base que usa la pantalla) reproduce el
+    // resultado promedio real, al peso.
+    const sim = simulate({ base: baseFromContext(c)! })
+    expect(Math.abs(sim.before.result - c.avg_net_result)).toBeLessThan(0.5)
 
     // Coherencia: el punto de equilibrio da lo mismo que la sugerencia de Metas.
     const be = breakEven({
@@ -136,8 +136,11 @@ describe('GET /calculator/context', () => {
     expect(be.bottles).toBe(19)
     const goal = await t.get(`/goals/suggest?month=${monthKey(today())}`)
     expect(goal.status).toBe(200)
+    // Metas redondea el margen de contribución a 3 decimales para poder mostrar la cuenta;
+    // el método es el mismo, así que la diferencia tiene que ser mínima.
     if (typeof goal.body?.break_even_sales === 'number') {
-      expect(be.sales).toBeCloseTo(goal.body.break_even_sales, 0)
+      expect(Math.abs(be.contribution_margin - goal.body.contribution_margin)).toBeLessThan(0.001)
+      expect(Math.abs(be.sales / goal.body.break_even_sales - 1)).toBeLessThan(0.005)
     }
   })
 
@@ -228,15 +231,50 @@ describe('GET /calculator/prices (revisión del catálogo)', () => {
     const headers = (ws.getRow(4).values as unknown[]).filter(Boolean)
     expect(headers).toContain('Precio minorista sugerido')
     expect(headers).toContain('Margen actual')
+    const col = (h: string) => (ws.getRow(4).values as unknown[]).indexOf(h)
     const row = ws.getRow(5)
     expect(row.getCell(1).value).toBe('Barato')
-    expect(row.getCell(7).value).toBe(10700)
-    expect(row.getCell(5).numFmt).toBe('0.0%')
-    expect(row.getCell(13).value).toBe('Por debajo del margen')
+    expect(row.getCell(col('Precio minorista sugerido')).value).toBe(10700)
+    expect(row.getCell(col('Margen actual')).numFmt).toBe('0.0%')
+    expect(row.getCell(col('Precio minorista sugerido')).numFmt).toContain('$')
+    expect(row.getCell(col('Estado')).value).toBe('Por debajo del margen')
     let notes = ''
     ws.eachRow((r) => (notes += ` ${r.getCell(1).text}`))
     expect(notes).toContain('¿Cómo leer esta planilla?')
     expect(notes).toContain('no cambia ningún precio')
+  })
+
+  it('el Excel va en el mismo orden que la pantalla y no inventa márgenes para vinos sin costo', async () => {
+    wine('A bien', { cost: 6000, retail: 11000 })
+    wine('B muy barato', { cost: 6000, retail: 7000 })
+    wine('C barato', { cost: 6000, retail: 9000 })
+    wine('D sin costo', { stock: 0, cost: 0, retail: 5000, wholesale: 4000 })
+    wine('E sin precio', { cost: 6000, retail: 0, wholesale: 0 })
+    const res = await t.raw('/calculator/prices/export?target_margin_pct=40&iibb_pct=3.5&round_to=100')
+    expect(res.status).toBe(200)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(Buffer.from(await res.arrayBuffer()) as unknown as ArrayBuffer)
+    const ws = wb.worksheets[0]
+    const headers = ws.getRow(4).values as unknown[]
+    const col = (h: string) => headers.indexOf(h)
+    expect(col('Cosecha')).toBeGreaterThan(0)
+    const names = [5, 6, 7, 8, 9].map((r) => ws.getRow(r).getCell(1).value)
+    // Primero el que más hay que subir; los que no se pueden comparar, al final.
+    expect(names).toEqual(['B muy barato', 'C barato', 'A bien', 'D sin costo', 'E sin precio'])
+    const sinCosto = ws.getRow(8)
+    expect(sinCosto.getCell(col('Margen actual')).value).toBeNull()
+    expect(sinCosto.getCell(col('Semáforo')).value).toBe('—')
+    expect(sinCosto.getCell(col('Margen mayorista')).value).toBeNull()
+    expect(sinCosto.getCell(col('Costo por botella')).value).toBeNull()
+    expect(sinCosto.getCell(col('Estado')).value).toBe('Sin costo cargado')
+    const sinPrecio = ws.getRow(9)
+    expect(sinPrecio.getCell(col('Precio minorista actual')).value).toBeNull()
+    expect(sinPrecio.getCell(col('Precio minorista sugerido')).value).toBe(10700)
+    // Sin fila de totales (sumar precios de vinos distintos no tiene sentido).
+    let text = ''
+    ws.eachRow((r) => (text += ` ${r.getCell(1).text}`))
+    expect(text).not.toContain('TOTAL')
+    expect(text).toContain('Vinos y stock')
   })
 
   it('exporta aunque no haya vinos', async () => {

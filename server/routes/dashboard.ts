@@ -5,7 +5,7 @@
 // así un mismo número da igual en todas las pantallas. Acá solo se juntan, se comparan
 // con el período anterior y se traducen a alertas y frases en castellano.
 import { Router } from 'express'
-import { pctChange, round2, safeDiv } from '../../shared/calc'
+import { pctChange, round2, roundUpTo, safeDiv } from '../../shared/calc'
 import { SALE_CHANNEL_LABELS, type SaleChannel } from '../../shared/constants'
 import {
   addDays,
@@ -15,6 +15,7 @@ import {
   MONTHS_LONG,
   monthKey,
   monthLabelLong,
+  presetToPeriod,
   previousPeriod,
   startOfMonth,
   today,
@@ -92,6 +93,18 @@ export interface DashboardComparison {
   detail: string
   current: PeriodSummary
   previous: PeriodSummary
+  /**
+   * true si tus registros empiezan después del arranque del período anterior: comparar contra un
+   * período a medio cargar engaña ("vendiste 900 % más"), así que la pantalla no muestra variaciones.
+   */
+  partial: boolean
+  /** Fecha del primer registro (venta o gasto) cargado. null si no hay nada. */
+  data_since: string | null
+  /**
+   * Lo que ya está cargado con fecha posterior a hoy (ej: gastos fijos generados para todo el mes).
+   * Suma en el resumen del período pero no en la comparación (que va solo hasta hoy). null si no hay.
+   */
+  after_today: { sales: number; expenses: number; net_result: number } | null
 }
 
 export interface DashboardResponse {
@@ -99,18 +112,26 @@ export interface DashboardResponse {
   today: string
   /** Período en palabras ("octubre 2026", "1 de enero al 31 de marzo de 2026"). */
   period_label: string
+  /** El período listo para usar en una frase: "en octubre 2026", "en el año 2026", "del 1 de agosto al 31 de octubre", "desde el 1 de septiembre de 2025". */
+  period_phrase: string
   summary: PeriodSummary
   previous: PeriodSummary
   same_days_previous: PeriodSummary | null
   comparison: DashboardComparison
   series: MonthlyPoint[]
-  cash: { total: number; accounts: AccountWithBalance[] }
+  /**
+   * scheduled: neto de movimientos de caja con fecha posterior a hoy que ya están cargados (ej: gastos fijos
+   * generados como "pagados" para todo el mes). El saldo de las cuentas ya los descuenta; lo informamos para explicarlo.
+   */
+  cash: { total: number; accounts: AccountWithBalance[]; scheduled: { out: number; in: number } }
   stock: { value: number; bottles: number; products: number }
   receivables: { total: number; count: number; overdue: number }
   payables: { total: number; count: number; overdue: number; purchases: number; expenses: number }
   low_stock: { id: number; name: string; stock: number; min_stock: number; winery: string | null }[]
   top_products: ProductSales[]
   by_channel: (ChannelSales & { label: string })[]
+  /** Mes de la meta que se muestra ('YYYY-MM'): el del final del período, el actual si el período sigue, o el primero si es futuro. */
+  goal_month: string
   goal: DashboardGoal | null
   alerts: DashboardAlert[]
   insights: string[]
@@ -151,6 +172,45 @@ export function periodInWords(p: Period): string {
   return rangeInWords(p.from, p.to)
 }
 
+/** "Desde siempre" (PeriodPicker) arranca en esta fecha. */
+const ALL_TIME_FROM = presetToPeriod('todo').from
+
+/** El período para meter en una frase: "en octubre 2026", "en el año 2026", "del 1 al 15 de marzo", "desde el 1 de septiembre de 2025". */
+export function periodPhrase(p: Period, dataSince: string | null): string {
+  if (p.from <= ALL_TIME_FROM) return dataSince ? `desde el ${rangeInWords(dataSince, dataSince)}` : 'desde siempre'
+  if (isFullMonth(p)) return `en ${monthLabelLong(monthKey(p.from))}`
+  if (isFullYear(p)) return `en el año ${yearOf(p.from)}`
+  if (p.from === p.to) return `el ${rangeInWords(p.from, p.to)}`
+  return `del ${rangeInWords(p.from, p.to)}`
+}
+
+/** Pagos y cobros ya cargados con fecha posterior a hoy (el saldo de las cuentas ya los cuenta). */
+function scheduledCash(ref: string): { out: number; in: number } {
+  const r = get<{ cout: number; cin: number }>(
+    `SELECT COALESCE(SUM(CASE WHEN direction = 'out' THEN amount ELSE 0 END), 0) AS cout,
+            COALESCE(SUM(CASE WHEN direction = 'in' THEN amount ELSE 0 END), 0) AS cin
+     FROM payments WHERE ref_type <> 'transfer' AND date > ?`,
+    [ref],
+  )
+  return { out: round2(r?.cout ?? 0), in: round2(r?.cin ?? 0) }
+}
+
+/** Primer día con algo cargado (venta o gasto). */
+function firstRecordDate(): string | null {
+  return scalar<string | null>(`SELECT MIN(d) FROM (SELECT MIN(date) AS d FROM sales UNION ALL SELECT MIN(date) AS d FROM expenses)`) ?? null
+}
+
+/**
+ * ¿El período anterior está "a medio cargar"? Si los registros empiezan bastante después de su
+ * primer día (más de 1 día y más del 10 % del período), compararlo engaña.
+ */
+export function isPartialComparison(previous: Period, dataSince: string | null): boolean {
+  if (!dataSince || dataSince <= previous.from) return false
+  const missing = daysBetween(previous.from, dataSince)
+  const len = daysBetween(previous.from, previous.to) + 1
+  return missing >= 2 && missing / len > 0.1
+}
+
 // ───────────────────────── Comparación justa ─────────────────────────
 
 /**
@@ -170,7 +230,36 @@ export function comparisonPeriods(p: Period, ref: string = today()) {
   return { mode: 'previous' as const, current: p, previous: prev, prev }
 }
 
-function comparisonTexts(p: Period, c: ReturnType<typeof comparisonPeriods>): { label: string; detail: string } {
+function comparisonTexts(
+  p: Period,
+  c: ReturnType<typeof comparisonPeriods>,
+  extra: { dataSince: string | null; partial: boolean; afterToday: DashboardComparison['after_today'] } = { dataSince: null, partial: false, afterToday: null },
+): { label: string; detail: string } {
+  const base = baseComparisonTexts(p, c)
+  if (extra.partial && extra.dataSince) {
+    const since = rangeInWords(extra.dataSince, extra.dataSince)
+    return {
+      label: base.label,
+      detail:
+        extra.dataSince > c.previous.to
+          ? `No hay nada cargado antes del ${since}, así que no hay un período anterior con el que comparar. Cuando tengas más historia, acá vas a ver si vendés más o menos que antes.`
+          : `Tus registros empiezan el ${since}, así que el período anterior (del ${rangeInWords(c.previous.from, c.previous.to)}) está cargado a medias. Para no engañarte, no mostramos variaciones: compararías un período completo contra uno cargado a medias.`,
+    }
+  }
+  if (extra.afterToday && (extra.afterToday.expenses > 0.5 || extra.afterToday.sales > 0.5)) {
+    const parts = [
+      extra.afterToday.expenses > 0.5 ? `${$(extra.afterToday.expenses)} de gastos` : '',
+      extra.afterToday.sales > 0.5 ? `${$(extra.afterToday.sales)} de ventas` : '',
+    ].filter(Boolean)
+    return {
+      label: base.label,
+      detail: `${base.detail} Ojo: ya hay ${parts.join(' y ')} cargados con fecha posterior a hoy (por ejemplo, gastos fijos generados para todo el mes). Cuentan en los números del período, pero no en la comparación, que va solo hasta hoy.`,
+    }
+  }
+  return base
+}
+
+function baseComparisonTexts(p: Period, c: ReturnType<typeof comparisonPeriods>): { label: string; detail: string } {
   if (c.mode === 'same_days') {
     const label = isFullMonth(p) ? 'vs. mismos días del mes pasado' : isFullYear(p) ? 'vs. mismos días del año pasado' : 'vs. mismos días del período anterior'
     return {
@@ -221,6 +310,11 @@ function openPayables(): OpenDoc[] {
 
 const sum = (xs: OpenDoc[]) => round2(xs.reduce((s, x) => s + x.balance, 0))
 const plural = (n: number, one: string, many: string) => `${nf0.format(n)} ${n === 1 ? one : many}`
+/** "vs. mismos días del mes pasado" → "comparado con los mismos días del mes pasado"; "vs. mes anterior" → "comparado con el mes anterior". */
+const comparedWith = (label: string) => {
+  const rest = label.replace(/^vs\. /, '')
+  return `comparado con ${rest.startsWith('mismos') ? 'los' : 'el'} ${rest}`
+}
 
 // ───────────────────────── Meta del mes ─────────────────────────
 
@@ -284,7 +378,7 @@ function buildAlerts(ctx: AlertContext): DashboardAlert[] {
     out.push({
       tone: 'bad',
       title: `Te deben ${$(sum(overdueRecv))} que ya vencieron`,
-      text: `${plural(overdueRecv.length, 'venta vencida sin cobrar', 'ventas vencidas sin cobrar')}. La más grande: ${top.who ?? 'un cliente sin nombre'}, ${$(top.balance)} (vencía el ${fmtDate(top.due_date!)}). Cuanto más pasa, más cuesta cobrarla: mandale un mensaje hoy.`,
+      text: `${plural(overdueRecv.length, 'venta vencida sin cobrar', 'ventas vencidas sin cobrar')}. La más grande: ${top.who ?? 'Consumidor final (venta sin cliente)'}, ${$(top.balance)} (vencía el ${fmtDate(top.due_date!)}). Cuanto más pasa, más cuesta cobrarla: mandale un mensaje hoy.`,
       link: '/caja?tab=pendientes',
       link_label: 'Ver lo que te deben',
     })
@@ -345,7 +439,7 @@ function buildAlerts(ctx: AlertContext): DashboardAlert[] {
     const none = ctx.low.filter((p) => p.stock <= 0)
     const names = ctx.low
       .slice(0, 3)
-      .map((p) => `${p.name} (${p.stock <= 0 ? 'sin stock' : plural(p.stock, 'botella', 'botellas')})`)
+      .map((p) => `${p.name} (${p.stock < 0 ? `stock negativo: ${nf0.format(p.stock)}, revisalo` : p.stock === 0 ? 'sin stock' : plural(p.stock, 'botella', 'botellas')})`)
       .join(', ')
     out.push({
       tone: none.length ? 'bad' : 'warn',
@@ -358,39 +452,30 @@ function buildAlerts(ctx: AlertContext): DashboardAlert[] {
     })
   }
 
-  // 5) Resultado negativo
-  if (summary.net_result < -0.01 && (summary.sales > 0 || summary.expenses > 0)) {
-    out.push(
-      ctx.earlyMonth
-        ? {
-            tone: 'info',
-            title: 'Por ahora el mes viene en rojo (es normal a principio de mes)',
-            text: `Ya se cargaron ${$(summary.expenses_fixed)} de gastos fijos y recién arrancan las ventas. El resultado mejora a medida que vendés: mirá la meta del mes para saber si vas bien.`,
-            link: '/metas',
-            link_label: 'Ver metas',
-          }
-        : {
-            tone: 'bad',
-            title: `En este período perdiste ${$(-summary.net_result)}`,
-            text: `Lo que te quedó de las ventas (${$(summary.gross_profit)} de ganancia bruta) no alcanzó para cubrir comisiones, mermas y gastos (${$(
-              summary.fees + summary.shrinkage + summary.expenses,
-            )}). Mirá en qué se fue la plata y si tus precios están al día.`,
-            link: '/reportes',
-            link_label: 'Ver el reporte de resultados',
-          },
-    )
+  // 5) Resultado negativo. A principio de mes no es una alerta: los gastos fijos ya están y las ventas
+  //    recién arrancan (lo explican el número del resultado y "Lo que vemos en tus números").
+  if (!ctx.earlyMonth && summary.net_result < -0.01 && (summary.sales > 0 || summary.expenses > 0)) {
+    out.push({
+      tone: 'bad',
+      title: `En este período perdiste ${$(-summary.net_result)}`,
+      text: `Lo que te quedó de las ventas (${$(summary.gross_profit)} de ganancia bruta) no alcanzó para cubrir comisiones, mermas y gastos (${$(
+        summary.fees + summary.shrinkage + summary.expenses,
+      )}). Mirá en qué se fue la plata y si tus precios están al día.`,
+      link: '/reportes?tab=resultados',
+      link_label: 'Ver el reporte de resultados',
+    })
   }
 
-  // 6) Margen bruto cayendo más de 3 puntos
+  // 6) Margen bruto cayendo más de 3 puntos (solo si la comparación es pareja)
   const prevC = ctx.comparison.previous
   const curC = ctx.comparison.current
-  if (curC.sales > 0 && prevC.sales > 0) {
+  if (!ctx.comparison.partial && curC.sales > 0 && prevC.sales > 0) {
     const drop = prevC.gross_margin - curC.gross_margin
     if (drop > 0.03) {
       out.push({
         tone: 'warn',
         title: `Tu margen bruto bajó ${nf1.format(drop * 100)} puntos`,
-        text: `Pasó de ${pctTxt(prevC.gross_margin, 1)} a ${pctTxt(curC.gross_margin, 1)} (${ctx.comparison.label.replace('vs. ', 'comparado con ')}). Suele pasar cuando sube el costo del vino y no actualizás precios, o cuando hacés muchos descuentos.`,
+        text: `Pasó de ${pctTxt(prevC.gross_margin, 1)} a ${pctTxt(curC.gross_margin, 1)} (${comparedWith(ctx.comparison.label)}). Suele pasar cuando sube el costo del vino y no actualizás precios, o cuando hacés muchos descuentos.`,
         link: '/calculadora',
         link_label: 'Revisar precios',
       })
@@ -478,27 +563,33 @@ function buildInsights(ctx: {
 }): string[] {
   const { summary: s, comparison: c } = ctx
   const out: string[] = []
+  const full = isFullMonth(ctx.period) ? 'month' : isFullYear(ctx.period) ? 'year' : 'range'
   const vsText =
     c.mode === 'same_days'
-      ? isFullMonth(ctx.period)
-        ? 'que en los mismos días del mes pasado'
-        : 'que en los mismos días del período anterior'
-      : isFullMonth(ctx.period)
-        ? 'que el mes anterior'
-        : 'que en el período anterior'
+      ? { month: 'que en los mismos días del mes pasado', year: 'que en los mismos días del año pasado', range: 'que en los mismos días del período anterior' }[full]
+      : { month: 'que el mes anterior', year: 'que el año anterior', range: 'que en el período anterior' }[full]
 
-  // Ventas vs. comparación
-  const dSales = pctChange(c.current.sales, c.previous.sales)
+  // Ventas vs. comparación (si el período anterior está cargado a medias, no comparamos: engañaría)
+  const dSales = c.partial ? null : pctChange(c.current.sales, c.previous.sales)
   if (dSales != null && c.current.sales > 0) {
     if (Math.abs(dSales) < 0.02) out.push(`Vendiste prácticamente lo mismo ${vsText} (${$(c.current.sales)}).`)
     else out.push(`Vendiste ${pctTxt(dSales)} ${dSales > 0 ? 'más' : 'menos'} ${vsText}: ${$(c.current.sales)} contra ${$(c.previous.sales)}.`)
-  } else if (c.current.sales > 0 && c.previous.sales === 0) {
+  } else if (!c.partial && c.current.sales > 0 && c.previous.sales === 0) {
     out.push(`Vendiste ${$(c.current.sales)}; en el período anterior no había ventas cargadas para comparar.`)
   }
 
-  // Principio de mes
+  // Principio de mes: el resultado viene en rojo porque los gastos fijos ya están. Decimos cuánto falta vender.
   if (ctx.earlyMonth && s.net_result < 0) {
-    out.push('Ojo: es principio de mes y ya se cargaron los gastos fijos (alquiler, sueldos…); el resultado mejora a medida que vendés.')
+    const contribution = safeDiv(s.sales - s.cogs - s.fees - s.shrinkage - s.expenses_variable, s.sales)
+    if (s.expenses_fixed > 0 && s.sales > 0 && contribution > 0.05) {
+      out.push(
+        `Es principio de mes y ya están cargados ${$(s.expenses_fixed)} de gastos fijos: para salir del rojo te faltan vender unos ${$(
+          roundUpTo(-s.net_result / contribution, 1000),
+        )} más (de cada $\u00a0100 que vendés, te quedan $\u00a0${nf0.format(Math.round(contribution * 100))} para cubrir gastos).`,
+      )
+    } else {
+      out.push('Ojo: es principio de mes y ya se cargaron los gastos fijos (alquiler, sueldos…); el resultado mejora a medida que vendés.')
+    }
   }
 
   // Vino estrella
@@ -555,12 +646,21 @@ export function buildDashboard(period: Period, ref: string = today()): Dashboard
   const cp = comparisonPeriods(period, ref)
   const previous = periodSummary(cp.prev.from, cp.prev.to)
   const sameDays = cp.mode === 'same_days' ? periodSummary(cp.previous.from, cp.previous.to) : null
-  const texts = comparisonTexts(period, cp)
+  const current = cp.mode === 'same_days' ? periodSummary(cp.current.from, cp.current.to) : summary
+  const dataSince = firstRecordDate()
+  const partial = isPartialComparison(cp.previous, dataSince)
+  // Lo cargado con fecha posterior a hoy (gastos fijos generados para todo el mes, por ejemplo).
+  const ahead = { sales: round2(summary.sales - current.sales), expenses: round2(summary.expenses - current.expenses), net_result: round2(summary.net_result - current.net_result) }
+  const afterToday = cp.mode === 'same_days' && Object.values(ahead).some((v) => Math.abs(v) > 0.5) ? ahead : null
+  const texts = comparisonTexts(period, cp, { dataSince, partial, afterToday })
   const comparison: DashboardComparison = {
     mode: cp.mode,
     ...texts,
-    current: cp.mode === 'same_days' ? periodSummary(cp.current.from, cp.current.to) : summary,
+    current,
     previous: sameDays ?? previous,
+    partial,
+    data_since: dataSince,
+    after_today: afterToday,
   }
 
   // Últimos 12 meses, terminando en el mes de "to" (o en el mes actual si "to" está en el futuro).
@@ -577,7 +677,9 @@ export function buildDashboard(period: Period, ref: string = today()): Dashboard
     label: (SALE_CHANNEL_LABELS[c.channel as SaleChannel] ?? c.channel).replace(/\s*\(.*\)\s*$/, ''),
   }))
 
-  const goal = goalForMonth(monthKey(minDate(to, ref)), ref)
+  // La meta: la del mes en que termina el período; si el período sigue, la del mes actual; si es futuro, la de su primer mes.
+  const goalMonth = to < ref ? monthKey(to) : from > ref ? monthKey(from) : monthKey(ref)
+  const goal = goalForMonth(goalMonth, ref)
   const earlyMonth = isFullMonth(period) && monthKey(ref) === monthKey(from) && dayNum(ref) <= 10
 
   const ctx = { ref, period, summary, comparison, cashTotal, low, goal, earlyMonth }
@@ -589,18 +691,20 @@ export function buildDashboard(period: Period, ref: string = today()): Dashboard
     period: { from, to },
     today: ref,
     period_label: periodInWords(period),
+    period_phrase: periodPhrase(period, dataSince),
     summary,
     previous,
     same_days_previous: sameDays,
     comparison,
     series,
-    cash: { total: cashTotal, accounts },
+    cash: { total: cashTotal, accounts, scheduled: scheduledCash(ref) },
     stock: stockValue(),
     receivables: receivables(),
     payables: payables(),
     low_stock: low,
     top_products: top,
     by_channel: channels,
+    goal_month: goalMonth,
     goal,
     alerts,
     insights,
@@ -629,22 +733,27 @@ router.get('/dashboard/export', async (req, res) => {
   const p = d.comparison.previous
   const c = d.comparison.current
   const share = (v: number) => safeDiv(v, s.sales)
-  const delta = (a: number, b: number) => pctChange(a, b)
+  const sameDays = d.comparison.mode === 'same_days'
+  // Variación: siempre sobre los mismos días (columna "Hasta hoy" vs. período anterior), así se puede verificar a mano.
+  const delta = (a: number, b: number) => (d.comparison.partial ? null : pctChange(a, b))
+  type Key = 'sales' | 'cogs' | 'gross_profit' | 'fees' | 'shrinkage' | 'expenses_fixed' | 'expenses_variable' | 'net_result'
+  const line = (concept: string, k: Key, sign: 1 | -1) => ({
+    concept,
+    value: sign * s[k] || 0,
+    share: sign * share(s[k]) || 0,
+    upto: sign * c[k] || 0,
+    prev: sign * p[k] || 0,
+    delta: delta(c[k], p[k]),
+  })
   const resultRows = [
-    { concept: 'Ventas', value: s.sales, share: share(s.sales), prev: p.sales, delta: delta(c.sales, p.sales) },
-    { concept: '− Costo del vino vendido', value: -s.cogs, share: -share(s.cogs), prev: -p.cogs, delta: delta(c.cogs, p.cogs) },
-    { concept: '= Ganancia bruta', value: s.gross_profit, share: share(s.gross_profit), prev: p.gross_profit, delta: delta(c.gross_profit, p.gross_profit) },
-    { concept: '− Comisiones de cobro', value: -s.fees, share: -share(s.fees), prev: -p.fees, delta: delta(c.fees, p.fees) },
-    { concept: '− Mermas, degustaciones y regalos', value: -s.shrinkage, share: -share(s.shrinkage), prev: -p.shrinkage, delta: delta(c.shrinkage, p.shrinkage) },
-    { concept: '− Gastos fijos', value: -s.expenses_fixed, share: -share(s.expenses_fixed), prev: -p.expenses_fixed, delta: delta(c.expenses_fixed, p.expenses_fixed) },
-    {
-      concept: '− Gastos variables',
-      value: -s.expenses_variable,
-      share: -share(s.expenses_variable),
-      prev: -p.expenses_variable,
-      delta: delta(c.expenses_variable, p.expenses_variable),
-    },
-    { concept: '= RESULTADO', value: s.net_result, share: share(s.net_result), prev: p.net_result, delta: delta(c.net_result, p.net_result) },
+    line('Ventas', 'sales', 1),
+    line('− Costo del vino vendido', 'cogs', -1),
+    line('= Ganancia bruta', 'gross_profit', 1),
+    line('− Comisiones de cobro', 'fees', -1),
+    line('− Mermas, degustaciones y regalos', 'shrinkage', -1),
+    line('− Gastos fijos', 'expenses_fixed', -1),
+    line('− Gastos variables', 'expenses_variable', -1),
+    line('= RESULTADO', 'net_result', 1),
   ]
   const snapshot = [
     { concept: 'Plata disponible (todas las cuentas)', value: d.cash.total },
@@ -652,7 +761,8 @@ router.get('/dashboard/export', async (req, res) => {
     { concept: 'Debés (compras y gastos sin pagar)', value: d.payables.total },
     { concept: 'Stock valorizado al costo', value: d.stock.value },
   ]
-  await sendWorkbook(res, excelFilename(`inicio-${period.from}-al-${period.to}`), [
+  const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)
+  await sendWorkbook(res, excelFilename(`resumen-${d.period_label}`), [
     {
       name: 'Resultado',
       title: `Así se armó tu resultado · ${d.period_label}`,
@@ -660,16 +770,25 @@ router.get('/dashboard/export', async (req, res) => {
       totals: false,
       columns: [
         { header: 'Concepto', key: 'concept', width: 38 },
-        { header: 'Este período', key: 'value', type: 'money' },
+        { header: `Todo el período (${d.period_label})`, key: 'value', type: 'money', width: 20 },
         { header: 'De cada $100 vendidos', key: 'share', type: 'percent', width: 18 },
-        { header: d.comparison.mode === 'same_days' ? 'Mismos días del período anterior' : 'Período anterior', key: 'prev', type: 'money', width: 22 },
+        ...(sameDays ? [{ header: `Hasta hoy (${rangeInWords(c.from, c.to)})`, key: 'upto', type: 'money' as const, width: 22 }] : []),
+        {
+          header: sameDays ? `Mismos días del período anterior (${rangeInWords(p.from, p.to)})` : `Período anterior (${periodInWords({ from: p.from, to: p.to })})`,
+          key: 'prev',
+          type: 'money',
+          width: 24,
+        },
         { header: 'Variación', key: 'delta', type: 'percent' },
       ],
       rows: resultRows,
       notes: [
         'Resultado = Ventas − costo del vino vendido − comisiones − mermas − gastos. Comprar vino NO es gasto: se vuelve costo recién cuando vendés la botella.',
         'Criterio "devengado": cada venta y cada gasto cuentan en su fecha, aunque se cobren o paguen después. Por eso el resultado no coincide con la plata que entró a la caja.',
-        `"De cada $100 vendidos" muestra cuánto se lleva cada concepto de cada $100 que vendiste. ${d.comparison.detail}`,
+        '"De cada $100 vendidos" muestra cuánto se lleva cada concepto de cada $100 que vendiste (en todo el período).',
+        sameDays
+          ? `La variación compara "Hasta hoy" con los mismos días del período anterior. ${d.comparison.detail}`
+          : `La variación compara este período con el anterior. ${d.comparison.detail}`,
       ],
     },
     {
@@ -691,7 +810,7 @@ router.get('/dashboard/export', async (req, res) => {
       title: 'Ventas, gastos y resultado — últimos 12 meses',
       subtitle: periodSubtitle(d.series[0].from, d.series[d.series.length - 1].to),
       columns: [
-        { header: 'Mes', key: 'label', value: (m: MonthlyPoint) => monthLabelLong(m.month), width: 16 },
+        { header: 'Mes', key: 'label', value: (m: MonthlyPoint) => cap(monthLabelLong(m.month)), width: 16 },
         { header: 'Ventas', key: 'sales', type: 'money' },
         { header: 'Costo del vino', key: 'cogs', type: 'money' },
         { header: 'Comisiones', key: 'fees', type: 'money' },

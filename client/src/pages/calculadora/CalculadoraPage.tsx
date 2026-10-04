@@ -4,11 +4,11 @@
 // Nada se guarda, salvo «Usar este precio» (PUT /api/products/:id, con confirmación).
 //
 // Links profundos: /calculadora?tab=precio|ganancia|equilibrio|simulador|cajas  ·  /calculadora?vino=ID
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Coins, Package, Scale, Sparkles, Tag } from 'lucide-react'
 import type { CalculatorContext } from '@shared/pricing'
-import { ErrorState, HelpBox, Loading, PageHeader, Tabs, type TabItem } from '@/components/ui'
+import { ErrorState, HelpBox, Loading, PageHeader, Tabs, useToast, type TabItem } from '@/components/ui'
 import { useApi } from '@/lib/queries'
 import { useLocalState } from '@/lib/hooks'
 import { monthsText } from './parts'
@@ -66,18 +66,19 @@ export default function CalculadoraPage() {
       />
       <HelpBox id="calculadora">
         <p>
-          Acá podés <b>simular sin miedo</b>: nada de lo que escribas cambia tus datos. La única excepción es el botón <b>«Usar este precio»</b>, que te pregunta antes de cambiarle el precio a un vino.
+          Acá podés <b>simular sin miedo</b>: nada de lo que escribas cambia tus datos. La única excepción es el botón <b>«Usar este precio»</b>, que te pregunta antes de cambiarle el precio a un
+          vino.
         </p>
         <p>
           {months ? (
             <>
-              Los números de base (gastos fijos, precio y costo promedio, botellas por mes) salen de tus <b>últimos meses completos: {months}</b>. El mes en curso no cuenta porque está a medio terminar y
-              engañaría los promedios.
+              Los números de base (gastos fijos, precio y costo promedio, botellas por mes) salen de tus <b>últimos meses completos: {months}</b>. El mes en curso no cuenta porque está a medio
+              terminar y engañaría los promedios.
             </>
           ) : (
             <>
-              Cuando cargues ventas y gastos, los números de base (gastos fijos, precio y costo promedio, botellas por mes) se completan solos con tus <b>últimos 3 meses completos</b>. Mientras tanto usamos
-              números de ejemplo.
+              Cuando cargues ventas y gastos, los números de base (gastos fijos, precio y costo promedio, botellas por mes) se completan solos con tus <b>últimos 3 meses completos</b>. Mientras tanto
+              usamos números de ejemplo.
             </>
           )}
         </p>
@@ -86,11 +87,13 @@ export default function CalculadoraPage() {
           quedarte con 40 % tenés que venderlo a <b>$ 10.700</b>. Esa diferencia entre margen y markup es el error de precios más común.
         </p>
         <p>
-          <b>¿Por qué importa?</b> Con inflación, poner precios «a ojo» es la forma más rápida de trabajar gratis. Con estas cuentas sabés cuánto te deja cada botella, cuánto tenés que vender para cubrir los
-          gastos y qué pasa si algo cambia.
+          <b>¿Por qué importa?</b> Con inflación, poner precios «a ojo» es la forma más rápida de trabajar gratis. Con estas cuentas sabés cuánto te deja cada botella, cuánto tenés que vender para
+          cubrir los gastos y qué pasa si algo cambia.
         </p>
       </HelpBox>
-      <div className="mt-6">{q.isLoading ? <Loading label="Trayendo los números de tu negocio…" /> : q.error ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : q.data ? <Calculadora ctx={q.data} /> : null}</div>
+      <div className="mt-6">
+        {q.isLoading ? <Loading label="Trayendo los números de tu negocio…" /> : q.error ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : q.data ? <Calculadora ctx={q.data} /> : null}
+      </div>
     </>
   )
 }
@@ -105,6 +108,7 @@ function useTabState<T>(init: () => T): [T, (patch: Partial<T>) => void, () => v
 
 function Calculadora({ ctx }: { ctx: CalculatorContext }) {
   const [params, setParams] = useSearchParams()
+  const toast = useToast()
   const [stored, setStored] = useLocalState<TabKey>('calculadora.tab', 'precio')
   const urlTab = params.get('tab')
   const tab: TabKey = isTab(urlTab) ? urlTab : isTab(stored) ? stored : 'precio'
@@ -118,11 +122,20 @@ function Calculadora({ ctx }: { ctx: CalculatorContext }) {
   const [cajas, setCajas, resetCajas] = useTabState<CajasState>(useCallback(() => defaultCajas(initCtx), [initCtx]))
 
   // ?vino=ID → abre «¿A cuánto lo vendo?» con ese vino cargado (link desde otras pantallas).
+  // `handled` evita procesar dos veces el mismo link (y mostrar dos veces el aviso).
+  const handled = useRef<string | null>(null)
   useEffect(() => {
-    const id = Number(params.get('vino'))
-    if (!id) return
+    const raw = params.get('vino')
+    if (!raw) {
+      handled.current = null
+      return
+    }
+    if (handled.current === raw) return
+    handled.current = raw
+    const id = Number(raw)
     const p = ctx.products.find((x) => x.id === id)
     if (p) setPrecio({ productId: p.id, cost: p.unit_cost, freight: 0 })
+    else toast.error('No encontramos ese vino entre los activos. Elegilo de la lista (si está desactivado, activalo en «Vinos y stock»).')
     const next = new URLSearchParams(params)
     next.delete('vino')
     next.set('tab', 'precio')

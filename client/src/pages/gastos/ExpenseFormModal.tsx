@@ -1,7 +1,7 @@
 // Formulario de gasto (nuevo o editar). Pensado para cargar rápido y sin dudas:
 // tocás la categoría (ya sabe si es fijo o variable), escribís qué fue y cuánto, y decís si ya lo pagaste.
 // Abajo se explica en criollo qué va a pasar al guardar.
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Banknote, ChevronDown, Clock, Repeat, TrendingDown, Waves, type LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
@@ -149,14 +149,26 @@ export function ExpenseFormModal({
   const category = f.other ? f.otherText.trim() : (f.category ?? '')
   const day = Math.min(Number(f.date.slice(8, 10)) || 1, 28)
   const partialPaid = isEdit && expense!.status === 'parcial'
+  /** Al editar: ya estaba pagado del todo (con uno o varios pagos). */
+  const wasPaid = isEdit && expense!.status === 'pagado' && expense!.payments.length > 0
+  const initialAccount = expense?.payments[0]?.account_id ?? null
+  /** Al editar un gasto pagado: no tocaron ni la cuenta ni el monto → los pagos quedan como están. */
+  const sameAccount = wasPaid && f.accountId === initialAccount
+  const sameAmount = wasPaid && f.amount != null && Math.abs(f.amount - expense!.amount) < 0.005
   const account = accounts.find((a) => a.id === f.accountId)
+  const paidAccounts = isEdit ? [...new Set(expense!.payments.map((p) => p.account_name ?? 'la cuenta'))].join(' y ') : ''
   // "Se debita solo" necesita saber de qué cuenta: solo vale si ya lo pagaste desde una.
   const autoPaid = f.repeat && f.repeatAutoPaid && f.paid === 'si'
 
   const errors = {
     category: !category ? (f.other ? 'Escribí el nombre de la categoría.' : 'Elegí una categoría (o «Otra…» y escribila).') : undefined,
     description: !f.description.trim() ? 'Contá en pocas palabras qué pagaste.' : undefined,
-    amount: !f.amount || f.amount <= 0 ? '¿Cuánto fue? Tiene que ser más de $ 0.' : undefined,
+    amount:
+      !f.amount || f.amount <= 0
+        ? '¿Cuánto fue? Tiene que ser más de $ 0.'
+        : partialPaid && f.paid === 'no' && f.amount < expense!.paid - 0.01
+          ? `Ya pagaste ${money(expense!.paid)} de este gasto: el monto no puede ser menor. Si un pago estaba mal, borralo desde el detalle.`
+          : undefined,
     date: !f.date ? 'Poné la fecha del gasto.' : undefined,
     // Si todavía no hay cuentas cargadas, el sistema usa la caja principal (no trabamos el formulario).
     account: f.paid === 'si' && !f.accountId && activeAccounts.length > 0 ? 'Elegí de qué cuenta salió la plata.' : undefined,
@@ -165,6 +177,8 @@ export function ExpenseFormModal({
   const hasErrors = Object.values(errors).some(Boolean)
   const err = (k: keyof typeof errors) => (showErrors ? errors[k] : undefined)
 
+  // Candado para no mandar dos veces el mismo formulario (dos Enter seguidos llegan antes de que se vuelva a dibujar).
+  const submitting = useRef(false)
   const save = useApiMutation(
     (body: Record<string, unknown>) => (isEdit ? api.put<ExpenseDetail>(`/expenses/${expense!.id}`, body) : api.post<ExpenseDetail>('/expenses', body)),
     {
@@ -184,25 +198,33 @@ export function ExpenseFormModal({
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
+    // Enter dos veces seguidas (o doble clic) no tiene que cargar el gasto dos veces.
+    if (save.isPending || submitting.current) return
     if (hasErrors) {
       setShowErrors(true)
       return
     }
-    save.mutate({
-      date: f.date,
-      category,
-      description: f.description.trim(),
-      amount: f.amount,
-      nature: f.nature,
-      supplier_id: f.supplierId,
-      event_id: f.eventId,
-      notes: f.notes.trim() || null,
-      paid: f.paid === 'si',
-      account_id: f.paid === 'si' ? f.accountId : null,
-      due_date: f.paid === 'no' && f.dueDate ? f.dueDate : null,
-      repeat_monthly: !isEdit && f.repeat,
-      repeat_auto_paid: !isEdit && autoPaid,
-    })
+    submitting.current = true
+    save.mutate(
+      {
+        date: f.date,
+        category,
+        description: f.description.trim(),
+        amount: f.amount,
+        nature: f.nature,
+        supplier_id: f.supplierId,
+        event_id: f.eventId,
+        notes: f.notes.trim() || null,
+        paid: f.paid === 'si',
+        // Si ya estaba pagado (quizás en partes, desde varias cuentas) y no cambiaron la cuenta, no la mandamos:
+        // así el sistema conserva los pagos tal cual en vez de juntarlos en uno solo.
+        account_id: f.paid === 'si' ? (sameAccount ? null : f.accountId) : null,
+        due_date: f.paid === 'no' && f.dueDate ? f.dueDate : null,
+        repeat_monthly: !isEdit && f.repeat,
+        repeat_auto_paid: !isEdit && autoPaid,
+      },
+      { onSettled: () => (submitting.current = false) },
+    )
   }
 
   // "Qué va a pasar al guardar": la explicación en criollo de lo que hace el sistema.
@@ -218,13 +240,32 @@ export function ExpenseFormModal({
         </>
       ),
     })
-    if (f.paid === 'si') {
+    if (f.paid === 'si' && sameAccount && sameAmount) {
+      out.push({
+        icon: Banknote,
+        text: (
+          <>
+            No se mueve plata: {expense!.payments.length === 1 ? 'el pago que ya registraste' : `los ${expense!.payments.length} pagos que ya registraste`} ({money(expense!.paid)}{' '}
+            desde {paidAccounts}) {expense!.payments.length === 1 ? 'queda' : 'quedan'} como {expense!.payments.length === 1 ? 'está' : 'están'}.
+          </>
+        ),
+      })
+    } else if (f.paid === 'si') {
       const willBe = account ? account.balance - f.amount + (isEdit ? expense!.payments.filter((p) => p.account_id === account.id).reduce((s, p) => s + p.amount, 0) : 0) : null
       out.push({
         icon: Banknote,
         text: (
           <>
-            Sale <b>{money(f.amount)}</b> de <b>{account?.name ?? 'la cuenta elegida'}</b>
+            {isEdit && expense!.paid > 0.009 ? (
+              <>
+                Queda un solo pago de <b>{money(f.amount)}</b> desde <b>{account?.name ?? 'la cuenta elegida'}</b>, en lugar de lo que habías registrado ({money(expense!.paid)}{' '}
+                desde {paidAccounts})
+              </>
+            ) : (
+              <>
+                Sale <b>{money(f.amount)}</b> de <b>{account?.name ?? 'la cuenta elegida'}</b>
+              </>
+            )}
             {willBe != null && (
               <>
                 {' '}
@@ -237,12 +278,31 @@ export function ExpenseFormModal({
         ),
       })
     } else {
+      if (wasPaid) {
+        out.push({
+          icon: Banknote,
+          text: (
+            <>
+              Se borra{expense!.payments.length === 1 ? ' el pago' : 'n los pagos'} que habías registrado: <b>{money(expense!.paid)}</b> vuelven a {paidAccounts}.
+            </>
+          ),
+        })
+      } else if (partialPaid) {
+        out.push({
+          icon: Banknote,
+          text: (
+            <>
+              Lo que ya pagaste ({money(expense!.paid)}) queda registrado. Faltaría pagar <b>{money(Math.max(0, f.amount - expense!.paid))}</b>.
+            </>
+          ),
+        })
+      }
       out.push({
         icon: Clock,
         text: (
           <>
             Queda <b>por pagar</b>
-            {f.dueDate ? <>, vence el {fmtDate(f.dueDate)}</> : ''}. No sale plata de ninguna cuenta hasta que toques «Registrar pago».
+            {f.dueDate ? <>, vence el {fmtDate(f.dueDate)}</> : ''}. No sale {partialPaid ? 'más ' : ''}plata de ninguna cuenta hasta que toques «Registrar pago».
           </>
         ),
       })
@@ -259,7 +319,7 @@ export function ExpenseFormModal({
       })
     }
     return out
-  }, [f, account, isEdit, expense, day, autoPaid])
+  }, [f, account, isEdit, expense, day, autoPaid, sameAccount, sameAmount, wasPaid, partialPaid, paidAccounts])
 
   return (
     <Modal

@@ -5,6 +5,7 @@ import {
   MARGIN_HEALTHY,
   analyzePrice,
   arsToUsd,
+  baseFromContext,
   boxDeal,
   breakEven,
   marginVerdict,
@@ -293,16 +294,74 @@ describe('boxDeal', () => {
     expect(Math.abs(atZero.profit)).toBeLessThan(5)
   })
 
+  it('los umbrales se redondean para abajo: descontando lo que dice la pantalla nunca quedás debajo', () => {
+    // Combinaciones donde redondear "al más cercano" pasaba el límite por centésimas.
+    for (const [price, cost, fee] of [
+      [10000, 6000, 0],
+      [18586.2, 11142.87, 2.24],
+      [9999, 5555, 6.29],
+      [12345, 7777, 1.5],
+      [7300, 4100, 3.5],
+    ]) {
+      const base = { price, cost, units: 6, iibb_pct: 3.5, fee_pct: fee }
+      const r = boxDeal({ ...base, discount_pct: 0 })
+      const atMax = boxDeal({ ...base, discount_pct: r.max_discount_pct })
+      expect(atMax.margin, `${price}/${cost}`).toBeGreaterThanOrEqual(0.25 - 1e-4)
+      const atZero = boxDeal({ ...base, discount_pct: r.break_even_discount_pct })
+      expect(atZero.profit, `${price}/${cost}`).toBeGreaterThanOrEqual(-0.01)
+      // …y apenas un poco más ya cruza el límite.
+      expect(boxDeal({ ...base, discount_pct: r.break_even_discount_pct + 0.05 }).profit).toBeLessThan(0)
+    }
+  })
+
   it('si ni sin descuento llegás al margen mínimo, el descuento máximo es 0', () => {
     const r = boxDeal({ price: 7000, cost: 6000, units: 6, discount_pct: 5, min_margin: 0.25 })
     expect(r.max_discount_pct).toBe(0)
-    expect(r.break_even_discount_pct).toBeCloseTo((1 - 6000 / 7000) * 100, 2)
+    // 14,2857 % → 14,28 % (para abajo: con 14,28 % todavía no perdés).
+    expect(r.break_even_discount_pct).toBe(14.28)
   })
 
   it('valida los datos', () => {
     expect(boxDeal({ price: 0, cost: 100, units: 6, discount_pct: 0 }).ok).toBe(false)
     expect(boxDeal({ price: 100, cost: 50, units: 0, discount_pct: 0 }).error).toContain('al menos 1 botella')
     expect(boxDeal({ price: 100, cost: 50, units: 6, discount_pct: 100 }).ok).toBe(false)
+  })
+})
+
+describe('baseFromContext (mes promedio para simular)', () => {
+  const ctx = {
+    avg_sales: 9590477.65,
+    avg_bottles: 516,
+    avg_price_per_bottle: 18586.2,
+    avg_cost_per_bottle: 11142.87,
+    avg_cogs: 5749719.77,
+    avg_fixed_expenses: 2262533.33,
+    avg_fees: 214817.87,
+    avg_shrinkage: 65391.91,
+    avg_variable_expenses: 871240.12,
+  }
+
+  it('usa los promedios sin redondear y reproduce el resultado del mes (al peso)', () => {
+    const b = baseFromContext(ctx)!
+    expect(b.bottles).toBeCloseTo(9590477.65 / 18586.2, 9)
+    expect(b.variable_pct).toBeCloseTo(((214817.87 + 65391.91 + 871240.12) / 9590477.65) * 100, 9)
+    // Resultado como lo calcula el motor de finanzas: ventas − CMV − comisiones − mermas − gastos.
+    const expected = ctx.avg_sales - ctx.avg_cogs - ctx.avg_fees - ctx.avg_shrinkage - ctx.avg_variable_expenses - ctx.avg_fixed_expenses
+    const r = simulate({ base: b })
+    expect(r.before.sales).toBeCloseTo(ctx.avg_sales, 1)
+    expect(r.before.cogs).toBeCloseTo(ctx.avg_cogs, 1)
+    expect(Math.abs(r.before.result - expected)).toBeLessThan(0.02)
+    // Sin el CMV (versiones viejas del contexto) usa el costo por botella: casi igual.
+    const { avg_cogs: _omit, ...withoutCogs } = ctx
+    expect(Math.abs(simulate({ base: baseFromContext(withoutCogs)! }).before.result - expected)).toBeLessThan(5)
+    // Con números redondeados (516 botellas, $ 18.586, 12,01 %) se iba más de $ 500.
+    const rounded = simulate({ base: { bottles: 516, avg_price: 18586, avg_cost: 11143, fixed: 2262533, variable_pct: 12.01 } })
+    expect(Math.abs(rounded.before.result - expected)).toBeGreaterThan(400)
+  })
+
+  it('sin ventas devuelve null', () => {
+    expect(baseFromContext({ ...ctx, avg_sales: 0 })).toBeNull()
+    expect(baseFromContext({ ...ctx, avg_price_per_bottle: 0 })).toBeNull()
   })
 })
 

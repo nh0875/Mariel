@@ -288,7 +288,14 @@ export default function ProveedorDetailPage() {
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         {/* Datos de contacto */}
-        <Card title="Datos de contacto" actions={<Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditOpen(true)} aria-label="Editar datos de contacto" />}>
+        <Card
+          title="Datos de contacto"
+          actions={
+            <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditOpen(true)} aria-label="Editar datos de contacto">
+              Cambiar
+            </Button>
+          }
+        >
           {s.contact_name || s.phone || s.email || s.address || s.tax_id || s.notes ? (
             <ul className="space-y-2.5">
               {s.contact_name && <ContactRow icon={UserRound}>{s.contact_name}</ContactRow>}
@@ -342,7 +349,7 @@ export default function ProveedorDetailPage() {
               text: `Todas las botellas que le compraste. El costo real promedio (con flete) fue ${money(stats.avg_cost_per_bottle)} por botella.`,
             }}
             value={int(stats.bottles)}
-            hint={stats.bottles ? `${stats.bottles >= 6 ? `≈ ${boxes(stats.bottles)} · ` : ''}${nb(money(stats.avg_cost_per_bottle, { decimals: 0 }))} c/u` : '—'}
+            hint={stats.bottles ? `${stats.bottles >= 6 ? `≈ ${nb(boxes(stats.bottles))} · ` : ''}${nb(`${money(stats.avg_cost_per_bottle, { decimals: 0 })} c/u`)}` : '—'}
           />
           <Kpi
             label="Le debés"
@@ -355,11 +362,11 @@ export default function ProveedorDetailPage() {
               stats.balance <= 0.01 ? (
                 'Estás al día.'
               ) : stats.overdue > 0.01 ? (
-                <b className="text-bad">{money(stats.overdue, { decimals: 0 })} ya vencido</b>
+                <b className="text-bad">{nb(`${money(stats.overdue, { decimals: 0 })} ya vencido`)}</b>
               ) : (
                 [
-                  stats.purchases_balance > 0.01 && `compras ${money(stats.purchases_balance, { decimals: 0 })}`,
-                  stats.expenses_balance > 0.01 && `gastos ${money(stats.expenses_balance, { decimals: 0 })}`,
+                  stats.purchases_balance > 0.01 && `compras ${nb(money(stats.purchases_balance, { decimals: 0 }))}`,
+                  stats.expenses_balance > 0.01 && `gastos ${nb(money(stats.expenses_balance, { decimals: 0 }))}`,
                 ]
                   .filter(Boolean)
                   .join(' · ')

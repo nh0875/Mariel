@@ -12,7 +12,7 @@ import { monthLabelLong, today } from '@shared/dates'
 import { useApi, useSettings } from '@/lib/queries'
 import { usePeriod } from '@/lib/period'
 import { dateLong, int, pct } from '@/lib/format'
-import { compact, money0 } from './fmt'
+import { compact, money0, per100Map } from './fmt'
 import { ErrorState, ExportButton, HelpBox, InfoTip, Loading, Money, PageHeader, PeriodPicker, StatTile } from '@/components/ui'
 import { ChartCard, ColumnChart, DonutChart, Legend, RankBars, ResultChart } from '@/components/charts'
 import { ResultWaterfall } from './ResultWaterfall'
@@ -35,18 +35,19 @@ function Per100Bar({ d }: { d: DashboardResponse }) {
   if (s.sales <= 0) return null
   const costs = s.cogs + s.fees + s.shrinkage + s.expenses
   const total = Math.max(s.sales, costs)
+  // Los "$ X de cada $ 100" salen del mismo reparto que la frase de arriba y que «Así se armó tu resultado»: siempre cierran.
+  const p = per100Map(s)!
   const segs = [
-    { label: 'El vino', value: s.cogs, color: CHART_COLORS.costo },
-    { label: 'Comisiones y mermas', value: s.fees + s.shrinkage, color: CHART_COLORS.extra },
-    { label: 'Gastos', value: s.expenses, color: CHART_COLORS.gastos },
-    ...(s.net_result > 0 ? [{ label: 'Te quedó', value: s.net_result, color: CHART_COLORS.ganancia }] : []),
+    { label: 'El vino', value: s.cogs, p100: p.cogs, color: CHART_COLORS.costo },
+    { label: 'Comisiones y mermas', value: s.fees + s.shrinkage, p100: p.fees + p.shrinkage, color: CHART_COLORS.extra },
+    { label: 'Gastos', value: s.expenses, p100: p.fixed + p.variable, color: CHART_COLORS.gastos },
+    ...(s.net_result > 0 ? [{ label: 'Te quedó', value: s.net_result, p100: p.net, color: CHART_COLORS.ganancia }] : []),
   ].filter((x) => x.value > 0)
-  const per100 = (v: number) => Math.round((v / s.sales) * 100)
   return (
     <div className="mt-4 rounded-xl bg-cream/80 p-3.5">
       <p className="mb-2 text-[13px] font-bold text-ink">De cada $ 100 que vendiste…</p>
       <div className="relative">
-        <div className="flex h-3.5 gap-[2px] overflow-hidden rounded-full" role="img" aria-label={segs.map((x) => `${x.label}: $ ${per100(x.value)}`).join(', ')}>
+        <div className="flex h-3.5 gap-[2px] overflow-hidden rounded-full" role="img" aria-label={segs.map((x) => `${x.label}: $ ${x.p100}`).join(', ')}>
           {segs.map((x) => (
             <span key={x.label} className="h-full first:rounded-l-full last:rounded-r-full" style={{ width: `${(x.value / total) * 100}%`, background: x.color }} title={`${x.label}: ${money0(x.value)}`} />
           ))}
@@ -60,7 +61,7 @@ function Per100Bar({ d }: { d: DashboardResponse }) {
           <li key={x.label} className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: x.color }} aria-hidden />
             <span className="min-w-0 truncate">{x.label}</span>
-            <b className="vh-num ml-auto text-ink">$ {per100(x.value)}</b>
+            <b className="vh-num ml-auto text-ink">$&nbsp;{x.p100}</b>
           </li>
         ))}
       </ul>
@@ -95,18 +96,30 @@ function PeriodNumbers({ d }: { d: DashboardResponse }) {
   const c = d.comparison
   const net = s.net_result
   const prevNet = c.previous.net_result
+  // Si el período anterior está cargado a medias, no mostramos variaciones (engañarían: "+900 %").
+  const cmp = (v: number | null) => (c.partial ? null : v)
+  // Lo cargado con fecha posterior a hoy suma en el número grande, pero la flecha compara solo hasta hoy.
+  const after = c.after_today
+  const afterExp = !c.partial && after && after.expenses > 0.5 ? after.expenses : 0
+  const afterSales = !c.partial && after && after.sales > 0.5 ? after.sales : 0
   // Principio del mes en curso: los gastos fijos ya están y las ventas recién empiezan.
   const earlyMonth = c.mode === 'same_days' && d.period.from.slice(0, 7) === d.today.slice(0, 7) && Number(d.today.slice(8, 10)) <= 10 && s.expenses_fixed > 0
   // La variación % del resultado solo tiene sentido si los dos son del mismo signo.
-  const netDelta = Math.sign(c.current.net_result) === Math.sign(prevNet) && prevNet !== 0 ? pctChange(c.current.net_result, prevNet) : null
+  const netDelta = cmp(Math.sign(c.current.net_result) === Math.sign(prevNet) && prevNet !== 0 ? pctChange(c.current.net_result, prevNet) : null)
+  const p100 = per100Map(s)
   const sentence =
-    s.sales <= 0
+    s.sales <= 0 || !p100
       ? net < 0
         ? `Todavía no hay ventas en este período y ya hay ${money0(s.expenses + s.fees + s.shrinkage)} de gastos.`
         : 'Todavía no hay ventas en este período.'
       : net >= 0
-        ? `Ganaste ${money0(net)}: de cada $ 100 que vendiste te quedaron $ ${Math.round(s.net_margin * 100)} limpios.`
-        : `Perdiste ${money0(-net)}: por cada $ 100 que vendiste se fueron $ ${Math.round(((s.sales - net) / s.sales) * 100)} entre el vino y los gastos.`
+        ? `Ganaste ${money0(net)}: de cada $ 100 que vendiste te quedaron $ ${p100.net} limpios.`
+        : `Perdiste ${money0(-net)}: por cada $ 100 que vendiste se fueron $ ${100 + p100.net} entre el vino y los gastos.`
+  const uptoNote = (what: string, value: number, amount: number) => (
+    <span className="mt-1 block">
+      Incluye {money0(amount)} de {what} con fecha más adelante (ya cargados). La flecha compara solo hasta hoy: {money0(value)}.
+    </span>
+  )
   return (
     <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <StatTile
@@ -125,7 +138,15 @@ function PeriodNumbers({ d }: { d: DashboardResponse }) {
                 Tranqui: es principio de mes, ya se cargaron los gastos fijos ({money0(s.expenses_fixed)}) y las ventas recién arrancan. El resultado mejora a medida que vendés.
               </p>
             )}
-            {netDelta == null && (c.current.sales > 0 || c.previous.sales > 0) && (
+            {(afterExp > 0 || afterSales > 0) && (
+              <p className="mt-1.5 text-[13px] leading-snug text-ink-soft">
+                La flecha compara solo lo que va hasta hoy (<Money decimals={0} value={c.current.net_result} tone="auto" className="font-bold" />), porque hay
+                {afterExp > 0 ? ` ${money0(afterExp)} de gastos` : ''}
+                {afterExp > 0 && afterSales > 0 ? ' y' : ''}
+                {afterSales > 0 ? ` ${money0(afterSales)} de ventas` : ''} cargados con fecha más adelante.
+              </p>
+            )}
+            {!c.partial && netDelta == null && (c.current.sales > 0 || c.previous.sales > 0) && (
               <p className="mt-1">
                 {capitalize(c.label.replace(/^vs\. /, ''))}:{' '}
                 <Money decimals={0} value={prevNet} tone="auto" className="font-bold" />
@@ -139,18 +160,28 @@ function PeriodNumbers({ d }: { d: DashboardResponse }) {
         label="Ventas"
         term="ventas"
         value={<Amount value={s.sales} />}
-        delta={pctChange(c.current.sales, c.previous.sales)}
+        delta={cmp(pctChange(c.current.sales, c.previous.sales))}
         deltaLabel={c.label}
-        hint={`${int(s.sales_count)} ${s.sales_count === 1 ? 'venta' : 'ventas'} · ${int(s.bottles_sold)} ${s.bottles_sold === 1 ? 'botella' : 'botellas'}`}
+        hint={
+          <>
+            {`${int(s.sales_count)} ${s.sales_count === 1 ? 'venta' : 'ventas'} · ${int(s.bottles_sold)} ${s.bottles_sold === 1 ? 'botella' : 'botellas'}`}
+            {afterSales > 0 && uptoNote('ventas', c.current.sales, afterSales)}
+          </>
+        }
       />
       <StatTile
         label="Gastos"
         term="gastos"
         value={<Amount value={s.expenses} />}
-        delta={pctChange(c.current.expenses, c.previous.expenses)}
+        delta={cmp(pctChange(c.current.expenses, c.previous.expenses))}
         upIsGood={false}
         deltaLabel={c.label}
-        hint={`Fijos ${compact(s.expenses_fixed)} · variables ${compact(s.expenses_variable)}`}
+        hint={
+          <>
+            {`Fijos ${compact(s.expenses_fixed)} · variables ${compact(s.expenses_variable)}`}
+            {afterExp > 0 && uptoNote('gastos', c.current.expenses, afterExp)}
+          </>
+        }
       />
       <StatTile
         label="Margen bruto"
@@ -159,8 +190,8 @@ function PeriodNumbers({ d }: { d: DashboardResponse }) {
         hint={
           s.sales > 0 ? (
             <>
-              {c.current.sales > 0 && c.previous.sales > 0 && <PointsDelta cur={c.current.gross_margin} prev={c.previous.gross_margin} label={c.label} />}
-              <span className="mt-1 block">De cada $ 100, quedan $&nbsp;{Math.round(s.gross_margin * 100)} después de pagar el vino.</span>
+              {!c.partial && c.current.sales > 0 && c.previous.sales > 0 && <PointsDelta cur={c.current.gross_margin} prev={c.previous.gross_margin} label={c.label} />}
+              <span className="mt-1 block">De cada $&nbsp;100, quedan $&nbsp;{Math.round(s.gross_margin * 100)} después de pagar el vino.</span>
             </>
           ) : (
             'Se calcula cuando hay ventas.'
@@ -171,7 +202,7 @@ function PeriodNumbers({ d }: { d: DashboardResponse }) {
         label="Ticket promedio"
         term="ticket_promedio"
         value={s.sales_count > 0 ? <Amount value={s.avg_ticket} /> : '—'}
-        delta={c.current.sales_count > 0 && c.previous.sales_count > 0 ? pctChange(c.current.avg_ticket, c.previous.avg_ticket) : null}
+        delta={cmp(c.current.sales_count > 0 && c.previous.sales_count > 0 ? pctChange(c.current.avg_ticket, c.previous.avg_ticket) : null)}
         deltaLabel={c.label}
         hint={s.sales_count > 0 ? `Cada cliente gasta en promedio ${money0(s.avg_ticket)} por compra.` : 'Ventas ÷ cantidad de ventas.'}
       />
@@ -204,7 +235,16 @@ function MoneyToday({ d }: { d: DashboardResponse }) {
           term="caja"
           tone="sky"
           value={<Amount value={d.cash.total} className={d.cash.total < 0 ? 'text-bad' : undefined} />}
-          hint={accounts.length ? accounts.map((a) => `${a.name.replace(/\s*\(.*\)$/, '')} ${compact(a.balance)}`).join(' · ') : 'Todavía no hay cuentas.'}
+          hint={
+            <>
+              {accounts.length ? accounts.map((a) => `${a.name.replace(/\s*\(.*\)$/, '')} ${compact(a.balance)}`).join(' · ') : 'Todavía no hay cuentas.'}
+              {d.cash.scheduled.out > 0.5 && (
+                <span className="mt-1 block">
+                  Ya descuenta {money0(d.cash.scheduled.out)} de pagos cargados con fecha más adelante (por ejemplo, gastos fijos marcados como pagados).
+                </span>
+              )}
+            </>
+          }
         />
         <StatTile
           label="Te deben"
@@ -263,6 +303,7 @@ function Charts({ d }: { d: DashboardResponse }) {
   }))
   const last = d.series[d.series.length - 1]
   const lastIsCurrent = last && last.month === d.today.slice(0, 7)
+  const lastName = last ? capitalize(monthLabelLong(last.month).split(' ')[0]) : ''
   const yearSales = d.series.reduce((a, m) => a + m.sales, 0)
   const yearNet = d.series.reduce((a, m) => a + m.net_result, 0)
   const channelTotal = d.by_channel.reduce((a, c) => a + c.sales, 0)
@@ -275,7 +316,7 @@ function Charts({ d }: { d: DashboardResponse }) {
         subtitle={
           <>
             En 12 meses vendiste <b className="text-ink">{money0(yearSales)}</b> y {yearNet >= 0 ? 'ganaste' : 'perdiste'}{' '}
-            <b className={yearNet >= 0 ? 'text-good' : 'text-bad'}>{money0(Math.abs(yearNet))}</b>.{lastIsCurrent ? ` ${last.label} todavía no terminó.` : ''}
+            <b className={yearNet >= 0 ? 'text-good' : 'text-bad'}>{money0(Math.abs(yearNet))}</b>.{lastIsCurrent ? ` ${lastName} todavía no terminó: su barra es parcial.` : ''}
           </>
         }
         legend={
@@ -306,9 +347,8 @@ function Charts({ d }: { d: DashboardResponse }) {
             { key: 'costos', label: 'Lo que costó', color: CHART_COLORS.gastos },
           ]}
         />
-        <p className="mt-4 mb-1 flex items-center gap-1.5 px-1 text-[13.5px] font-bold text-ink">
-          La diferencia: resultado de cada mes
-          <span className="font-normal text-muted">(verde azulado si ganaste, coral si perdiste)</span>
+        <p className="mt-4 mb-1 px-1 text-[13.5px] font-bold text-ink">
+          La diferencia: resultado de cada mes <span className="font-normal text-muted">(verde azulado si ganaste, coral si perdiste)</span>
         </p>
         <ResultChart data={months} valueKey="resultado" height={150} />
       </ChartCard>
@@ -316,7 +356,7 @@ function Charts({ d }: { d: DashboardResponse }) {
       <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
         <ChartCard
           title="¿De dónde vienen las ventas?"
-          subtitle={`Ventas por canal en ${d.period_label}.`}
+          subtitle={`Ventas por canal ${d.period_phrase}.`}
           table={{
             columns: [
               { key: 'label', header: 'Canal' },
@@ -337,7 +377,7 @@ function Charts({ d }: { d: DashboardResponse }) {
         </ChartCard>
         <ChartCard
           title="Tus vinos estrella"
-          subtitle={`Los que más facturaron en ${d.period_label}.`}
+          subtitle={`Los que más facturaron ${d.period_phrase}.`}
           table={{
             columns: [
               { key: 'name', header: 'Vino' },
@@ -370,11 +410,8 @@ function Charts({ d }: { d: DashboardResponse }) {
 
 // ───────────────────────── Pantalla ─────────────────────────
 
-function cuantoTeFueTitle(label: string) {
-  if (label.startsWith('año')) return `Cómo te fue en el ${label}`
-  if (label.includes(' al ')) return `Cómo te fue del ${label}`
-  return `Cómo te fue en ${label}`
-}
+/** "Cómo te fue en octubre 2026", "Cómo te fue en el año 2026", "Cómo te fue del 1 de agosto al 31 de octubre". */
+const cuantoTeFueTitle = (phrase: string) => `Cómo te fue ${phrase}`
 
 export default function InicioPage() {
   const { period } = usePeriod()
@@ -389,8 +426,8 @@ export default function InicioPage() {
   }, [owner])
 
   const empty = d && d.setup.sales === 0
-  // La meta que se muestra es la del mes del final del período (o la del mes actual si el período sigue en el futuro).
-  const goalMonth = d ? (d.period.to < d.today ? d.period.to : d.today).slice(0, 7) : ''
+  // La meta que se muestra la elige el servidor: la del mes en que termina el período, la del mes actual si sigue, o la del primero si es futuro.
+  const goalMonth = d?.goal_month ?? ''
 
   return (
     <>
@@ -446,8 +483,11 @@ export default function InicioPage() {
         ) : d ? (
           <div className={q.isPlaceholderData ? 'space-y-8 opacity-60 transition-opacity' : 'space-y-8 transition-opacity'}>
             <section aria-labelledby="como-te-fue">
-              <SectionTitle title={<span id="como-te-fue">{cuantoTeFueTitle(d.period_label)}</span>}>
-                <TextWithTip text={`Las flechas comparan ${compareWith(d.comparison.label)}.`} tip={<InfoTip title="¿Contra qué comparamos?" text={d.comparison.detail} />} />
+              <SectionTitle title={<span id="como-te-fue">{cuantoTeFueTitle(d.period_phrase)}</span>}>
+                <TextWithTip
+                  text={d.comparison.partial ? 'Esta vez no comparamos con el período anterior: está cargado a medias.' : `Las flechas comparan ${compareWith(d.comparison.label)}.`}
+                  tip={<InfoTip title="¿Contra qué comparamos?" text={d.comparison.detail} />}
+                />
               </SectionTitle>
               <PeriodNumbers d={d} />
             </section>
@@ -455,7 +495,7 @@ export default function InicioPage() {
             <div className="grid items-start gap-4 sm:gap-5 lg:grid-cols-12">
               <div className="space-y-4 sm:space-y-5 lg:col-span-7">
                 <InsightsCard insights={d.insights} />
-                <ResultWaterfall summary={d.summary} periodLabel={d.period_label} />
+                <ResultWaterfall summary={d.summary} periodPhrase={d.period_phrase} />
               </div>
               <div className="space-y-4 sm:space-y-5 lg:col-span-5">
                 <GoalCard goal={d.goal} month={goalMonth} monthLabel={monthLabelLong(goalMonth)} />

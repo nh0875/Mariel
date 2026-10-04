@@ -11,8 +11,8 @@ import { monthKey, today } from '@shared/dates'
 import { api } from '@/lib/api'
 import { useApi, useApiMutation } from '@/lib/queries'
 import { int, pct } from '@/lib/format'
-import { compact, money0 } from '../inicio/fmt'
-import { PaceBar } from '../inicio/GoalCard'
+import { budgetPct, compact, money0, progressPct } from '../inicio/fmt'
+import { GoalBar, PaceBar } from '../inicio/GoalCard'
 import {
   Badge,
   Button,
@@ -25,7 +25,6 @@ import {
   Loading,
   Money,
   PageHeader,
-  ProgressBar,
   Select,
   StatTile,
   Tabs,
@@ -94,7 +93,7 @@ function CurrentMonthCard({ m, onEdit }: { m: GoalMonth; onEdit: () => void }) {
             </div>
             <PaceBar progress={m.progress} expected={m.expected_progress} />
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="vh-num text-[20px] leading-none font-extrabold text-ink">{pct(m.progress, 0)}</span>
+              <span className="vh-num text-[20px] leading-none font-extrabold text-ink">{progressPct(m.progress)}</span>
               {pace != null && (
                 <Badge tone={ahead ? 'good' : 'warn'}>
                   {Math.abs(pace) < 0.02 ? 'Justo al ritmo' : `Vas ${pct(Math.abs(pace), 0)} ${ahead ? 'adelantado' : 'atrasado'} respecto del ritmo esperado`}
@@ -108,6 +107,17 @@ function CurrentMonthCard({ m, onEdit }: { m: GoalMonth; onEdit: () => void }) {
             )}
           </div>
         )}
+        {m.bottles_target != null && (
+          <div>
+            <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 text-[13.5px]">
+              <span className="font-bold text-ink">Botellas</span>
+              <span className="text-ink-soft">
+                <b className="vh-num text-ink">{int(m.actual.bottles)}</b> de {int(m.bottles_target)}
+              </span>
+            </div>
+            <GoalBar value={m.actual.bottles} max={m.bottles_target} />
+          </div>
+        )}
         {m.expense_budget != null && (
           <div>
             <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 text-[13.5px]">
@@ -116,7 +126,8 @@ function CurrentMonthCard({ m, onEdit }: { m: GoalMonth; onEdit: () => void }) {
                 <b className="vh-num text-ink">{money0(m.actual.expenses)}</b> de {money0(m.expense_budget)}
               </span>
             </div>
-            <ProgressBar value={m.actual.expenses} max={m.expense_budget} mode="budget" />
+            <GoalBar value={m.actual.expenses} max={m.expense_budget} mode="budget" />
+            {m.actual.expenses > m.expense_budget && <p className="mt-1.5 text-[13px] font-semibold text-bad">Te pasaste {money0(m.actual.expenses - m.expense_budget)} del presupuesto.</p>}
           </div>
         )}
       </div>
@@ -138,6 +149,7 @@ function YearSummary({ rows, year, thisYear }: { rows: GoalMonth[]; year: number
   const over = withBudget.filter((r) => (r.expense_progress ?? 0) > 1).length
   const ytd = rows.filter((r) => r.status !== 'future')
   const net = ytd.reduce((a, r) => a + r.actual.net_result, 0)
+  const anyData = ytd.some((r) => r.actual.sales > 0 || r.actual.expenses > 0)
   const budgetRatio = safeDiv(spent, budget)
   return (
     <div className="grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 sm:gap-4">
@@ -151,13 +163,13 @@ function YearSummary({ rows, year, thisYear }: { rows: GoalMonth[]; year: number
         label="Ventas vs. metas"
         term="presupuesto"
         tone="sky"
-        value={salesGoal ? pct(salesReal / salesGoal, 0) : '—'}
+        value={salesGoal ? progressPct(salesReal / salesGoal) : '—'}
         hint={salesGoal ? `Vendiste ${compact(salesReal)} contra ${compact(salesGoal)} de metas (meses terminados).` : 'Se calcula con los meses que ya terminaron.'}
       />
       <StatTile
         label="Gastos vs. presupuesto"
         tone="coral"
-        value={budget ? <span className={budgetRatio > 1 ? 'text-bad' : undefined}>{pct(budgetRatio, 0)}</span> : '—'}
+        value={budget ? <span className={budgetRatio > 1 ? 'text-bad' : undefined}>{budgetPct(budgetRatio)}</span> : '—'}
         hint={
           budget
             ? over
@@ -170,8 +182,14 @@ function YearSummary({ rows, year, thisYear }: { rows: GoalMonth[]; year: number
         label={year === thisYear ? 'Resultado en lo que va del año' : `Resultado ${year}`}
         term="resultado"
         tone="mustard"
-        value={ytd.length ? <Money decimals={0} value={net} tone="auto" /> : '—'}
-        hint={ytd.length ? `${net >= 0 ? 'Ganancia' : 'Pérdida'} sumando todos los meses${year === thisYear ? ' hasta hoy' : ''}.` : 'El año todavía no empezó.'}
+        value={ytd.length && anyData ? <Money decimals={0} value={net} tone="auto" /> : '—'}
+        hint={
+          !ytd.length
+            ? 'El año todavía no empezó.'
+            : !anyData
+              ? `Todavía no hay ventas ni gastos cargados en ${year}.`
+              : `${net >= 0 ? 'Ganancia' : 'Pérdida'} sumando todos los meses${year === thisYear ? ' hasta hoy' : ''}: ventas − costo del vino − comisiones − mermas − gastos.`
+        }
       />
     </div>
   )
@@ -222,12 +240,16 @@ function GoalChart({ rows }: { rows: GoalMonth[] }) {
         columns: [
           { key: 'label', header: 'Mes' },
           { key: 'sales_target', header: 'Meta de ventas', align: 'right', format: (v) => (v == null ? '—' : money0(Number(v))) },
-          { key: 'sales', header: 'Vendiste', align: 'right', format: (v) => money0(Number(v)) },
-          { key: 'progress', header: 'Avance', align: 'right', format: (v) => (v == null ? '—' : pct(Number(v), 0)) },
+          { key: 'sales', header: 'Vendiste', align: 'right', format: (v) => (v == null ? '—' : money0(Number(v))) },
+          { key: 'progress', header: 'Avance', align: 'right', format: (v) => (v == null ? '—' : progressPct(Number(v))) },
           { key: 'expense_budget', header: 'Presupuesto', align: 'right', format: (v) => (v == null ? '—' : money0(Number(v))) },
-          { key: 'expenses', header: 'Gastaste', align: 'right', format: (v) => money0(Number(v)) },
+          { key: 'expenses', header: 'Gastaste', align: 'right', format: (v) => (v == null ? '—' : money0(Number(v))) },
         ],
-        rows: rows.map((r) => ({ ...r, label: capital(r.label), sales: r.actual.sales, expenses: r.actual.expenses })),
+        // Los meses que todavía no empezaron no tienen "real": van con guion, no con $ 0.
+        rows: rows.map((r) => {
+          const future = r.status === 'future'
+          return { ...r, label: capital(r.label), sales: future ? null : r.actual.sales, expenses: future ? null : r.actual.expenses, progress: future ? null : r.progress }
+        }),
       }}
     >
       <ColumnChart
@@ -357,12 +379,12 @@ export default function MetasPage() {
             {r.status === 'current' ? (
               <div className="flex items-center gap-3">
                 <PaceBar className="flex-1" progress={r.progress ?? 0} expected={r.expected_progress} />
-                <span className="vh-num w-12 text-right text-sm font-extrabold text-ink">{pct(r.progress, 0)}</span>
+                <span className="vh-num w-14 text-right text-sm font-extrabold text-ink">{progressPct(r.progress)}</span>
               </div>
             ) : r.status === 'future' ? (
               <p className="text-[12.5px] text-muted">Todavía no empezó</p>
             ) : (
-              <ProgressBar value={r.actual.sales} max={r.sales_target} />
+              <GoalBar value={r.actual.sales} max={r.sales_target} />
             )}
           </div>
         ) : (
@@ -375,7 +397,7 @@ export default function MetasPage() {
         ),
       footer: (
         <span className="text-[13.5px]">
-          {money0(totals.sales)} <span className="font-semibold text-ink-soft">de {money0(totals.salesTarget)}</span>
+          {money0(totals.sales)} {totals.salesTarget > 0 && <span className="font-semibold text-ink-soft">de {money0(totals.salesTarget)}</span>}
         </span>
       ),
     },
@@ -400,7 +422,7 @@ export default function MetasPage() {
                 {r.bottles_target ? ` de ${int(r.bottles_target)}` : ''}
               </>
             )}
-            {r.bottles_progress != null && r.status !== 'future' && <span className="block text-[12.5px] text-muted">{pct(r.bottles_progress, 0)}</span>}
+            {r.bottles_progress != null && r.status !== 'future' && <span className="block text-[12.5px] text-muted">{progressPct(r.bottles_progress)}</span>}
           </span>
         ),
       footer: (
@@ -429,7 +451,7 @@ export default function MetasPage() {
                 </>
               )}
             </p>
-            {r.status === 'future' ? <p className="text-[12.5px] text-muted">Todavía no empezó</p> : <ProgressBar value={r.actual.expenses} max={r.expense_budget} mode="budget" />}
+            {r.status === 'future' ? <p className="text-[12.5px] text-muted">Todavía no empezó</p> : <GoalBar value={r.actual.expenses} max={r.expense_budget} mode="budget" />}
           </div>
         ) : (
           <p className="text-[13.5px] text-ink-soft">
@@ -439,7 +461,7 @@ export default function MetasPage() {
         ),
       footer: (
         <span className="text-[13.5px]">
-          {money0(totals.expenses)} <span className="font-semibold text-ink-soft">de {money0(totals.budget)}</span>
+          {money0(totals.expenses)} {totals.budget > 0 && <span className="font-semibold text-ink-soft">de {money0(totals.budget)}</span>}
         </span>
       ),
     },
@@ -532,8 +554,8 @@ export default function MetasPage() {
               <div className="min-w-0 flex-1">
                 <p className="font-display text-[1.6rem] leading-tight text-ink">Todavía no pusiste metas para {year}</p>
                 <p className="mt-1 text-[14.5px] text-ink-soft">
-                  Empezá por {nextMonth ? monthOnly(nextMonth.label) : 'este mes'}: tocá «Poner meta» y después «Sugerir meta». Te calculamos un número con tus gastos y lo que vendiste el
-                  año pasado.
+                  Empezá por {nextMonth ? monthOnly(nextMonth.label) : 'este mes'}: tocá «Poner meta» y después «Sugerir meta». Si ya cargaste ventas y gastos, te calculamos un número con
+                  tu punto de equilibrio y lo que vendiste el año pasado; si no, poné uno que te parezca alcanzable y en unos meses lo afinamos.
                 </p>
               </div>
             </div>
@@ -578,7 +600,8 @@ export default function MetasPage() {
         </div>
       ) : null}
 
-      {editing && rows && <GoalFormModal key={editing} month={editing} goal={editingRow} onClose={() => setEditing(null)} />}
+      {/* Esperamos los datos del año del mes elegido (no los del año anterior que quedan mientras carga): si no, el formulario arrancaría vacío. */}
+      {editing && rows && !q.isPlaceholderData && <GoalFormModal key={editing} month={editing} goal={editingRow} onClose={() => setEditing(null)} />}
     </>
   )
 }

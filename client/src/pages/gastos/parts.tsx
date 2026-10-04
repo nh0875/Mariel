@@ -1,5 +1,5 @@
 // Piezas chicas de la pantalla de Gastos, armadas con el kit.
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, CircleCheck, CircleDot, Clock, Minus, PencilLine } from 'lucide-react'
 import clsx from 'clsx'
 import { addMonths, monthKey } from '@shared/dates'
@@ -234,4 +234,23 @@ export function ExpenseStatusBadge({ status, overdue }: { status: PaymentStatus;
       Por pagar
     </Badge>
   )
+}
+
+/**
+ * true si la ventana mide al menos `px` de ancho (se actualiza al cambiar el tamaño).
+ * Sirve para mostrar columnas extra en la tabla solo cuando entran sin cortar las demás.
+ */
+export function useMinWidth(px: number): boolean {
+  const query = `(min-width: ${px}px)`
+  const get = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(query).matches : true)
+  const [ok, setOk] = useState(get)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia(query)
+    const on = () => setOk(mq.matches)
+    on()
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [query])
+  return ok
 }

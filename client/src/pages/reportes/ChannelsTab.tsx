@@ -8,7 +8,7 @@ import type { Period } from '@shared/dates'
 import { int, pct } from '@/lib/format'
 import { Button, Card, DataTable, EmptyState, ExportButton, InfoTip, type Column } from '@/components/ui'
 import { ChartCard, ColumnChart, DonutChart } from '@/components/charts'
-import { BlockTitle, Insights, money0, ReportGuard, TabIntro, useReport, type Insight } from './parts'
+import { Amount, BlockTitle, Insights, money0, ReportGuard, TabIntro, useReport, type Insight } from './parts'
 import type { ChannelRow, ChannelsReport, PaymentMethodRow } from './types'
 
 function channelInsights(d: ChannelsReport): Insight[] {
@@ -34,7 +34,7 @@ function channelInsights(d: ChannelsReport): Insight[] {
         tone: 'info',
         text: (
           <>
-            Por cada $ 100 vendidos, <b>{best.label}</b> te deja $ {Math.round(best.margin * 100)} y <b>{worst.label}</b> $ {Math.round(worst.margin * 100)} (después del vino y las comisiones).{' '}
+            Por cada $ 100 vendidos, <b>{best.label}</b> te deja $ {Math.round(best.margin * 100)} y <b>{worst.label}</b> $ {Math.round(worst.margin * 100)} (después del vino y las comisiones).{' '}
             {worst.share > 0.2 ? 'Como vendés mucho por ahí, revisá sus precios o descuentos.' : 'Tenelo en cuenta antes de hacer promos en ese canal.'}
           </>
         ),
@@ -55,25 +55,32 @@ function channelInsights(d: ChannelsReport): Insight[] {
     })
   }
   const days = d.weekdays.filter((w) => w.days > 0)
-  if (d.total_count >= 10 && days.length >= 2) {
-    const best = days.reduce((a, b) => (b.avg_per_day > a.avg_per_day ? b : a))
-    const worst = days.reduce((a, b) => (b.avg_per_day < a.avg_per_day ? b : a))
-    if (best.avg_per_day > 0) {
-      out.push({
-        tone: 'info',
-        text: (
-          <>
-            Tu mejor día es el <b>{best.label.toLowerCase()}</b>: uno típico vendés {money0(best.avg_per_day)}
-            {worst.avg_per_day > 0
-              ? `, ${(best.avg_per_day / worst.avg_per_day).toFixed(1).replace('.', ',')} veces más que un ${worst.label.toLowerCase()}`
-              : `; los ${worst.label.toLowerCase()} casi no vendés`}
-            . Usalo para organizar horarios, personal y promociones.
-          </>
-        ),
-      })
-    }
+  const open = days.filter((w) => w.total > 0)
+  const closed = days.filter((w) => w.total <= 0)
+  const many = (w: { label: string }) => (w.label.endsWith('s') ? w.label : `${w.label}s`).toLowerCase()
+  if (d.total_count >= 10 && open.length >= 2) {
+    const best = open.reduce((a, b) => (b.avg_per_day > a.avg_per_day ? b : a))
+    const worst = open.reduce((a, b) => (b.avg_per_day < a.avg_per_day ? b : a))
+    const times = best.avg_per_day / worst.avg_per_day
+    out.push({
+      tone: 'info',
+      text: (
+        <>
+          Tu mejor día es el <b>{best.label.toLowerCase()}</b>: uno típico vendés {money0(best.avg_per_day)}
+          {times >= 1.15 ? `, ${times.toFixed(1).replace('.', ',')} veces más que un ${worst.label.toLowerCase()}` : ', parecido al resto de la semana'}.
+          {closed.length > 0 && ` Los ${closed.map(many).join(' y ')} no hubo ventas.`} Usalo para organizar horarios, personal y promociones.
+        </>
+      ),
+    })
   }
   return out
+}
+
+/** Hasta 5 porciones con su nombre real; si hay más canales, los más chicos se juntan en "Otros canales". */
+function donutData(channels: ChannelRow[]) {
+  const rows = channels.filter((c) => c.sales > 0).map((c) => ({ label: c.label, value: Math.round(c.sales) }))
+  if (rows.length <= 5) return rows
+  return [...rows.slice(0, 4), { label: 'Otros canales', value: rows.slice(4).reduce((s, r) => s + r.value, 0) }]
 }
 
 export function ChannelsTab({ period }: { period: Period }) {
@@ -132,8 +139,8 @@ export function ChannelsTab({ period }: { period: Period }) {
           },
         ]
         const pmCols: Column<PaymentMethodRow>[] = [
-          { key: 'label', header: 'Medio de cobro', cell: (m) => <span className="font-bold text-ink">{m.label}</span> },
-          { key: 'total', header: 'Vendido', align: 'right', cell: (m) => money0(m.total), footer: money0(d.total_sales) },
+          { key: 'label', header: 'Medio de cobro', cell: (m) => <span className="block min-w-[96px] font-bold text-ink">{m.label}</span> },
+          { key: 'total', header: 'Vendido', align: 'right', cell: (m) => <Amount value={m.total} />, footer: <Amount value={d.total_sales} /> },
           { key: 'share', header: '% ventas', align: 'right', hideBelow: 'md', cell: (m) => pct(m.share, 0) },
           { key: 'count', header: 'Cant.', align: 'right', hideBelow: 'lg', cell: (m) => int(m.count), footer: int(d.total_count) },
           { key: 'fees', header: 'Comisiones', align: 'right', hideBelow: 'sm', cell: (m) => money0(m.fees), footer: money0(totalFees) },
@@ -158,27 +165,27 @@ export function ChannelsTab({ period }: { period: Period }) {
             {intro}
             <Insights items={channelInsights(d)} />
 
-            <div className="mt-6 grid gap-4 xl:grid-cols-5">
-              <section className="min-w-0 xl:col-span-3" aria-label="Canales de venta">
-                <BlockTitle
-                  title={
-                    <span className="inline-flex items-center gap-1.5">
-                      ¿Cuánto te deja cada canal?
-                      <InfoTip
-                        title="Lo que te dejó cada canal"
-                        text="Ventas − costo del vino vendido − comisiones de cobro de ese canal. Es antes de los gastos generales (alquiler, sueldos…), que son de todo el negocio. Margen = lo que te dejó ÷ ventas."
-                      />
-                    </span>
-                  }
-                >
-                  «Te dejó» = ventas − costo del vino − comisiones (antes de los gastos generales).
-                </BlockTitle>
-                <DataTable rows={d.channels} columns={chCols} rowKey={(c) => c.channel} searchable={false} dense />
-              </section>
+            <section className="mt-6" aria-label="Canales de venta">
+              <BlockTitle
+                title={
+                  <span className="inline-flex items-center gap-1.5">
+                    ¿Cuánto te deja cada canal?
+                    <InfoTip
+                      title="Lo que te dejó cada canal"
+                      text="Ventas − costo del vino vendido − comisiones de cobro de ese canal. Es antes de los gastos generales (alquiler, sueldos…), que son de todo el negocio. Margen = lo que te dejó ÷ ventas."
+                    />
+                  </span>
+                }
+              >
+                «Te dejó» = ventas − costo del vino − comisiones (antes de los gastos generales).
+              </BlockTitle>
+              <DataTable rows={d.channels} columns={chCols} rowKey={(c) => c.channel} searchable={false} dense />
+            </section>
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
               <ChartCard
-                className="xl:col-span-2"
+                className="min-w-0"
                 title="¿De dónde vienen las ventas?"
-                subtitle="Parte de las ventas de cada canal."
+                subtitle={d.channels.length > 5 ? 'Parte de las ventas de cada canal. «Otros canales» junta a los más chicos (en «Ver tabla» están todos).' : 'Parte de las ventas de cada canal.'}
                 table={{
                   columns: [
                     { key: 'label', header: 'Canal' },
@@ -188,7 +195,29 @@ export function ChannelsTab({ period }: { period: Period }) {
                   rows: d.channels as unknown as Record<string, unknown>[],
                 }}
               >
-                <DonutChart data={d.channels.map((c) => ({ label: c.label, value: c.sales }))} />
+                <DonutChart data={donutData(d.channels)} />
+              </ChartCard>
+              <ChartCard
+                className="min-w-0"
+                title="¿Qué días vendés más?"
+                subtitle="Venta promedio de cada día de la semana: ventas de ese día ÷ cuántos hubo en el período. Así no influye que un mes tenga 5 sábados y otro 4."
+                table={{
+                  columns: [
+                    { key: 'label', header: 'Día' },
+                    { key: 'total', header: 'Ventas', align: 'right', format: (v) => money0(Number(v)) },
+                    { key: 'count', header: 'Cant.', align: 'right', format: (v) => int(Number(v)) },
+                    { key: 'days', header: 'Días', align: 'right', format: (v) => int(Number(v)) },
+                    { key: 'promedio', header: 'Promedio', align: 'right', format: (v) => money0(Number(v)) },
+                  ],
+                  rows: weekRows as unknown as Record<string, unknown>[],
+                }}
+              >
+                <ColumnChart
+                  data={weekRows as unknown as Record<string, unknown>[]}
+                  xKey="dia"
+                  height={240}
+                  series={[{ key: 'promedio', label: 'Venta promedio del día', color: CHART_COLORS.ventas }]}
+                />
               </ChartCard>
             </div>
 
@@ -205,30 +234,7 @@ export function ChannelsTab({ period }: { period: Period }) {
               </BlockTitle>
               <DataTable rows={d.payment_methods} columns={pmCols} rowKey={(m) => m.method} searchable={false} dense />
             </section>
-
-            <ChartCard
-              className="mt-6"
-              title="¿Qué días vendés más?"
-              subtitle="Venta promedio de cada día de la semana: ventas de ese día ÷ cuántos hubo en el período. Así no influye que un mes tenga 5 sábados y otro 4."
-              table={{
-                columns: [
-                  { key: 'label', header: 'Día' },
-                  { key: 'total', header: 'Ventas', align: 'right', format: (v) => money0(Number(v)) },
-                  { key: 'count', header: 'Cant.', align: 'right', format: (v) => int(Number(v)) },
-                  { key: 'days', header: 'Días', align: 'right', format: (v) => int(Number(v)) },
-                  { key: 'promedio', header: 'Promedio', align: 'right', format: (v) => money0(Number(v)) },
-                ],
-                rows: weekRows as unknown as Record<string, unknown>[],
-              }}
-            >
-              <ColumnChart
-                data={weekRows as unknown as Record<string, unknown>[]}
-                xKey="dia"
-                height={240}
-                series={[{ key: 'promedio', label: 'Venta promedio del día', color: CHART_COLORS.ventas }]}
-              />
-            </ChartCard>
-            <Card className="mt-4" title="¿Cómo usar esto?">
+            <Card className="mt-6" title="¿Cómo usar esto?">
               <ul className="list-disc space-y-1.5 pl-5 text-[14px] text-ink-soft">
                 <li>Si un canal vende mucho pero deja poco margen (por ejemplo, mayorista), está bien que así sea, pero cuidá que el precio cubra el costo y los envíos.</li>
                 <li>Si un medio de pago te cobra mucha comisión, podés ofrecer un precio especial en efectivo o transferencia (la diferencia la pagaba la comisión).</li>

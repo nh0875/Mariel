@@ -107,6 +107,26 @@ describe('POST /expenses', () => {
   })
 })
 
+describe('POST /expenses con "repetir" y sin cuenta elegida', () => {
+  it('la plantilla recuerda la cuenta de donde salió el pago (para que "se debita solo" sepa de dónde sale)', async () => {
+    const r = await t.post('/expenses', { ...base({ date: '2026-03-10' }), repeat_monthly: true, repeat_auto_paid: true })
+    expect(r.status).toBe(201)
+    const usedAccount = r.body.payments[0].account_id
+    const [tpl] = (await t.get('/recurring-expenses')).body
+    expect(tpl).toMatchObject({ account_id: usedAccount, auto_paid: true, day_of_month: 10 })
+    // Sin pagar: la plantilla queda sin cuenta (no hay de dónde sacarla).
+    await t.post('/expenses', { ...base({ description: 'Contador', paid: false }), repeat_monthly: true })
+    const contador = (await t.get('/recurring-expenses')).body.find((x: any) => x.description === 'Contador')
+    expect(contador).toMatchObject({ account_id: null, auto_paid: false })
+  })
+
+  it('si falla el gasto (proveedor inexistente) no queda una plantilla suelta', async () => {
+    const r = await t.post('/expenses', { ...base({ supplier_id: 999 }), repeat_monthly: true })
+    expect(r.status).toBe(400)
+    expect((await t.get('/recurring-expenses')).body).toHaveLength(0)
+  })
+})
+
 describe('GET /expenses (filtros) y GET /expenses/:id', () => {
   it('filtra por período, categoría, tipo, estado, proveedor y evento', async () => {
     const correo = supplier('Correo Rápido')
@@ -330,6 +350,20 @@ describe('GET /expenses/summary', () => {
     expect(s.monthly[11].month).toBe(monthKey(t0))
   })
 
+  it('separa fijos y variables dentro de cada categoría ("mixto" si hay de los dos)', async () => {
+    await t.post('/expenses', base({ date: '2026-03-05', category: 'Impuestos y tasas', nature: 'fijo', description: 'Monotributo', amount: 60000 }))
+    await t.post('/expenses', base({ date: '2026-03-20', category: 'Impuestos y tasas', nature: 'variable', description: 'Ingresos Brutos', amount: 40000 }))
+    await t.post('/expenses', base({ date: '2026-03-06', amount: 500000 }))
+    const s = (await t.get('/expenses/summary?from=2026-03-01&to=2026-03-31')).body
+    const imp = s.by_category.find((c: any) => c.category === 'Impuestos y tasas')
+    expect(imp).toMatchObject({ nature: 'mixto', fixed: 60000, variable: 40000, amount: 100000, count: 2 })
+    expect(s.by_category.find((c: any) => c.category === 'Alquiler')).toMatchObject({ nature: 'fijo', fixed: 500000, variable: 0 })
+    // La suma de las categorías es el total del período (los mismos números que Inicio y Reportes).
+    const sum = s.by_category.reduce((a: number, c: any) => a + c.amount, 0)
+    expect(sum).toBe(s.total)
+    expect(s.fixed + s.variable).toBe(s.total)
+  })
+
   it('sin datos devuelve ceros y sin comparación', async () => {
     const s = (await t.get('/expenses/summary?from=2026-03-01&to=2026-03-31')).body
     expect(s).toMatchObject({ total: 0, fixed: 0, variable: 0, count: 0, pending: 0, vs_sales: null, by_category: [], first_expense_date: null })
@@ -470,5 +504,29 @@ describe('GET /expenses/export', () => {
     expect(ws.getRow(6).getCell(1).value).toBe('TOTAL')
     // Un solo mes: no hace falta la hoja "Por mes"
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Gastos', 'Por categoría'])
+  })
+
+  it('si el período incluye el mes en curso, la hoja "Por mes" avisa que ese mes todavía no terminó', async () => {
+    const t0 = today()
+    await t.post('/expenses', base({ date: t0 }))
+    const from = addMonths(startOfMonth(t0), -1)
+    const res = await t.raw(`/expenses/export?from=${from}&to=${endOfMonth(t0)}`)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await res.arrayBuffer())
+    const ws = wb.getWorksheet('Por mes')!
+    const notes: string[] = []
+    ws.eachRow((row) => {
+      const v = row.getCell(1).value
+      if (typeof v === 'string' && v.startsWith('•')) notes.push(v)
+    })
+    expect(notes.some((n) => /todavía no terminó/.test(n))).toBe(true)
+  })
+
+  it('un período sin gastos igual arma el Excel (con el aviso de que no hay datos)', async () => {
+    const res = await t.raw('/expenses/export?from=2026-03-01&to=2026-03-31')
+    expect(res.status).toBe(200)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await res.arrayBuffer())
+    expect(String(wb.getWorksheet('Gastos')!.getCell(5, 1).value)).toMatch(/No hay datos/)
   })
 })

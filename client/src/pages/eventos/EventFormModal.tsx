@@ -1,12 +1,12 @@
 // Formulario de evento (nuevo o editar). Pide lo mínimo: nombre y fecha.
 // Personas, entrada y presupuesto son opcionales pero hacen que los números del evento digan más.
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { CalendarHeart } from 'lucide-react'
 import { EVENT_KINDS, EVENT_KIND_LABELS, type EventKind } from '@shared/constants'
 import { today } from '@shared/dates'
 import type { WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
-import { money } from '@/lib/format'
+import { dateShort, int, money } from '@/lib/format'
 import { useApiMutation } from '@/lib/queries'
 import { Button, DateInput, Field, IntInput, Modal, MoneyInput, Select, TextInput, Textarea } from '@/components/ui'
 import type { EventWithSummary } from './types'
@@ -50,12 +50,15 @@ function initial(ev?: WineEvent | null): FormState {
 export function EventFormModal({
   open,
   event,
+  linked,
   onClose,
   onSaved,
 }: {
   open: boolean
   /** Si viene, es "Editar evento". */
   event?: WineEvent | null
+  /** Lo que ya tiene cargado el evento (para avisar qué pasa si cambiás la fecha). openedOnDate = registros de botellas con la fecha del evento. */
+  linked?: { sales: number; expenses: number; openedOnDate: number }
   onClose: () => void
   onSaved?: (ev: EventWithSummary) => void
 }) {
@@ -63,10 +66,13 @@ export function EventFormModal({
   const [f, setF] = useState<FormState>(() => initial(event))
   const [submitted, setSubmitted] = useState(false)
   const [start, setStart] = useState(() => JSON.stringify(initial(event)))
+  // Candado sincrónico: save.isPending tarda un render en enterarse, y dos Enter seguidos crearían dos eventos.
+  const busy = useRef(false)
 
   // Cada vez que se abre, arranca de cero (o con los datos del evento a editar).
   useEffect(() => {
     if (open) {
+      busy.current = false
       const init = initial(event)
       setF(init)
       setStart(JSON.stringify(init))
@@ -83,6 +89,7 @@ export function EventFormModal({
     const e: Partial<Record<keyof FormState, string>> = {}
     if (!f.name.trim()) e.name = 'Ponele un nombre (ej: «Degustación de Malbecs»).'
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date)) e.date = 'Elegí la fecha del evento.'
+    if (f.attendees != null && f.attendees > 100_000) e.attendees = 'Como mucho 100.000 personas. ¿Se coló un cero de más?'
     return e
   }, [f])
 
@@ -94,13 +101,18 @@ export function EventFormModal({
         onClose()
         onSaved?.(r)
       },
+      onError: () => {
+        busy.current = false
+      },
     },
   )
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
+    if (busy.current || save.isPending) return // Enter dos veces seguidas no crea dos eventos
     setSubmitted(true)
     if (Object.keys(errors).length) return
+    busy.current = true
     save.mutate({
       name: f.name.trim(),
       date: f.date,
@@ -114,6 +126,8 @@ export function EventFormModal({
   }
 
   const isFuture = f.date > today()
+  const dateMoved = editing && !!event && f.date !== event.date && /^\d{4}-\d{2}-\d{2}$/.test(f.date)
+  const hasLinked = !!linked && linked.sales + linked.expenses + linked.openedOnDate > 0
   const expectedTickets = f.attendees && f.ticketPrice ? f.attendees * f.ticketPrice : null
 
   return (
@@ -123,7 +137,7 @@ export function EventFormModal({
       dismissable={!dirty}
       size="lg"
       title={editing ? 'Editar evento' : 'Nuevo evento'}
-      subtitle={editing ? 'Cambiá lo que necesites. Las ventas, gastos y botellas del evento no se tocan.' : 'Cargalo antes o después de hacerlo: con nombre y fecha alcanza para empezar.'}
+      subtitle={editing ? 'Cambiá lo que necesites. Las ventas y los gastos del evento quedan como están.' : 'Cargalo antes o después de hacerlo: con nombre y fecha alcanza para empezar.'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -153,21 +167,38 @@ export function EventFormModal({
           label="Fecha"
           required
           error={submitted && errors.date}
-          hint={isFuture ? 'Es a futuro: va a aparecer en «Próximos» hasta que llegue el día.' : 'El día que se hizo (o se hace).'}
+          hint={
+            dateMoved && hasLinked ? (
+              <span className="text-warn">
+                {linked!.openedOnDate ? `Las botellas abiertas registradas el ${dateShort(event!.date)} (el día del evento) se mueven a la nueva fecha. ` : ''}
+                {linked!.sales || linked!.expenses ? 'Las ventas y gastos del evento quedan con su fecha: si hace falta, cambiala desde Ventas y Gastos.' : ''}
+              </span>
+            ) : isFuture ? (
+              'Es a futuro: va a aparecer en «Próximos» hasta que llegue el día.'
+            ) : (
+              'El día que se hizo (o se hace).'
+            )
+          }
         >
           <DateInput value={f.date} onChange={(v) => set('date', v)} aria-invalid={submitted && !!errors.date} />
         </Field>
         <Field label="Lugar" hint="Opcional. Dónde se hace.">
           <TextInput value={f.location} onChange={(e) => set('location', e.target.value)} placeholder="Ej: En el local, Bistró La Esquina" maxLength={200} />
         </Field>
-        <Field label="Personas" hint="Cuántos fueron (o esperás). Con esto calculamos cuánto dejó cada persona.">
-          <IntInput value={f.attendees} onChange={(v) => set('attendees', v == null ? null : Math.max(0, v))} placeholder="Ej: 25" suffix="pers." />
+        <Field label="Personas" error={submitted && errors.attendees} hint="Cuántos fueron (o esperás). Con esto calculamos cuánto dejó cada persona.">
+          <IntInput
+            value={f.attendees}
+            onChange={(v) => set('attendees', v == null ? null : Math.max(0, v))}
+            placeholder="Ej: 25"
+            suffix="pers."
+            aria-invalid={submitted && !!errors.attendees}
+          />
         </Field>
         <Field
           label="Precio de la entrada"
           hint={
             expectedTickets
-              ? `Con ${f.attendees} personas serían ${money(expectedTickets)} de entradas. Las cobrás cargando una venta del evento.`
+              ? `Con ${int(f.attendees!)} ${f.attendees === 1 ? 'persona sería' : 'personas serían'} ${money(expectedTickets, { decimals: 0 })} de entradas. Las cobrás cargando una venta del evento.`
               : 'Dejalo vacío si es gratis. Es de referencia: las entradas se cobran cargando una venta del evento.'
           }
         >

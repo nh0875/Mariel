@@ -197,6 +197,8 @@ export function newWorkbook(): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'VINOH! Finanzas'
   wb.created = new Date()
+  // Que Excel recalcule las fórmulas (totales) al abrir el archivo.
+  wb.calcProperties.fullCalcOnLoad = true
   return wb
 }
 

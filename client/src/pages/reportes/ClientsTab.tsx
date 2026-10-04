@@ -146,73 +146,71 @@ export function ClientsTab({ period }: { period: Period }) {
 
             <Insights className="mt-5" items={clientInsights(d)} />
 
-            <div className="mt-6 grid gap-4 xl:grid-cols-3">
-              <section className="min-w-0 xl:col-span-2" aria-label="Mejores clientes">
-                <BlockTitle title={d.clients.length > 1 ? `Tus ${Math.min(TOP, d.clients.length)} mejores clientes` : 'Tus mejores clientes'}>
-                  Ordenados por lo que compraron en el período. Tocá uno para ver su ficha.
-                  {d.clients.length > TOP && ` El Excel tiene a los ${d.clients.length}.`}
-                </BlockTitle>
-                <DataTable
-                  rows={top}
-                  columns={cols}
-                  rowKey={(r) => r.client_id}
-                  onRowClick={(r) => navigate(`/clientes/${r.client_id}`)}
-                  searchable={false}
-                  pageSize={TOP}
-                  empty={
-                    <div className="vh-card">
-                      <EmptyState
-                        compact
-                        icon={UserRound}
-                        title="Todavía no cargaste clientes en tus ventas"
-                        action={
-                          <Button icon={Users} onClick={() => navigate('/clientes')}>
-                            Ir a Clientes
-                          </Button>
-                        }
-                      >
-                        Todas las ventas del período son «consumidor final». Cargá tus clientes frecuentes (restós, vinotecas, amigos del club) y elegilos al vender.
-                      </EmptyState>
-                    </div>
-                  }
-                />
-                <p className="mt-2 text-[12.5px] text-muted">
-                  «Te dejó» = lo que compró − costo del vino − comisiones de cobro. «Última compra» es la más reciente de toda la historia, no solo del período.
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              <Card
+                title={
+                  <span className="inline-flex items-center gap-1.5">
+                    Consumidor final
+                    <InfoTip
+                      title="Ventas sin cliente"
+                      text="Son las ventas donde no elegiste ningún cliente (típico del mostrador). Se cuentan igual en tus ventas y en el resultado; lo único que se pierde es saber quién te compró."
+                    />
+                  </span>
+                }
+                subtitle="Ventas sin cliente cargado"
+              >
+                <p className="text-[2.2rem] leading-none font-extrabold text-ink">{pct(d.walk_in.share, 0)}</p>
+                <p className="mt-1 text-[13.5px] text-ink-soft">de tus ventas del período</p>
+                <div className="mt-3 h-3 overflow-hidden rounded-full bg-sky-soft" role="img" aria-label={`Sin cliente ${pct(d.walk_in.share, 0)}, con cliente ${pct(1 - d.walk_in.share, 0)}`}>
+                  <div className="h-full rounded-full bg-mustard" style={{ width: `${Math.max(0, Math.min(1, d.walk_in.share)) * 100}%` }} />
+                </div>
+                <div className="mt-1.5 flex justify-between text-[12.5px] text-muted">
+                  <span>Sin cliente: {money0(d.walk_in.total)}</span>
+                  <span>Con cliente: {money0(d.totals.sales - d.walk_in.total)}</span>
+                </div>
+                <p className="mt-3 text-[13.5px] leading-snug text-ink-soft">
+                  Es normal en el mostrador. Pero si cargás el nombre de quien te compra seguido, vas a saber quién vuelve y a quién avisarle cuando entra un vino nuevo.
                 </p>
-              </section>
-              <div className="flex min-w-0 flex-col gap-4">
-                <Card
-                  title={
-                    <span className="inline-flex items-center gap-1.5">
-                      Consumidor final
-                      <InfoTip
-                        title="Ventas sin cliente"
-                        text="Son las ventas donde no elegiste ningún cliente (típico del mostrador). Se cuentan igual en tus ventas y en el resultado; lo único que se pierde es saber quién te compró."
-                      />
-                    </span>
-                  }
-                  subtitle="Ventas sin cliente cargado"
-                >
-                  <p className="text-[2.2rem] leading-none font-extrabold text-ink">{pct(d.walk_in.share, 0)}</p>
-                  <p className="mt-1 text-[13.5px] text-ink-soft">de tus ventas del período</p>
-                  <div className="mt-3 h-3 overflow-hidden rounded-full bg-sky-soft" role="img" aria-label={`Sin cliente ${pct(d.walk_in.share, 0)}, con cliente ${pct(1 - d.walk_in.share, 0)}`}>
-                    <div className="h-full rounded-full bg-mustard" style={{ width: `${Math.max(0, Math.min(1, d.walk_in.share)) * 100}%` }} />
-                  </div>
-                  <div className="mt-1.5 flex justify-between text-[12.5px] text-muted">
-                    <span>Sin cliente: {money0(d.walk_in.total)}</span>
-                    <span>Con cliente: {money0(d.totals.sales - d.walk_in.total)}</span>
-                  </div>
-                  <p className="mt-3 text-[13.5px] leading-snug text-ink-soft">
-                    Es normal en el mostrador. Pero si cargás el nombre de quien te compra seguido, vas a saber quién vuelve y a quién avisarle cuando entra un vino nuevo.
-                  </p>
+              </Card>
+              {d.clients.length > 0 && (
+                <Card title="¿Quién te compra más?" subtitle="Top 6 por lo que compraron">
+                  <RankBars items={d.clients.slice(0, 6).map((c) => ({ label: c.name, value: Math.round(c.total) }))} max={6} />
                 </Card>
-                {d.clients.length > 0 && (
-                  <Card title="¿Quién te compra más?" subtitle="Top 6 por lo que compraron">
-                    <RankBars items={d.clients.slice(0, 6).map((c) => ({ label: c.name, value: c.total }))} max={6} />
-                  </Card>
-                )}
-              </div>
+              )}
             </div>
+            <section className="mt-6" aria-label="Mejores clientes">
+              <BlockTitle title={d.clients.length > 1 ? `Tus ${Math.min(TOP, d.clients.length)} mejores clientes` : 'Tus mejores clientes'}>
+                Ordenados por lo que compraron en el período. Tocá uno para ver su ficha.
+                {d.clients.length > TOP && ` El Excel tiene a los ${d.clients.length}.`}
+              </BlockTitle>
+              <DataTable
+                rows={top}
+                columns={cols}
+                rowKey={(r) => r.client_id}
+                onRowClick={(r) => navigate(`/clientes/${r.client_id}`)}
+                searchable={false}
+                pageSize={TOP}
+                empty={
+                  <div className="vh-card">
+                    <EmptyState
+                      compact
+                      icon={UserRound}
+                      title="Todavía no cargaste clientes en tus ventas"
+                      action={
+                        <Button icon={Users} onClick={() => navigate('/clientes')}>
+                          Ir a Clientes
+                        </Button>
+                      }
+                    >
+                      Todas las ventas del período son «consumidor final». Cargá tus clientes frecuentes (restós, vinotecas, amigos del club) y elegilos al vender.
+                    </EmptyState>
+                  </div>
+                }
+              />
+              <p className="mt-2 text-[12.5px] text-muted">
+                «Te dejó» = lo que compró − costo del vino − comisiones de cobro. «Última compra» es la más reciente de toda la historia, no solo del período.
+              </p>
+            </section>
           </>
         )
       }}

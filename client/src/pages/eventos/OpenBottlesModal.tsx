@@ -1,8 +1,8 @@
 // "Registrar botellas abiertas": las botellas que se abrieron para degustar en el evento.
 // Salen del stock y se cuentan como costo del evento (a lo que te costó cada una).
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { Plus, Trash2, Wine } from 'lucide-react'
-import { today } from '@shared/dates'
 import type { WineEvent } from '@shared/types'
 import { api } from '@/lib/api'
 import { bottles as fmtBottles, money } from '@/lib/format'
@@ -19,18 +19,26 @@ interface Row {
 let seq = 0
 const newRow = (): Row => ({ key: ++seq, productId: null, qty: 1 })
 
-/** Fecha sugerida: la del evento si ya pasó (o es hoy); si es a futuro, hoy. */
-const defaultDate = (ev: WineEvent) => (ev.date <= today() ? ev.date : today())
+/**
+ * Fecha sugerida: la del evento (también si es a futuro: son botellas separadas para ese día).
+ * Así la merma cae en el mes del evento y, si después cambiás la fecha del evento, se mueven con él.
+ */
+const defaultDate = (ev: WineEvent) => ev.date
 
 export function OpenBottlesModal({ open, event, onClose }: { open: boolean; event: WineEvent; onClose: () => void }) {
-  const { data: products = [] } = useProducts()
+  const productsQ = useProducts()
+  const products = useMemo(() => productsQ.data ?? [], [productsQ.data])
+  const noWines = !!productsQ.data && products.length === 0
   const [date, setDate] = useState(() => defaultDate(event))
   const [rows, setRows] = useState<Row[]>(() => [newRow()])
   const [notes, setNotes] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  // Candado sincrónico contra doble Enter/doble clic (save.isPending tarda un render en enterarse).
+  const busy = useRef(false)
 
   useEffect(() => {
     if (open) {
+      busy.current = false
       setDate(defaultDate(event))
       setRows([newRow()])
       setNotes('')
@@ -72,13 +80,18 @@ export function OpenBottlesModal({ open, event, onClose }: { open: boolean; even
         return `Listo: ${fmtBottles(n)} ${n === 1 ? 'abierta' : 'abiertas'}, descontadas del stock`
       },
       onSuccess: () => onClose(),
+      onError: () => {
+        busy.current = false
+      },
     },
   )
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
+    if (busy.current || save.isPending) return // Enter dos veces seguidas no descuenta dos veces
     setSubmitted(true)
     if (hasErrors) return
+    busy.current = true
     save.mutate({ date, items: rows.map((r) => ({ product_id: r.productId!, qty: r.qty! })), notes: notes.trim() || null })
   }
 
@@ -113,6 +126,15 @@ export function OpenBottlesModal({ open, event, onClose }: { open: boolean; even
       }
     >
       <form id="open-bottles-form" onSubmit={submit} noValidate className="space-y-4">
+        {noWines && (
+          <div className="rounded-xl bg-warn-soft px-3.5 py-2.5 text-[13.5px] leading-snug text-warn">
+            <b>Todavía no cargaste vinos.</b> Las botellas abiertas salen del stock, así que primero cargá tus vinos en{' '}
+            <Link to="/vinos" className="font-bold underline">
+              Vinos y stock
+            </Link>
+            .
+          </div>
+        )}
         <div className="rounded-xl bg-sky-soft/70 px-3.5 py-2.5 text-[13.5px] leading-snug text-ink-soft">
           <b className="text-ink">¿Por qué cargarlas?</b> Una botella abierta es vino que ya pagaste y no vas a vender. Si no la registrás, el stock te va a dar de más y el evento
           va a parecer más rentable de lo que fue. Se valoriza a lo que te costó (costo promedio), no al precio de venta.

@@ -14,6 +14,16 @@ export interface PurchaseItemPreview {
   qty: number
 }
 
+/** GET /purchases/last-prices: último precio de factura de cada vino (sugerencia para "Nueva compra"). */
+export interface LastPrice {
+  product_id: number
+  unit_cost: number
+  date: string
+  supplier_id: number | null
+  supplier_name: string | null
+  same_supplier: boolean
+}
+
 /** Fila del listado GET /purchases. */
 export type PurchaseListRow = PurchaseWithStatus & { items_preview: PurchaseItemPreview[] }
 

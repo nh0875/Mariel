@@ -141,6 +141,20 @@ describe('GET /clients/:id', () => {
     expect(r.body.monthly.reduce((s: number, m: any) => s + m.total, 0)).toBe(28500)
   })
 
+  it('la frecuencia cuenta días distintos: dos ventas el mismo día son una sola visita (nunca "compra cada 0 días")', async () => {
+    const id = (await t.post('/clients', { name: 'Ana Pérez' })).body.id
+    const malbec = wine('Malbec')
+    const item = [{ product_id: malbec, qty: 1, unit_price: 2000 }]
+    sale(id, item, { date: addDays(T, -60) })
+    sale(id, item, { date: addDays(T, -60) })
+    expect((await t.get(`/clients/${id}`)).body.stats).toMatchObject({ purchases_count: 2, frequency_days: null, days_since_last: 60 })
+
+    sale(id, item, { date: addDays(T, -30) })
+    sale(id, item, { date: T })
+    // 3 días distintos en 60 días → cada 30 días (no 60 / 3 = 20 por las dos ventas del mismo día)
+    expect((await t.get(`/clients/${id}`)).body.stats).toMatchObject({ purchases_count: 4, frequency_days: 30 })
+  })
+
   it('cliente sin compras: estadísticas en cero y sin frecuencia', async () => {
     const id = (await t.post('/clients', { name: 'Nuevo' })).body.id
     const r = await t.get(`/clients/${id}`)

@@ -1,11 +1,13 @@
 // Piezas de la Calculadora: el "ticket" de resultados, campos con barrita (slider), selector de
 // medio de pago, redondeo, semáforo del margen y valores de base (con ejemplo si no hay datos).
-import { useId, type ReactNode } from 'react'
-import { AlertTriangle, CircleCheck, CircleDot, Info, RotateCcw, TrendingDown, type LucideIcon } from 'lucide-react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, CircleCheck, CircleDot, Info, RotateCcw, TrendingDown, X, type LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
+import type { Product } from '@shared/types'
 import type { CalculatorContext, MarginLevel, MarginVerdict } from '@shared/pricing'
-import { MARGIN_FAIR, MARGIN_HEALTHY } from '@shared/pricing'
-import { Badge, Button, Field, NumberInput, Select } from '@/components/ui'
+import { MARGIN_FAIR, MARGIN_HEALTHY, baseFromContext } from '@shared/pricing'
+import { Badge, Button, Field, NumberInput, ProductSelect, Select } from '@/components/ui'
 import type { GlossaryKey } from '@/lib/glossary'
 import { money as moneyBase, moneyCompact as moneyCompactBase, monthName, pct } from '@/lib/format'
 
@@ -37,16 +39,24 @@ export interface BaseNumbers {
   variable_pct: number
 }
 
-/** Promedios del negocio para precargar (o un ejemplo razonable si no hay datos). */
+/**
+ * Promedios del negocio para precargar (o un ejemplo razonable si no hay datos).
+ * Van SIN redondear (baseFromContext): así el simulador sin cambios y el punto de equilibrio dan
+ * el mismo resultado promedio que Reportes, al peso. Los campos muestran el número redondeado.
+ */
 export function baseNumbers(ctx: CalculatorContext): BaseNumbers {
-  const real = ctx.has_data
+  const real = ctx.has_data ? baseFromContext(ctx) : null
+  if (real) {
+    return { isExample: false, bottles: real.bottles, price: real.avg_price, cost: real.avg_cost, fixed: real.fixed, variable_pct: real.variable_pct }
+  }
   return {
-    isExample: !real,
-    bottles: real ? ctx.avg_bottles : EXAMPLE.bottles,
-    price: real ? Math.round(ctx.avg_price_per_bottle) : EXAMPLE.price,
-    cost: real ? Math.round(ctx.avg_cost_per_bottle) : EXAMPLE.cost,
-    fixed: ctx.avg_fixed_expenses > 0 ? Math.round(ctx.avg_fixed_expenses) : real ? 0 : EXAMPLE.fixed,
-    variable_pct: real ? ctx.variable_pct_of_sales : EXAMPLE.variable_pct,
+    isExample: true,
+    bottles: EXAMPLE.bottles,
+    price: EXAMPLE.price,
+    cost: EXAMPLE.cost,
+    // Si hay gastos fijos cargados (aunque todavía no haya ventas), se usan los reales.
+    fixed: ctx.avg_fixed_expenses > 0 ? ctx.avg_fixed_expenses : EXAMPLE.fixed,
+    variable_pct: EXAMPLE.variable_pct,
   }
 }
 
@@ -90,7 +100,7 @@ export function PaymentMethodField({ ctx, value, onChange, label = 'Medio de pag
       info="comisiones"
       hint={
         value === AVG_FEE_KEY
-          ? `Mezcla de cómo te pagaron en ${monthsText(ctx.months_used)}: de cada $ 100 vendidos, $ ${nf(fee)} se fueron en comisiones.`
+          ? `Mezcla de cómo te pagaron en ${monthsText(ctx.months_used)}: de cada $\u00a0100 vendidos, $\u00a0${nf(fee)} se fueron en comisiones.`
           : fee > 0
             ? `Se queda el ${nf(fee)} % de cada cobro. Lo cambiás en Configuración → Medios de pago.`
             : 'Sin comisión: te llega el precio entero.'
@@ -131,6 +141,14 @@ export function SliderField({
 }) {
   const id = useId()
   const v = value ?? 0
+  const clamped = Math.min(max, Math.max(min, v))
+  // La parte pintada va desde el 0 (o desde el mínimo) hasta el valor: en las barritas de ±
+  // se ve para qué lado moviste, sin que el 0 parezca "medio lleno".
+  const pos = (x: number) => ((x - min) / (max - min || 1)) * 100
+  const from = signed ? pos(Math.min(Math.max(0, min), max)) : 0
+  const lo = Math.min(from, pos(clamped))
+  const hi = Math.max(from, pos(clamped))
+  const track = `linear-gradient(to right, var(--color-line-strong) ${lo}%, var(--color-brown) ${lo}%, var(--color-brown) ${hi}%, var(--color-line-strong) ${hi}%)`
   return (
     <Field label={label} hint={hint} info={info} htmlFor={id}>
       <div className="flex items-center gap-3">
@@ -140,11 +158,12 @@ export function SliderField({
             min={min}
             max={max}
             step={step}
-            value={Math.min(max, Math.max(min, v))}
+            value={clamped}
             onChange={(e) => onChange(Number(e.target.value))}
             aria-label={typeof label === 'string' ? label : undefined}
             aria-valuetext={`${signed && v > 0 ? '+' : ''}${nf(v, 1)} %`}
-            className="h-2 w-full cursor-pointer accent-brown"
+            style={{ background: track }}
+            className="h-2 w-full cursor-pointer appearance-none rounded-full [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-[3px] [&::-moz-range-thumb]:border-paper [&::-moz-range-thumb]:bg-brown [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-[3px] [&::-webkit-slider-thumb]:border-paper [&::-webkit-slider-thumb]:bg-brown [&::-webkit-slider-thumb]:shadow-[0_1px_4px_rgba(59,36,20,0.4)]"
           />
           {ticks && (
             <div className="mt-0.5 flex justify-between text-[11.5px] font-semibold text-muted" aria-hidden>
@@ -154,14 +173,36 @@ export function SliderField({
             </div>
           )}
         </div>
-        <NumberInput id={id} value={value} onChange={onChange} decimals={1} suffix="%" className="w-[6.5rem] shrink-0" inputClassName={signed && v > 0 ? 'text-good' : signed && v < 0 ? 'text-bad' : undefined} />
+        <NumberInput
+          id={id}
+          value={value}
+          onChange={onChange}
+          decimals={1}
+          suffix="%"
+          className="w-[6.5rem] shrink-0"
+          inputClassName={signed && v > 0 ? 'text-good' : signed && v < 0 ? 'text-bad' : undefined}
+        />
       </div>
     </Field>
   )
 }
 
 /** Porcentaje simple (IIBB, descuento…). */
-export function PercentField({ label, hint, info, value, onChange, max = 100 }: { label: ReactNode; hint?: ReactNode; info?: GlossaryKey; value: number | null; onChange: (v: number | null) => void; max?: number }) {
+export function PercentField({
+  label,
+  hint,
+  info,
+  value,
+  onChange,
+  max = 100,
+}: {
+  label: ReactNode
+  hint?: ReactNode
+  info?: GlossaryKey
+  value: number | null
+  onChange: (v: number | null) => void
+  max?: number
+}) {
   const id = useId()
   const invalid = value != null && (value < 0 || value > max)
   return (
@@ -174,7 +215,7 @@ export function PercentField({ label, hint, info, value, onChange, max = 100 }: 
 /** Botones tipo "píldora" para elegir una opción (ej: redondeo). */
 export function Segmented<V extends string | number>({ options, value, onChange, label }: { options: { value: V; label: string }[]; value: V; onChange: (v: V) => void; label: string }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1 rounded-2xl border border-line-strong bg-paper p-1">
+    <div role="radiogroup" aria-label={label} className="grid gap-1 rounded-2xl border border-line-strong bg-paper p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
       {options.map((o) => {
         const active = o.value === value
         return (
@@ -184,10 +225,7 @@ export function Segmented<V extends string | number>({ options, value, onChange,
             role="radio"
             aria-checked={active}
             onClick={() => onChange(o.value)}
-            className={clsx(
-              'h-9 flex-1 rounded-xl px-3 text-[14px] font-bold whitespace-nowrap transition-colors',
-              active ? 'bg-ink text-cream' : 'text-ink-soft hover:bg-cream-deep hover:text-ink',
-            )}
+            className={clsx('h-9 flex-1 rounded-xl px-3 text-[14px] font-bold whitespace-nowrap transition-colors', active ? 'bg-ink text-cream' : 'text-ink-soft hover:bg-cream-deep hover:text-ink')}
           >
             {o.label}
           </button>
@@ -198,7 +236,7 @@ export function Segmented<V extends string | number>({ options, value, onChange,
 }
 
 export const ROUNDING_OPTIONS = [
-  { value: 0, label: 'Sin redondeo' },
+  { value: 0, label: 'Exacto' },
   { value: 100, label: '$ 100' },
   { value: 500, label: '$ 500' },
   { value: 1000, label: '$ 1.000' },
@@ -235,7 +273,54 @@ export function ExampleNote({ base, children }: { base: BaseNumbers; children?: 
   return (
     <Note tone="info" title="Estos números son de ejemplo">
       {children ?? 'Todavía no hay ventas cargadas en los últimos 3 meses completos. Cuando cargues ventas y gastos, la calculadora se completa sola con tus promedios.'}
+      <span className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+        <Link to="/ventas?nuevo=1" className="font-bold text-sky-deep hover:underline">
+          Cargar una venta →
+        </Link>
+        <Link to="/gastos?nuevo=1" className="font-bold text-sky-deep hover:underline">
+          Cargar un gasto →
+        </Link>
+      </span>
     </Note>
+  )
+}
+
+/**
+ * "Elegí un vino (opcional)" con la opción de sacarlo: el selector del kit no tiene botón para
+ * borrar, y acá el vino es opcional (sin vino, calculás con un costo escrito a mano).
+ */
+export function WinePicker({
+  value,
+  onChange,
+  hint,
+  priceList,
+  showCost,
+}: {
+  value: number | null
+  onChange: (id: number | null, product: Product | null) => void
+  hint: ReactNode
+  priceList?: 'minorista' | 'mayorista'
+  showCost?: boolean
+}) {
+  return (
+    <Field
+      label="Elegí un vino (opcional)"
+      hint={
+        value != null ? (
+          <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <span className="min-w-0">{hint}</span>
+            <button type="button" onClick={() => onChange(null, null)} className="inline-flex shrink-0 items-center gap-1 font-bold text-ink-soft hover:text-ink hover:underline">
+              <X size={13} strokeWidth={2.6} aria-hidden />
+              Sacar el vino
+            </button>
+          </span>
+        ) : (
+          hint
+        )
+      }
+    >
+      <ProductSelect value={value} onChange={onChange} priceList={priceList} showCost={showCost} placeholder="Buscá un vino de tu lista…" />
+    </Field>
   )
 }
 
@@ -245,7 +330,21 @@ export function ExampleNote({ base, children }: { base: BaseNumbers; children?: 
  * Resultado con forma de ticket: arriba el número grande, una línea "troquelada" y abajo
  * el paso a paso ("Así llegamos a este número").
  */
-export function Ticket({ hero, title = 'Así llegamos a este número', children, footer, id, className }: { hero: ReactNode; title?: string; children: ReactNode; footer?: ReactNode; id?: string; className?: string }) {
+export function Ticket({
+  hero,
+  title = 'Así llegamos a este número',
+  children,
+  footer,
+  id,
+  className,
+}: {
+  hero: ReactNode
+  title?: string
+  children: ReactNode
+  footer?: ReactNode
+  id?: string
+  className?: string
+}) {
   return (
     <section id={id} className={clsx('vh-card relative min-w-0 overflow-hidden scroll-mt-24', className)} aria-live="polite">
       <div className="bg-cream-deep/60 px-5 pt-5 pb-5 sm:px-6">{hero}</div>
@@ -266,9 +365,9 @@ export function Ticket({ hero, title = 'Así llegamos a este número', children,
 export function TicketHero({ label, value, sub, badge, info }: { label: ReactNode; value: ReactNode; sub?: ReactNode; badge?: ReactNode; info?: ReactNode }) {
   return (
     <div className="min-w-0">
-      <p className="flex flex-wrap items-center gap-1.5 text-[14px] font-bold text-ink-soft">
+      <p className="text-[14px] font-bold text-ink-soft">
         {label}
-        {info}
+        {info && <span className="ml-1.5 inline-block align-[-2px]">{info}</span>}
       </p>
       <div className="mt-1.5 flex flex-wrap items-end gap-x-3 gap-y-2">
         <p className="vh-num text-[2.5rem] leading-none font-extrabold tracking-tight text-ink sm:text-[2.9rem]">{value}</p>
@@ -289,9 +388,9 @@ export function TicketRow({ op, label, info, value, sub, total, muted }: { op?: 
         {op}
       </span>
       <div className="min-w-0 flex-1">
-        <span className={clsx('inline-flex flex-wrap items-center gap-1 text-[14.5px]', total ? 'font-extrabold text-ink' : muted ? 'text-muted' : 'text-ink-soft')}>
+        <span className={clsx('text-[14.5px]', total ? 'font-extrabold text-ink' : muted ? 'text-muted' : 'text-ink-soft')}>
           {label}
-          {info}
+          {info && <span className="ml-1 inline-block align-[-2px]">{info}</span>}
         </span>
         {sub && <span className="block text-[12.5px] leading-snug text-muted">{sub}</span>}
       </div>
@@ -304,9 +403,9 @@ export function TicketRow({ op, label, info, value, sub, total, muted }: { op?: 
 export function MiniStat({ label, value, sub, info, className }: { label: ReactNode; value: ReactNode; sub?: ReactNode; info?: ReactNode; className?: string }) {
   return (
     <div className={clsx('min-w-0 rounded-xl bg-cream px-3.5 py-3', className)}>
-      <p className="flex items-center gap-1 text-[12.5px] leading-tight font-bold text-ink-soft">
-        <span className="min-w-0">{label}</span>
-        {info}
+      <p className="text-[12.5px] leading-tight font-bold text-ink-soft">
+        {label}
+        {info && <span className="ml-1 inline-block align-[-3px]">{info}</span>}
       </p>
       <p className="vh-num mt-1 text-[1.3rem] leading-none font-extrabold text-ink">{value}</p>
       {sub && <p className="mt-1 text-[12.5px] leading-snug text-muted">{sub}</p>}
@@ -413,8 +512,20 @@ export function SplitBar({ parts, total }: { parts: { label: string; value: numb
   )
 }
 
-/** Barra fija abajo en el celular con el resultado principal (así ves el número mientras escribís). */
+/**
+ * Barra fija abajo en el celular con el resultado principal (así ves el número mientras escribís).
+ * Se esconde cuando el resultado ya está en pantalla, para no taparlo.
+ */
 export function MobileResult({ label, value, targetId }: { label: string; value: ReactNode; targetId: string }) {
+  const [hidden, setHidden] = useState(false)
+  useEffect(() => {
+    const el = document.getElementById(targetId)
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(([e]) => setHidden(e.isIntersecting), { threshold: 0.15 })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [targetId])
+  if (hidden) return null
   return (
     <button
       type="button"

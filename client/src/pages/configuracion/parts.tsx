@@ -129,14 +129,40 @@ export function useHashScroll(ready = true, onTarget?: (id: string) => void) {
     if (!ready || !hash || hash.length < 2) return
     const id = decodeURIComponent(hash.slice(1))
     cb.current?.(id)
-    let tries = 0
-    let timer = 0
-    const attempt = () => {
-      if (scrollToId(id) || tries++ > 10) return
-      timer = window.setTimeout(attempt, 120)
+    const timers: number[] = []
+    let userMoved = false
+    const stop = () => {
+      userMoved = true
     }
-    timer = window.setTimeout(attempt, 140)
-    return () => window.clearTimeout(timer)
+    window.addEventListener('wheel', stop, { passive: true })
+    window.addEventListener('touchmove', stop, { passive: true })
+    window.addEventListener('keydown', stop)
+    let tries = 0
+    const first = () => {
+      if (scrollToId(id)) {
+        // Mientras terminan de cargar las secciones de arriba, el destino se puede correr: lo volvemos a alinear.
+        for (const ms of [450, 900, 1500, 2300]) {
+          timers.push(
+            window.setTimeout(() => {
+              const el = document.getElementById(id)
+              if (!el || userMoved) return
+              const top = el.getBoundingClientRect().top
+              const want = parseFloat(getComputedStyle(el).scrollMarginTop) || 0
+              if (Math.abs(top - want) > 24) el.scrollIntoView({ block: 'start' })
+            }, ms),
+          )
+        }
+        return
+      }
+      if (tries++ < 12) timers.push(window.setTimeout(first, 120))
+    }
+    timers.push(window.setTimeout(first, 140))
+    return () => {
+      timers.forEach((t) => window.clearTimeout(t))
+      window.removeEventListener('wheel', stop)
+      window.removeEventListener('touchmove', stop)
+      window.removeEventListener('keydown', stop)
+    }
   }, [hash, ready])
 }
 
@@ -341,6 +367,9 @@ export function useDirtyRegistry() {
   }, [any])
   return { dirty, onDirty, any }
 }
+
+/** Que "$ 10.000" o "6,29 %" no se corten en dos renglones (money() usa un espacio común). */
+export const nb = (s: string) => s.replace(/ /g, ' ')
 
 /** 1 → "1 gasto", 3 → "3 gastos" (con separador de miles). */
 export function plural(n: number, one: string, many: string): string {

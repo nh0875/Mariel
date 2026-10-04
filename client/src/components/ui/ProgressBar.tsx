@@ -1,5 +1,10 @@
 import clsx from 'clsx'
-import { pct } from '@/lib/format'
+/** 99,9 % se muestra "99 %" (no llegaste) y 100,4 % se muestra "101 %" (te pasaste). */
+export function progressLabel(ratio: number): string {
+  const p = ratio * 100
+  const shown = p < 100 ? Math.floor(p) : p > 100 ? Math.ceil(p) : 100
+  return `${new Intl.NumberFormat('es-AR').format(shown)} %`
+}
 
 /**
  * Barra de avance (ej: meta de ventas). value/max.
@@ -43,7 +48,7 @@ export function ProgressBar({
       >
         <div className={clsx('h-full rounded-full transition-[width] duration-500', color)} style={{ width: `${width}%` }} />
       </div>
-      {showLabel && <span className="vh-num w-14 text-right text-sm font-extrabold text-ink">{max > 0 ? pct(ratio, 0) : '—'}</span>}
+      {showLabel && <span className="vh-num w-14 text-right text-sm font-extrabold text-ink">{max > 0 ? progressLabel(ratio) : '—'}</span>}
     </div>
   )
 }

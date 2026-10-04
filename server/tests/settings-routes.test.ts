@@ -100,6 +100,61 @@ describe('PUT /settings (guardar por secciones)', () => {
   })
 })
 
+describe('PUT /settings: medios de pago y renombres (revisión)', () => {
+  it('si llega un solo medio de pago, los demás no se pierden', async () => {
+    const before = (await s.get('/settings')).body
+    const r = await s.put('/settings', { payment_methods: [{ key: 'credito', label: 'Visa crédito', fee_pct: 4, account_id: null }] })
+    expect(r.status).toBe(200)
+    expect(r.body.payment_methods).toHaveLength(before.payment_methods.length)
+    expect(r.body.payment_methods.map((m: any) => m.key)).toEqual(before.payment_methods.map((m: any) => m.key))
+    expect(r.body.payment_methods.find((m: any) => m.key === 'credito')).toMatchObject({ label: 'Visa crédito', fee_pct: 4 })
+    expect(r.body.payment_methods.find((m: any) => m.key === 'mercadopago')).toEqual(before.payment_methods.find((m: any) => m.key === 'mercadopago'))
+  })
+
+  it('rechaza medios repetidos y cuentas que no existen o están desactivadas', async () => {
+    const dup = await s.put('/settings', {
+      payment_methods: [
+        { key: 'credito', label: 'Crédito', fee_pct: 3, account_id: null },
+        { key: 'credito', label: 'Crédito 2', fee_pct: 4, account_id: null },
+      ],
+    })
+    expect(dup.status).toBe(400)
+    expect(dup.body.error).toMatch(/repetido/)
+
+    const ghost = await s.put('/settings', { payment_methods: [{ key: 'debito', label: 'Débito', fee_pct: 1.5, account_id: 999 }] })
+    expect(ghost.status).toBe(400)
+    expect(ghost.body.error).toMatch(/ya no existe/)
+
+    const extra = run("INSERT INTO accounts (name, kind, active) VALUES ('Cuenta vieja', 'banco', 0)").lastInsertRowid
+    const inactive = await s.put('/settings', { payment_methods: [{ key: 'debito', label: 'Débito', fee_pct: 1.5, account_id: extra }] })
+    expect(inactive.status).toBe(400)
+    expect(inactive.body.error).toMatch(/desactivada/)
+    // Nada se guardó a medias
+    expect((await s.get('/settings')).body.payment_methods.find((m: any) => m.key === 'debito').account_id).not.toBe(extra)
+  })
+
+  it('al renombrar una categoría, los gastos fijos pasan al nombre nuevo y los gastos cargados no cambian', async () => {
+    createExpense(expenseInput.parse({ date: today(), category: 'Alquiler', description: 'Alquiler de octubre', amount: 250000, nature: 'fijo', paid: true }))
+    run("INSERT INTO recurring_expenses (description, category, amount) VALUES ('Alquiler del local', 'Alquiler', 250000)")
+    const cur = (await s.get('/settings')).body
+    const cats = cur.expense_categories.map((c: any) => (c.name === 'Alquiler' ? { ...c, name: 'Alquiler del local' } : c))
+    const r = await s.put('/settings', { expense_categories: cats, category_renames: [{ from: 'Alquiler', to: 'Alquiler del local' }] })
+    expect(r.status).toBe(200)
+    expect(r.body.expense_categories.some((c: any) => c.name === 'Alquiler del local')).toBe(true)
+    expect(scalar<string>('SELECT category FROM recurring_expenses')).toBe('Alquiler del local')
+    expect(scalar<string>('SELECT category FROM expenses')).toBe('Alquiler')
+    // El renombre no se guarda como configuración
+    expect((await s.get('/settings')).body.category_renames).toBeUndefined()
+
+    // Un renombre hacia un nombre que no está en la lista se ignora
+    await s.put('/settings', { expense_categories: cats, category_renames: [{ from: 'Alquiler del local', to: 'Cualquiera' }] })
+    expect(scalar<string>('SELECT category FROM recurring_expenses')).toBe('Alquiler del local')
+
+    const bad = await s.put('/settings', { expense_categories: cats, category_renames: 'Alquiler' })
+    expect(bad.status).toBe(400)
+  })
+})
+
 describe('GET /settings/category-usage', () => {
   it('cuenta los gastos por categoría y muestra las que ya no están en la lista', async () => {
     seedLittle()

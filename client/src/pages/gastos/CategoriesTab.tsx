@@ -10,12 +10,36 @@ import { usePeriod } from '@/lib/period'
 import { useApi } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, InfoTip, Loading, PeriodPicker, type Column } from '@/components/ui'
 import { ChartCard, ColumnChart, DonutChart, Legend, RankBars } from '@/components/charts'
-import { categoryIcon, categoryShort, NATURE_SHORT, type ExpensesSummary } from './types'
+import { categoryIcon, categoryShort, natureShort, natureTone, type ExpensesSummary } from './types'
 
 type CatRow = ExpensesSummary['by_category'][number]
 
 const FIXED_COLOR = CHART_COLORS.gastos
 const VARIABLE_COLOR = CHART_COLORS.extra
+
+/**
+ * Porciones de la torta: hasta 5. Si hay más categorías, las 4 más grandes y el resto junto en
+ * «Otras categorías». Se arma acá (y no se deja al gráfico) para que la categoría «Otros» que ya existe
+ * vaya a ese grupo en vez de aparecer dos veces, y para que dos categorías con el mismo nombre corto
+ * (ej. «Servicios» y «Servicios (luz, gas…)») no se pisen.
+ */
+function donutSlices(rows: { category: string; amount: number }[]): { label: string; value: number }[] {
+  const sorted = rows.filter((r) => r.amount > 0).sort((a, b) => b.amount - a.amount)
+  const isOther = (c: string) => /^otr[oa]s?$/i.test(c.trim())
+  const main = sorted.filter((r) => !isOther(r.category))
+  const top = sorted.length <= 5 && main.length === sorted.length ? sorted : main.slice(0, 4)
+  const restRows = sorted.filter((r) => !top.includes(r))
+  const rest = restRows.reduce((t, r) => t + r.amount, 0)
+  const used = new Map<string, number>()
+  const out = top.map((r) => {
+    const short = categoryShort(r.category)
+    const n = (used.get(short) ?? 0) + 1
+    used.set(short, n)
+    return { label: n === 1 ? short : r.category, value: Math.round(r.amount) }
+  })
+  if (rest > 0) out.push({ label: restRows.length === 1 ? categoryShort(restRows[0].category) : 'Otras categorías', value: Math.round(rest) })
+  return out
+}
 
 /** Variación de un gasto: subir es malo (rojo), bajar es bueno (verde). */
 function ChangeBadge({ change }: { change: number | null }) {
@@ -137,17 +161,28 @@ export function CategoriesTab({ onPickCategory, onNew }: { onPickCategory: (cate
     {
       key: 'category',
       header: 'Categoría',
+      className: 'w-full max-w-0 min-w-[8rem]',
       cell: (r) => {
         const Icon = categoryIcon(r.category)
         return (
-          <span className="inline-flex min-w-0 items-center gap-2" title={r.category}>
+          <span className="flex min-w-0 items-center gap-2" title={r.category}>
             <Icon size={16} className="shrink-0 text-muted" aria-hidden />
             <span className="truncate font-semibold text-ink">{categoryShort(r.category)}</span>
           </span>
         )
       },
     },
-    { key: 'nature', header: 'Tipo', hideBelow: 'md', value: (r) => NATURE_SHORT[r.nature as 'fijo'], cell: (r) => <Badge tone={r.nature === 'fijo' ? 'coral' : 'mustard'}>{NATURE_SHORT[r.nature as 'fijo'] ?? r.nature}</Badge> },
+    {
+      key: 'nature',
+      header: 'Tipo',
+      hideBelow: 'md',
+      value: (r) => natureShort(r.nature),
+      cell: (r) => (
+        <span title={r.nature === 'mixto' ? `Fijos ${money(r.fixed, { decimals: 0 })} · variables ${money(r.variable, { decimals: 0 })}` : undefined}>
+          <Badge tone={natureTone(r.nature)}>{natureShort(r.nature)}</Badge>
+        </span>
+      ),
+    },
     { key: 'count', header: 'Gastos', align: 'right', hideBelow: 'sm', cell: (r) => r.count },
     { key: 'amount', header: 'Monto', align: 'right', cell: (r) => <span className="font-bold">{money(r.amount, { decimals: 0 })}</span>, footer: s ? money(s.total, { decimals: 0 }) : undefined },
     { key: 'pct', header: '% del total', align: 'right', hideBelow: 'sm', cell: (r) => pct(r.pct), footer: '100 %' },
@@ -203,7 +238,7 @@ export function CategoriesTab({ onPickCategory, onNew }: { onPickCategory: (cate
           <div className="grid gap-4 lg:grid-cols-2">
             <ChartCard
               title="¿En qué se va la plata?"
-              subtitle="Cada porción es una categoría (las más chicas se juntan en «Otros»)."
+              subtitle="Cada porción es una categoría (si hay más de 5, las más chicas se juntan en «Otras categorías»)."
               term="gastos"
               table={{
                 columns: [
@@ -214,7 +249,7 @@ export function CategoriesTab({ onPickCategory, onNew }: { onPickCategory: (cate
                 rows: s.by_category,
               }}
             >
-              <DonutChart data={s.by_category.map((c) => ({ label: categoryShort(c.category), value: Math.round(c.amount) }))} />
+              <DonutChart data={donutSlices(s.by_category)} />
             </ChartCard>
             <Card
               title="Ranking de categorías"
@@ -226,7 +261,7 @@ export function CategoriesTab({ onPickCategory, onNew }: { onPickCategory: (cate
                 items={s.by_category.map((c) => ({
                   label: categoryShort(c.category),
                   value: Math.round(c.amount),
-                  sublabel: `${NATURE_SHORT[c.nature as 'fijo'] ?? c.nature} · ${pct(c.pct, 0)}`,
+                  sublabel: `${natureShort(c.nature)} · ${pct(c.pct, 0)}`,
                 }))}
               />
             </Card>

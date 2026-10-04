@@ -7,7 +7,7 @@ import { PackageX, Sparkles, TrendingDown, Wine } from 'lucide-react'
 import type { Period } from '@shared/dates'
 import { dateShort, int, pct } from '@/lib/format'
 import { Badge, Button, DataTable, EmptyState, ExportButton, InfoTip, type Column } from '@/components/ui'
-import { ABC_INFO, AbcBadge, BlockTitle, compact, Insights, money0, plural, ReportGuard, TabIntro, useReport, type Insight } from './parts'
+import { ABC_INFO, AbcBadge, Amount, BlockTitle, compact, Insights, money0, plural, ReportGuard, TabIntro, useReport, type Insight } from './parts'
 import type { AbcClass, ProductReportRow } from './types'
 
 type Filter = 'todos' | AbcClass | 'Q'
@@ -173,6 +173,26 @@ function ProductsContent({
       ),
     })
   }
+  const runningOut = sold.filter((r) => r.active && (r.abc === 'A' || r.abc === 'B') && (r.stock <= 0 || (r.days_of_stock != null && r.days_of_stock < 15)))
+  if (runningOut.length) {
+    const out = runningOut.filter((r) => r.stock <= 0)
+    insights.push({
+      tone: 'bad',
+      text: (
+        <>
+          {runningOut.length === 1 ? 'Un vino de los que más dejan' : `${runningOut.length} vinos de los que más dejan`}{' '}
+          {out.length === runningOut.length ? (runningOut.length === 1 ? 'se quedó' : 'se quedaron') : 'se quedaron o están por quedarse'} sin stock:{' '}
+          <b>
+            {runningOut
+              .slice(0, 4)
+              .map((r) => (r.stock <= 0 ? `${r.name} (sin stock)` : `${r.name} (${r.days_of_stock} días)`))
+              .join(', ')}
+          </b>
+          {runningOut.length > 4 ? ' y otros' : ''}. Cada día sin ese vino es ganancia que se pierde: reponelo.
+        </>
+      ),
+    })
+  }
   const losing = sold.filter((r) => r.profit < 0)
   if (losing.length) {
     insights.push({
@@ -207,7 +227,7 @@ function ProductsContent({
       key: 'name',
       header: 'Vino',
       cell: (r) => (
-        <span className="block min-w-[150px]">
+        <span className="block min-w-[110px] sm:min-w-[150px]">
           <span className="font-bold text-ink">{r.name}</span>
           {!r.active && (
             <Badge className="ml-1.5" tone="neutral">
@@ -219,14 +239,14 @@ function ProductsContent({
       ),
       value: (r) => `${r.name} ${r.winery ?? ''}`,
     },
-    { key: 'bottles', header: 'Botellas', align: 'right', cell: (r) => int(r.bottles), footer: int(totals.bottles) },
+    { key: 'bottles', header: 'Botellas', align: 'right', hideBelow: 'sm', cell: (r) => int(r.bottles), footer: int(totals.bottles) },
     { key: 'revenue', header: 'Ventas', align: 'right', hideBelow: 'md', cell: (r) => (r.idle ? '—' : money0(r.revenue)), footer: money0(totals.revenue) },
     { key: 'cost', header: 'Costo', align: 'right', hideBelow: 'lg', cell: (r) => (r.idle ? '—' : money0(r.cost)), footer: money0(totals.cost) },
     {
       key: 'profit',
       header: 'Ganancia',
       align: 'right',
-      cell: (r) => (r.idle ? <span className="text-muted">—</span> : <span className={clsx('font-bold', r.profit < 0 && 'text-bad')}>{money0(r.profit)}</span>),
+      cell: (r) => (r.idle ? <span className="text-muted">—</span> : <Amount value={r.profit} className={clsx('font-bold', r.profit < 0 && 'text-bad')} />),
       footer: money0(totals.profit),
     },
     {
@@ -340,8 +360,8 @@ function ProductsContent({
 
       <section className="mt-6" aria-label="Para pensar">
         <BlockTitle title="Para pensar">
-          Comparamos cada vino con el «vino del medio» de la tabla: el que vende {int(Math.round(quad.medianBottles))} botellas y el que deja {pct(quad.medianMargin, 1)} de margen. «Poco» o
-          «buen» margen es al menos 1,5 puntos por debajo o por encima de ese {pct(quad.medianMargin, 1)}.
+          Comparamos cada vino con el «vino del medio» de la tabla: el que vende {int(Math.round(quad.medianBottles))} botellas y el que deja {pct(quad.medianMargin, 1)} de margen. «Poco» o «buen»
+          margen es al menos 1,5 puntos por debajo o por encima de ese {pct(quad.medianMargin, 1)}.
         </BlockTitle>
         <div className="grid gap-4 lg:grid-cols-3">
           <ListCard

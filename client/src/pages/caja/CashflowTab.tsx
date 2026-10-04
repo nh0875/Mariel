@@ -3,9 +3,10 @@
 import clsx from 'clsx'
 import { CHART_COLORS } from '@shared/constants'
 import { addMonths, endOfMonth, startOfMonth, today } from '@shared/dates'
-import { money, moneyCompact } from '@/lib/format'
+import { Plus, TrendingUp } from 'lucide-react'
+import { money, moneyCompact, pct } from '@/lib/format'
 import { useApi } from '@/lib/queries'
-import { Card, ErrorState, InfoTip, Loading, Select } from '@/components/ui'
+import { Button, Card, EmptyState, ErrorState, InfoTip, Loading, Select } from '@/components/ui'
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from 'recharts'
 import { ChartCard, ColumnChart, Legend, RankBars } from '@/components/charts'
 import { Kpi, SignedMoney, nb, tileMoney } from './parts'
@@ -31,6 +32,15 @@ export function flowPeriod(r: FlowRange): { from: string; to: string } {
     return { from: `${y}-01-01`, to: `${y}-12-31` }
   }
   return { from: addMonths(startOfMonth(t), -(Number(r) - 1)), to: end }
+}
+
+/** Para frases: "No entró ni salió plata en los últimos 12 meses". */
+const RANGE_PHRASE: Record<FlowRange, string> = {
+  '6': 'los últimos 6 meses',
+  '12': 'los últimos 12 meses',
+  '24': 'los últimos 24 meses',
+  anio: 'lo que va del año',
+  anio_pasado: 'el año pasado',
 }
 
 const moneyFmt = (v: unknown) => money(Number(v), { decimals: 0 })
@@ -66,7 +76,7 @@ function BalanceChart({ data, color }: { data: { label: string; balance_end: num
   )
 }
 
-export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (r: FlowRange) => void }) {
+export function CashflowTab({ range, setRange, onNew }: { range: FlowRange; setRange: (r: FlowRange) => void; onNew?: () => void }) {
   const { from, to } = flowPeriod(range)
   const q = useApi<CashflowResult>('/cashflow', { from, to })
 
@@ -92,6 +102,32 @@ export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (
     )
 
   const { months, by_kind, totals } = q.data
+  const rangeLabel = RANGE_PHRASE[range] ?? 'estos meses'
+
+  // Sin ningún movimiento de plata en el rango: los gráficos saldrían vacíos (ejes de $ 0 a $ 4), mejor explicar qué va a aparecer.
+  if (by_kind.length === 0) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className="vh-card">
+          <EmptyState
+            icon={TrendingUp}
+            title={`No entró ni salió plata en ${rangeLabel}`}
+            action={
+              onNew ? (
+                <Button icon={Plus} onClick={onNew}>
+                  Cargar un movimiento
+                </Button>
+              ) : undefined
+            }
+          >
+            Cuando cobres ventas o pagues compras y gastos, acá vas a ver mes a mes cuánto entró, cuánto salió y cuánta plata te quedó.
+            {Math.abs(totals.balance_end) > 0.004 && ` Por ahora tenés ${money(totals.balance_end, { decimals: 0 })} en tus cuentas.`} Si buscás meses anteriores, elegí otro rango arriba.
+          </EmptyState>
+        </div>
+      </div>
+    )
+  }
   const negMonths = months.filter((m) => m.net < 0).length
   const lastThree = months.slice(-3)
   const threeNegative = lastThree.length === 3 && lastThree.every((m) => m.net < 0)
@@ -104,14 +140,17 @@ export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (
   }
   const cashDelta = totals.balance_end - totals.balance_start
   const gap = totals.result - totals.net
+  const salesIn = ins.find((k) => k.ref_type === 'sale')?.in ?? 0
+  const salesShare = totals.cash_in > 0 ? salesIn / totals.cash_in : 0
+  const untilToday = to >= today()
 
   return (
     <div className="space-y-4">
       {header}
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <Kpi label="Entró" tone="sky" value={tileMoney(totals.cash_in)} title={money(totals.cash_in)} info={{ title: 'Lo que entró', text: 'Cobros de ventas, aportes, préstamos recibidos y otros ingresos. No cuenta las transferencias entre tus cuentas.' }} hint={`${months.length} meses`} />
-        <Kpi label="Salió" tone="coral" value={tileMoney(totals.cash_out)} title={money(totals.cash_out)} info={{ title: 'Lo que salió', text: 'Pagos de compras de vino y de gastos, comisiones, retiros de los dueños y cuotas de préstamos.' }} hint={negMonths ? `${negMonths} ${negMonths === 1 ? 'mes salió' : 'meses salió'} más de lo que entró` : 'Todos los meses entró más de lo que salió'} />
+        <Kpi label="Entró" tone="sky" value={tileMoney(totals.cash_in)} title={money(totals.cash_in)} info={{ title: 'Lo que entró', text: 'Cobros de ventas, aportes, préstamos recibidos y otros ingresos. No cuenta las transferencias entre tus cuentas.' }} hint={`${months.length} ${months.length === 1 ? 'mes' : 'meses'}${untilToday ? ' (el último, hasta hoy)' : ''}`} />
+        <Kpi label="Salió" tone="coral" value={tileMoney(totals.cash_out)} title={money(totals.cash_out)} info={{ title: 'Lo que salió', text: 'Pagos de compras de vino y de gastos, comisiones, retiros de los dueños y cuotas de préstamos.' }} hint={negMonths ? `${negMonths} ${negMonths === 1 ? 'mes' : 'meses'} con más salidas que entradas` : 'Ningún mes salió más de lo que entró'} />
         <Kpi
           label="Flujo neto"
           term="flujo_caja"
@@ -130,7 +169,7 @@ export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (
             )
           }
           title={money(totals.net)}
-          hint={totals.net >= 0 ? 'Entró más de lo que salió' : 'Salió más de lo que entró'}
+          hint={totals.net > 0.004 ? 'Entró más de lo que salió' : totals.net < -0.004 ? 'Salió más de lo que entró' : 'Entró lo mismo que salió'}
         />
         <Kpi
           label="Plata al final"
@@ -155,7 +194,7 @@ export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard
           title="Entradas y salidas por mes"
-          subtitle={`Plata que efectivamente entró y salió de tus cuentas.${to >= today() ? ' El último mes va hasta hoy.' : ''}`}
+          subtitle="Plata que efectivamente entró y salió de tus cuentas."
           term="flujo_caja"
           legend={
             <Legend
@@ -187,6 +226,7 @@ export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (
           title="Plata disponible a fin de cada mes"
           subtitle="La suma de todas tus cuentas el último día de cada mes."
           term="caja"
+          legend={<Legend items={[{ label: 'Plata en todas las cuentas', color: CHART_COLORS.ganancia }]} />}
           table={{
             columns: [
               { key: 'label', header: 'Mes' },
@@ -203,9 +243,11 @@ export function CashflowTab({ range, setRange }: { range: FlowRange; setRange: (
         <Card title="¿De dónde vino la plata?" subtitle="Todo lo que entró en el período, por tipo.">
           <RankBars items={topN(ins, (k) => k.in, (k) => k.label)} color={CHART_COLORS.ventas} max={6} emptyText="No entró plata en este período." />
           <p className="mt-4 text-[13px] text-muted">
-            {ins.length <= 1
-              ? 'Toda la plata que entró vino de lo que vendiste. '
-              : 'Lo ideal es que la mayor parte venga de cobrar ventas. '}
+            {salesShare >= 0.995
+              ? 'Toda la plata que entró vino de cobrar lo que vendiste. '
+              : salesShare < 0.005
+                ? 'Nada de esto vino de cobrar ventas. Al arrancar es normal, pero a la larga el negocio tiene que generar su propia plata vendiendo. '
+                : `El ${pct(salesShare, 0)} vino de cobrar ventas; lo ideal es que sea casi todo, porque aportes y préstamos no son plata que genera el negocio. `}
             Si ponés plata de tu bolsillo o pedís un préstamo, cargalo con «Nuevo movimiento» así queda claro de dónde salió.
           </p>
         </Card>

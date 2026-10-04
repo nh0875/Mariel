@@ -28,7 +28,6 @@ import { api } from '@/lib/api'
 import { date as fmtDate, int, money, pct, relativeDays, usd } from '@/lib/format'
 import { useAccounts, useApi, useApiMutation } from '@/lib/queries'
 import {
-  AccountSelect,
   Badge,
   Button,
   ChoiceCards,
@@ -43,7 +42,7 @@ import {
   TextInput,
   useConfirm,
 } from '@/components/ui'
-import { Example, SectionCard, norm, plural, useDraft, useReportDirty } from './parts'
+import { Example, SectionCard, nb, norm, plural, useDraft, useReportDirty } from './parts'
 import type { CategoryUsage } from './types'
 
 type OnDirty = (id: string, dirty: boolean) => void
@@ -98,26 +97,26 @@ export function BusinessSection({ settings, onDirty }: { settings: Settings; onD
       }
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Nombre del negocio" required error={errors.name} hint="Como querés que aparezca en los Excel y comprobantes.">
-          <TextInput value={draft.name} onChange={(e) => set('name', e.target.value)} maxLength={120} placeholder="Ej: VINOH!" aria-invalid={!!errors.name} />
+        <Field htmlFor="cfg-name" label="Nombre del negocio" required error={errors.name} hint="Como querés que aparezca en los Excel y comprobantes.">
+          <TextInput id="cfg-name" value={draft.name} onChange={(e) => set('name', e.target.value)} maxLength={120} placeholder="Ej: VINOH!" aria-invalid={!!errors.name} />
         </Field>
-        <Field label="Bajada" hint="La frase que acompaña al nombre. Ej: «Viví el vino».">
-          <TextInput value={draft.tagline} onChange={(e) => set('tagline', e.target.value)} maxLength={200} placeholder="Viví el vino" />
+        <Field htmlFor="cfg-tagline" label="Frase de la marca" hint="La que acompaña al nombre (la «bajada»). Ej: «Viví el vino».">
+          <TextInput id="cfg-tagline" value={draft.tagline} onChange={(e) => set('tagline', e.target.value)} maxLength={200} placeholder="Viví el vino" />
         </Field>
-        <Field label="Dueña o dueño" hint={draft.owner.trim() ? `En Inicio te saludamos: «¡Hola, ${draft.owner.trim().split(' ')[0]}!»` : 'Para saludarte cuando abrís el sistema.'}>
-          <TextInput value={draft.owner} onChange={(e) => set('owner', e.target.value)} maxLength={120} placeholder="Ej: Mariel" autoComplete="name" />
+        <Field htmlFor="cfg-owner" label="Dueña o dueño" hint={draft.owner.trim() ? `En Inicio te saludamos: «¡Hola, ${draft.owner.trim().split(' ')[0]}!»` : 'Para saludarte cuando abrís el sistema.'}>
+          <TextInput id="cfg-owner" value={draft.owner} onChange={(e) => set('owner', e.target.value)} maxLength={120} placeholder="Ej: Mariel" autoComplete="name" />
         </Field>
-        <Field label="CUIT" error={errors.tax_id} hint="Opcional. Sale en los comprobantes.">
-          <TextInput value={draft.tax_id} onChange={(e) => set('tax_id', e.target.value)} maxLength={30} placeholder="20-12345678-9" inputMode="numeric" aria-invalid={!!errors.tax_id} />
+        <Field htmlFor="cfg-cuit" label="CUIT" error={errors.tax_id} hint="Opcional. Sale en los comprobantes.">
+          <TextInput id="cfg-cuit" value={draft.tax_id} onChange={(e) => set('tax_id', e.target.value)} maxLength={30} placeholder="20-12345678-9" inputMode="numeric" aria-invalid={!!errors.tax_id} />
         </Field>
-        <Field label="Dirección" hint="Opcional.">
-          <TextInput value={draft.address} onChange={(e) => set('address', e.target.value)} maxLength={200} placeholder="Ej: Av. Corrientes 1234, CABA" autoComplete="street-address" />
+        <Field htmlFor="cfg-address" label="Dirección" hint="Opcional.">
+          <TextInput id="cfg-address" value={draft.address} onChange={(e) => set('address', e.target.value)} maxLength={200} placeholder="Ej: Av. Corrientes 1234, CABA" autoComplete="street-address" />
         </Field>
-        <Field label="Teléfono" hint="Opcional.">
-          <TextInput value={draft.phone} onChange={(e) => set('phone', e.target.value)} maxLength={60} placeholder="Ej: 11 5555-0101" inputMode="tel" autoComplete="tel" />
+        <Field htmlFor="cfg-phone" label="Teléfono" hint="Opcional.">
+          <TextInput id="cfg-phone" value={draft.phone} onChange={(e) => set('phone', e.target.value)} maxLength={60} placeholder="Ej: 11 5555-0101" inputMode="tel" autoComplete="tel" />
         </Field>
-        <Field label="Email" error={errors.email} hint="Opcional." className="sm:col-span-2 lg:col-span-1">
-          <TextInput type="email" value={draft.email} onChange={(e) => set('email', e.target.value)} maxLength={120} placeholder="hola@tuvinoteca.com" autoComplete="email" aria-invalid={!!errors.email} />
+        <Field htmlFor="cfg-email" label="Email" error={errors.email} hint="Opcional." className="sm:col-span-2 lg:col-span-1">
+          <TextInput id="cfg-email" type="email" value={draft.email} onChange={(e) => set('email', e.target.value)} maxLength={120} placeholder="hola@tuvinoteca.com" autoComplete="email" aria-invalid={!!errors.email} />
         </Field>
       </div>
 
@@ -157,19 +156,48 @@ const METHOD_ICON: Record<PaymentMethod, LucideIcon> = {
   otro: CircleDollarSign,
 }
 
+const METHOD_GRID = 'md:grid-cols-[minmax(0,1.25fr)_112px_minmax(0,1fr)_104px]'
+
+/**
+ * Cuenta donde entra la plata de un medio de pago. Muestra solo el nombre de la cuenta (el saldo acá
+ * no aporta y cortaba el texto en pantallas chicas). Si la cuenta elegida se desactivó, se avisa.
+ */
+function AccountNameSelect({ value, onChange, label }: { value: number | null; onChange: (id: number | null) => void; label: string }) {
+  const { data: accounts = [] } = useAccounts()
+  const current = accounts.find((a) => a.id === value)
+  const options = accounts.filter((a) => a.active || a.id === value).map((a) => ({ value: a.id, label: a.active ? a.name : `${a.name} (desactivada)` }))
+  return (
+    <Select
+      value={value ?? ''}
+      onChange={(v) => onChange(v ? Number(v) : null)}
+      options={options}
+      placeholder="Elegí una cuenta…"
+      aria-label={`Cuenta donde entra la plata de ${label}`}
+      aria-invalid={value == null || (current != null && !current.active)}
+    />
+  )
+}
+
 export function PaymentMethodsSection({ settings, onDirty }: { settings: Settings; onDirty?: OnDirty }) {
   const { draft, update, dirty, reset, saved } = useDraft<PaymentMethodSetting[]>(settings.payment_methods)
   useReportDirty('medios-de-pago', dirty, onDirty)
+  const { data: accounts } = useAccounts()
   const save = useSaveSettings('Listo, guardamos los medios de pago', saved)
   if (!draft) return null
   const set = (key: PaymentMethod, patch: Partial<PaymentMethodSetting>) => update((d) => d.map((m) => (m.key === key ? { ...m, ...patch } : m)))
   const badLabel = draft.find((m) => !m.label.trim())
   const badFee = draft.find((m) => !Number.isFinite(m.fee_pct) || m.fee_pct < 0 || m.fee_pct > 50)
+  const noAccount = draft.find((m) => m.account_id == null)
+  const deadAccount = accounts ? draft.find((m) => m.account_id != null && !accounts.some((a) => a.id === m.account_id && a.active)) : undefined
   const error = badLabel
     ? `Ponele un nombre a «${PAYMENT_METHOD_LABELS[badLabel.key]}».`
     : badFee
-      ? `La comisión de «${badFee.label}» tiene que estar entre 0 % y 50 %.`
-      : null
+      ? `La comisión de «${badFee.label}» tiene que estar entre 0 % y 50 %.`
+      : noAccount
+        ? `Elegí en qué cuenta entra la plata de «${noAccount.label}».`
+        : deadAccount
+          ? `La cuenta elegida para «${deadAccount.label}» está desactivada: elegí otra.`
+          : null
   const mp = draft.find((m) => m.key === 'mercadopago') ?? draft.find((m) => m.fee_pct > 0)
   const mpFee = mp ? (20000 * mp.fee_pct) / 100 : 0
   return (
@@ -193,36 +221,36 @@ export function PaymentMethodsSection({ settings, onDirty }: { settings: Setting
       onReset={reset}
       onSave={() => save.mutate({ payment_methods: draft.map((m) => ({ ...m, label: m.label.trim(), fee_pct: Math.round(m.fee_pct * 100) / 100 })) })}
     >
-      <div className="hidden grid-cols-[minmax(0,1fr)_120px_minmax(0,1.6fr)_130px] gap-3 px-1 pb-2 md:grid">
-        <span className="vh-label">Cómo lo llamás</span>
+      <div className={`hidden gap-3 px-1.5 pb-2 md:grid ${METHOD_GRID}`}>
+        <span className="vh-label pl-[46px]">Cómo lo llamás</span>
         <span className="vh-label">Comisión</span>
         <span className="vh-label">Entra en la cuenta</span>
-        <span className="vh-label text-right">De $ 10.000 te quedan</span>
+        <span className="vh-label pr-2 text-right">De $ 10.000 quedan</span>
       </div>
       <ul className="space-y-3 md:space-y-2">
         {draft.map((m) => {
           const Icon = METHOD_ICON[m.key]
           const net = 10000 * (1 - (m.fee_pct || 0) / 100)
           return (
-            <li key={m.key} className="grid gap-3 rounded-2xl border border-line p-3 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,1.6fr)_130px] md:items-center md:rounded-xl md:border-0 md:bg-cream/50 md:p-1.5">
-              <div className="flex min-w-0 items-center gap-2.5">
+            <li key={m.key} className={`grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-2xl border border-line p-3 md:items-center md:gap-y-0 md:rounded-xl md:border-0 md:bg-cream/50 md:p-1.5 ${METHOD_GRID}`}>
+              <div className="col-span-2 flex min-w-0 items-center gap-2.5 md:col-span-1">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-sky-soft text-sky-deep" aria-hidden>
                   <Icon size={18} />
                 </span>
-                <TextInput value={m.label} onChange={(e) => set(m.key, { label: e.target.value })} maxLength={60} aria-label={`Nombre de ${PAYMENT_METHOD_LABELS[m.key]}`} />
+                <TextInput value={m.label} onChange={(e) => set(m.key, { label: e.target.value })} maxLength={60} aria-label={`Nombre de ${PAYMENT_METHOD_LABELS[m.key]}`} aria-invalid={!m.label.trim()} />
               </div>
-              <label className="flex min-w-0 items-center gap-2">
-                <span className="w-24 shrink-0 text-[13px] font-bold text-ink-soft md:hidden">Comisión</span>
-                <NumberInput value={m.fee_pct} onChange={(v) => set(m.key, { fee_pct: v ?? 0 })} decimals={2} suffix="%" className="flex-1" aria-label={`Comisión de ${m.label}`} />
+              <label className="flex min-w-0 flex-col gap-1 md:block">
+                <span className="text-[12.5px] font-bold text-ink-soft md:hidden">Comisión</span>
+                <NumberInput value={m.fee_pct} onChange={(v) => set(m.key, { fee_pct: v ?? 0 })} decimals={2} suffix="%" aria-label={`Comisión de ${m.label}`} aria-invalid={m.fee_pct < 0 || m.fee_pct > 50} />
               </label>
-              <label className="flex min-w-0 items-center gap-2">
-                <span className="w-24 shrink-0 text-[13px] font-bold text-ink-soft md:hidden">Entra en</span>
-                <AccountSelect value={m.account_id} onChange={(id) => set(m.key, { account_id: id })} placeholder="Elegí una cuenta…" className="flex-1" />
-              </label>
-              <p className="text-[13.5px] text-ink-soft md:pr-2 md:text-right">
-                <span className="md:hidden">De $ 10.000 te quedan </span>
-                <b className="vh-num text-ink">{money(net)}</b>
+              <p className="flex min-w-0 flex-col items-end justify-end gap-1 text-[13.5px] text-ink-soft md:order-last md:block md:pr-2 md:text-right">
+                <span className="text-[12.5px] font-bold md:hidden">De $ 10.000 te quedan</span>
+                <b className="vh-num flex h-11 items-center text-[15px] whitespace-nowrap text-ink md:inline md:h-auto">{nb(money(net))}</b>
               </p>
+              <label className="col-span-2 flex min-w-0 flex-col gap-1 md:col-span-1 md:block">
+                <span className="text-[12.5px] font-bold text-ink-soft md:hidden">Entra en la cuenta</span>
+                <AccountNameSelect value={m.account_id} onChange={(id) => set(m.key, { account_id: id })} label={m.label} />
+              </label>
             </li>
           )
         })}
@@ -231,17 +259,17 @@ export function PaymentMethodsSection({ settings, onDirty }: { settings: Setting
         <div className="rounded-xl border border-line bg-paper px-3.5 py-3 text-[13.5px] leading-snug text-ink-soft">
           <p className="mb-1 font-extrabold text-ink">Valores de referencia</p>
           <ul className="space-y-0.5">
-            <li>Mercado Pago (Point o QR): <b className="text-ink">~6 %</b></li>
-            <li>Tarjeta de crédito: <b className="text-ink">~3,5 %</b></li>
-            <li>Tarjeta de débito: <b className="text-ink">~1,5 %</b></li>
-            <li>Efectivo y transferencia: <b className="text-ink">0 %</b></li>
+            <li>Mercado Pago (Point o QR): <b className="text-ink">~6 %</b></li>
+            <li>Tarjeta de crédito: <b className="text-ink">~3,5 %</b></li>
+            <li>Tarjeta de débito: <b className="text-ink">~1,5 %</b></li>
+            <li>Efectivo y transferencia: <b className="text-ink">0 %</b></li>
           </ul>
           <p className="mt-1.5">Cambian según el plan y el plazo de acreditación: <b className="text-ink">revisá lo que te cobra tu banco</b> o el resumen de Mercado Pago.</p>
         </div>
         <div className="space-y-2">
           {mp && mp.fee_pct > 0 && (
             <Example>
-              Vendés <b>$ 20.000</b> por {mp.label} al {pct(mp.fee_pct / 100, 2)} → la comisión es <b>{money(mpFee)}</b> y te quedan <b>{money(20000 - mpFee)}</b>. Esa comisión aparece como costo en el
+              Vendés <b>$ 20.000</b> por {mp.label} al {nb(pct(mp.fee_pct / 100, 2))} → la comisión es <b>{nb(money(mpFee))}</b> y te quedan <b>{nb(money(20000 - mpFee))}</b>. Esa comisión aparece como costo en el
               resultado, no se pierde de vista.
             </Example>
           )}
@@ -302,13 +330,13 @@ export function AccountsSection({ settings }: { settings: Settings }) {
                       {methods.length > 0 && <> · Entra: {methods.join(', ')}</>}
                     </p>
                   </div>
-                  <span className={`vh-num text-[16px] font-extrabold ${a.balance < 0 ? 'text-bad' : 'text-ink'}`}>{money(a.balance)}</span>
+                  <span className={`vh-num text-[16px] font-extrabold ${a.balance < 0 ? 'text-bad' : 'text-ink'}`}>{nb(money(a.balance))}</span>
                 </li>
               )
             })}
             <li className="flex items-center gap-3 bg-cream/60 px-4 py-3">
               <span className="flex-1 font-extrabold text-ink">Plata disponible hoy</span>
-              <span className={`vh-num text-[17px] font-extrabold ${total < 0 ? 'text-bad' : 'text-ink'}`}>{money(total)}</span>
+              <span className={`vh-num text-[17px] font-extrabold ${total < 0 ? 'text-bad' : 'text-ink'}`}>{nb(money(total))}</span>
             </li>
           </ul>
           {(accounts ?? []).length > active.length && (
@@ -394,10 +422,17 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
         title: `¿Sacar «${c.orig}» de la lista?`,
         message: (
           <>
-            <p>
-              Tenés <b>{plural(u?.expenses ?? 0, 'gasto', 'gastos')}</b>
-              {u?.recurring ? <> y {plural(u.recurring, 'gasto fijo', 'gastos fijos')}</> : null} con esta categoría. <b>Esos gastos no cambian</b>: siguen apareciendo con «{c.orig}» en los reportes.
-            </p>
+            {u?.expenses ? (
+              <p>
+                Tenés <b>{plural(u.expenses, 'gasto cargado', 'gastos cargados')}</b> con esta categoría. <b>Esos gastos no cambian</b>: siguen apareciendo con «{c.orig}» en los reportes.
+              </p>
+            ) : null}
+            {u?.recurring ? (
+              <p className="mt-2">
+                <b>Ojo:</b> {u.recurring === 1 ? 'un gasto fijo usa' : `${int(u.recurring)} gastos fijos usan`} esta categoría y {u.recurring === 1 ? 'se va' : 'se van'} a seguir generando con «{c.orig}». Si no querés eso, cambiales la
+                categoría en <b>Gastos → Gastos fijos del mes</b>.
+              </p>
+            ) : null}
             <p className="mt-2">Solo deja de aparecer para elegir en los gastos nuevos. (Recordá tocar «Guardar» para que quede.)</p>
           </>
         ),
@@ -429,11 +464,17 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
         setItems(toDraft(source))
         setAddError(null)
       }}
-      onSave={() => save.mutate({ expense_categories: clean(items) })}
+      onSave={() =>
+        save.mutate({
+          expense_categories: clean(items),
+          // Los gastos fijos (plantillas) pasan al nombre nuevo; los gastos ya cargados no cambian.
+          category_renames: items.filter((c) => c.orig && c.name.trim() && c.name.trim() !== c.orig).map((c) => ({ from: c.orig!, to: c.name.trim() })),
+        } as SettingsInput)
+      }
     >
       <p className="mb-3 text-[13.5px] text-ink-soft">
         {int(items.length)} categorías · {int(fixedCount)} fijas y {int(items.length - fixedCount)} variables.{' '}
-        <span className="text-muted">Si renombrás o sacás una, los gastos ya cargados mantienen su nombre viejo.</span>
+        <span className="text-muted">Si renombrás o sacás una, los gastos ya cargados mantienen su nombre viejo (los gastos fijos, en cambio, pasan solos al nombre nuevo).</span>
       </p>
       <ul className="space-y-2">
         {items.map((c) => {
@@ -462,13 +503,19 @@ export function CategoriesSection({ settings, onDirty }: { settings: Settings; o
                   <Badge tone="sky">Nueva: se agrega al guardar</Badge>
                 ) : renamed && used > 0 ? (
                   <span className="font-semibold text-warn">
-                    {used === 1 ? 'El gasto ya cargado sigue' : `Los ${int(used)} gastos ya cargados siguen`} como «{c.orig}».
+                    {u?.expenses ? `${u.expenses === 1 ? 'El gasto ya cargado sigue' : `Los ${int(u.expenses)} gastos ya cargados siguen`} como «${c.orig}». ` : ''}
+                    {u?.recurring ? `${u.recurring === 1 ? 'El gasto fijo pasa' : `Los ${int(u.recurring)} gastos fijos pasan`} al nombre nuevo.` : ''}
                   </span>
                 ) : used > 0 ? (
                   <>
                     {plural(u?.expenses ?? 0, 'gasto', 'gastos')}
                     {u?.recurring ? ` y ${plural(u.recurring, 'gasto fijo', 'gastos fijos')}` : ''}
-                    {u?.amount ? ` · ${money(u.amount)}` : ''}
+                    {u?.amount ? (
+                      <>
+                        {' · '}
+                        <span className="whitespace-nowrap">{nb(money(u.amount))}</span>
+                      </>
+                    ) : null}
                   </>
                 ) : usage.isLoading ? (
                   '…'
@@ -551,10 +598,10 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
   const finalWithIva = 10000 * (1 + iva)
   const iibb = (10000 * draft.iibb_pct) / 100
   const errors = {
-    target: draft.target_margin_pct < 0 || draft.target_margin_pct > 95 ? 'Entre 0 % y 95 %.' : null,
-    wholesale: draft.wholesale_discount_pct < 0 || draft.wholesale_discount_pct > 90 ? 'Entre 0 % y 90 %.' : null,
-    iva: draft.iva_pct < 0 || draft.iva_pct > 50 ? 'Entre 0 % y 50 %.' : null,
-    iibb: draft.iibb_pct < 0 || draft.iibb_pct > 20 ? 'Entre 0 % y 20 %.' : null,
+    target: draft.target_margin_pct < 0 || draft.target_margin_pct > 95 ? 'Entre 0 % y 95 %.' : null,
+    wholesale: draft.wholesale_discount_pct < 0 || draft.wholesale_discount_pct > 90 ? 'Entre 0 % y 90 %.' : null,
+    iva: draft.iva_pct < 0 || draft.iva_pct > 50 ? 'Entre 0 % y 50 %.' : null,
+    iibb: draft.iibb_pct < 0 || draft.iibb_pct > 20 ? 'Entre 0 % y 20 %.' : null,
   }
   const error = Object.values(errors).some(Boolean) ? 'Revisá los porcentajes marcados en rojo.' : null
   return (
@@ -576,16 +623,17 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
     >
       <div className="grid gap-5 md:grid-cols-2">
         <div className="space-y-2">
-          <Field label="Margen objetivo" info="margen_vs_markup" error={errors.target} hint="Cuánto querés que te quede de cada venta, sobre el precio.">
-            <NumberInput value={draft.target_margin_pct} onChange={(v) => set('target_margin_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.target} />
+          <Field htmlFor="cfg-margin" label="Margen objetivo" info="margen_vs_markup" error={errors.target} hint="Cuánto querés que te quede de cada venta, sobre el precio.">
+            <NumberInput id="cfg-margin" value={draft.target_margin_pct} onChange={(v) => set('target_margin_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.target} />
           </Field>
           <Example>
-            Con {pct(m, 1)}, un vino que te cuesta <b>$ 6.000</b> lo vendés a <b>{money(Math.round(priceForM))}</b> (precio = costo ÷ (1 − {pct(m, 1)})). Ojo: es un recargo del {pct(markup, 1)} sobre el
-            costo, no del {pct(m, 1)}.
+            Con {nb(pct(m, 1))}, un vino que te cuesta <b>$ 6.000</b> lo vendés a <b>{nb(money(Math.round(priceForM)))}</b> (precio = costo ÷ (1 − {nb(pct(m, 1))})). Ojo: es un recargo del {nb(pct(markup, 1))} sobre el
+            costo, no del {nb(pct(m, 1))}.
           </Example>
         </div>
         <div className="space-y-2">
           <Field
+            htmlFor="cfg-wholesale"
             label={
               <span className="inline-flex items-center gap-1.5">
                 Descuento mayorista
@@ -595,27 +643,27 @@ export function PricingSection({ settings, onDirty }: { settings: Settings; onDi
             error={errors.wholesale}
             hint="Respecto del precio al público."
           >
-            <NumberInput value={draft.wholesale_discount_pct} onChange={(v) => set('wholesale_discount_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.wholesale} />
+            <NumberInput id="cfg-wholesale" value={draft.wholesale_discount_pct} onChange={(v) => set('wholesale_discount_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.wholesale} />
           </Field>
           <Example>
-            Si el precio minorista es <b>$ 10.000</b>, el mayorista sugerido es <b>{money(Math.round(wholesale))}</b>.
+            Si el precio minorista es <b>$ 10.000</b>, el mayorista sugerido es <b>{nb(money(Math.round(wholesale)))}</b>.
           </Example>
         </div>
         <div className="space-y-2">
-          <Field label="IVA" info="iva" error={errors.iva} hint="El general es 21 %. Lo usa la calculadora para mostrarte cuánto del precio es impuesto.">
-            <NumberInput value={draft.iva_pct} onChange={(v) => set('iva_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.iva} />
+          <Field htmlFor="cfg-iva" label="IVA" info="iva" error={errors.iva} hint="El general es 21 %. Es de referencia: el sistema no le suma IVA a nada, porque todo se carga con impuestos incluidos.">
+            <NumberInput id="cfg-iva" value={draft.iva_pct} onChange={(v) => set('iva_pct', v)} suffix="%" decimals={1} aria-invalid={!!errors.iva} />
           </Field>
           <Example>
-            En un precio final de <b>{money(Math.round(finalWithIva))}</b>, <b>{money(Math.round(finalWithIva - 10000))}</b> son IVA y $ 10.000 es el precio sin IVA.
+            En un precio final de <b>{nb(money(Math.round(finalWithIva)))}</b>, <b>{nb(money(Math.round(finalWithIva - 10000)))}</b> son IVA y $ 10.000 es el precio sin IVA.
             {settings.business.fiscal_condition === 'monotributo' && ' Como sos monotributista, no lo discriminás: tus precios ya son finales.'}
           </Example>
         </div>
         <div className="space-y-2">
-          <Field label="Ingresos Brutos (IIBB)" info="iibb" error={errors.iibb} hint="Depende de tu provincia y actividad (suele ir de 3 % a 5 %).">
-            <NumberInput value={draft.iibb_pct} onChange={(v) => set('iibb_pct', v)} suffix="%" decimals={2} aria-invalid={!!errors.iibb} />
+          <Field htmlFor="cfg-iibb" label="Ingresos Brutos (IIBB)" info="iibb" error={errors.iibb} hint="Depende de tu provincia y actividad (suele ir de 3 % a 5 %).">
+            <NumberInput id="cfg-iibb" value={draft.iibb_pct} onChange={(v) => set('iibb_pct', v)} suffix="%" decimals={2} aria-invalid={!!errors.iibb} />
           </Field>
           <Example>
-            De cada <b>$ 10.000</b> que vendés, <b>{money(Math.round(iibb))}</b> van a Ingresos Brutos.
+            De cada <b>$ 10.000</b> que vendés, <b>{nb(money(Math.round(iibb)))}</b> van a Ingresos Brutos.
           </Example>
         </div>
       </div>
@@ -644,7 +692,7 @@ export function UsdSection({ settings, onDirty }: { settings: Settings; onDirty?
       }
       why={
         <>
-          <b>Actualizala cuando quieras: se usa solo para mostrar equivalentes</b> en dólares (por ejemplo, cuánto vale tu stock en USD). El sistema trabaja siempre en pesos.
+          <b>Actualizala cuando quieras: se usa solo para mostrar equivalentes</b> en dólares: cuánta plata tenés en Caja y bancos y el precio de una caja en la Calculadora. El sistema trabaja siempre en pesos.
         </>
       }
       dirty={dirty}
@@ -654,15 +702,15 @@ export function UsdSection({ settings, onDirty }: { settings: Settings; onDirty?
       onSave={() => save.mutate({ usd_rate: rate, usd_rate_date: rate > 0 ? draft.usd_rate_date : null })}
     >
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Field label="Cotización (pesos por dólar)" hint="La que uses de referencia: oficial, MEP, blue… Si dejás 0, no se muestran equivalentes.">
-          <MoneyInput
+        <Field htmlFor="cfg-usd" label="Cotización (pesos por dólar)" hint="La que uses de referencia: oficial, MEP, blue… Si dejás 0, no se muestran equivalentes.">
+          <MoneyInput id="cfg-usd"
             value={draft.usd_rate}
             onChange={(v) => update((d) => ({ ...d, usd_rate: v ?? 0, usd_rate_date: v && v !== settings.usd_rate ? today() : d.usd_rate_date }))}
           />
         </Field>
-        <Field label="Fecha de la cotización" hint={draft.usd_rate_date ? `Cargada ${relativeDays(draft.usd_rate_date)} (${fmtDate(draft.usd_rate_date)}).` : 'Cuándo la miraste.'}>
+        <Field htmlFor="cfg-usd-date" label="Fecha de la cotización" hint={draft.usd_rate_date ? `Cargada ${relativeDays(draft.usd_rate_date)} (${fmtDate(draft.usd_rate_date)}).` : 'Cuándo la miraste.'}>
           <div className="flex gap-2">
-            <DateInput value={draft.usd_rate_date} onChange={(v) => update((d) => ({ ...d, usd_rate_date: v || null }))} max={today()} className="flex-1" />
+            <DateInput id="cfg-usd-date" value={draft.usd_rate_date} onChange={(v) => update((d) => ({ ...d, usd_rate_date: v || null }))} max={today()} className="flex-1" />
             <Button onClick={() => update((d) => ({ ...d, usd_rate_date: today() }))}>Hoy</Button>
           </div>
         </Field>
@@ -670,7 +718,7 @@ export function UsdSection({ settings, onDirty }: { settings: Settings; onDirty?
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {rate > 0 ? (
           <Example className="flex-1">
-            Con <b>{money(rate)}</b> por dólar, <b>$ 1.000.000</b> son <b>{usd(1_000_000 / rate)}</b>.
+            Con <b>{nb(money(rate))}</b> por dólar, <b>$ 1.000.000</b> son <b>{nb(usd(1_000_000 / rate))}</b>.
           </Example>
         ) : (
           <Example className="flex-1">Sin cotización cargada, el sistema no muestra montos en dólares (y no pasa nada).</Example>
@@ -713,16 +761,16 @@ export function StockDefaultsSection({ settings, onDirty }: { settings: Settings
     >
       <div className="grid gap-5 md:grid-cols-2">
         <div className="space-y-2">
-          <Field label="Stock mínimo" info="stock_minimo" error={errors.min} hint="En botellas.">
-            <IntInput value={draft.min_stock} onChange={(v) => update((d) => ({ ...d, min_stock: v ?? 0 }))} suffix="bot." aria-invalid={!!errors.min} />
+          <Field htmlFor="cfg-min-stock" label="Stock mínimo" info="stock_minimo" error={errors.min} hint="En botellas.">
+            <IntInput id="cfg-min-stock" value={draft.min_stock} onChange={(v) => update((d) => ({ ...d, min_stock: v ?? 0 }))} suffix="bot." aria-invalid={!!errors.min} />
           </Field>
           <Example>
             Con mínimo <b>{int(draft.min_stock)}</b>: cuando a un vino le queden {int(draft.min_stock)} botellas o menos, te avisamos en Inicio y en Vinos para que lo repongas.
           </Example>
         </div>
         <div className="space-y-2">
-          <Field label="Botellas por caja" error={errors.box} hint="Lo más común son cajas de 6.">
-            <IntInput value={draft.units_per_box} onChange={(v) => update((d) => ({ ...d, units_per_box: v ?? 1 }))} suffix="bot." aria-invalid={!!errors.box} />
+          <Field htmlFor="cfg-per-box" label="Botellas por caja" error={errors.box} hint="Lo más común son cajas de 6.">
+            <IntInput id="cfg-per-box" value={draft.units_per_box} onChange={(v) => update((d) => ({ ...d, units_per_box: v ?? 1 }))} suffix="bot." aria-invalid={!!errors.box} />
           </Field>
           <Example>
             Con cajas de {int(perBox)}, {int(example)} botellas se muestran como{' '}

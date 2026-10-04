@@ -7,7 +7,7 @@ import clsx from 'clsx'
 import { ApiError, api } from '@/lib/api'
 import { dateLong, date as fmtDate, money, monthName } from '@/lib/format'
 import { useLocalState } from '@/lib/hooks'
-import { useApi, useApiMutation } from '@/lib/queries'
+import { useAccounts, useApi, useApiMutation } from '@/lib/queries'
 import { Badge, Button, ErrorState, InfoTip, Loading, Modal, useConfirm } from '@/components/ui'
 import { SettlementModal } from '@/components/forms/SettlementModal'
 import { ExpenseStatusBadge } from './parts'
@@ -32,7 +32,22 @@ export function ExpenseDetailModal({
   const confirm = useConfirm()
   const [settling, setSettling] = useState(false)
   const [lastAccount] = useLocalState<number | null>('gastos.account', null)
+  const { data: accounts = [] } = useAccounts()
+  const templates = useApi<{ id: number; account_id: number | null }[]>('/recurring-expenses', undefined, { enabled: open })
   const e = q.data && q.data.id === expenseId ? q.data : undefined
+
+  // Cuenta sugerida para "Registrar pago": la del último pago de este gasto; si no, la del gasto fijo
+  // de donde salió; si no, la última que usaste para un gasto; si no, el banco; si no, la primera.
+  const activeIds = new Set(accounts.filter((a) => a.active).map((a) => a.id))
+  const pick = (id: number | null | undefined) => (id != null && activeIds.has(id) ? id : null)
+  const suggestedAccount = e
+    ? (pick(e.payments[e.payments.length - 1]?.account_id) ??
+      pick(templates.data?.find((t) => t.id === e.recurring_id)?.account_id) ??
+      pick(lastAccount) ??
+      accounts.find((a) => a.active && a.kind === 'banco')?.id ??
+      accounts.find((a) => a.active)?.id ??
+      null)
+    : null
 
   const remove = useApiMutation(
     async (id: number) => {
@@ -247,7 +262,7 @@ export function ExpenseDetailModal({
           id={e.id}
           balance={e.balance}
           description={`${e.description} · ${e.category}`}
-          defaultAccountId={e.payments[e.payments.length - 1]?.account_id ?? lastAccount}
+          defaultAccountId={suggestedAccount}
           open={settling}
           onClose={() => setSettling(false)}
         />

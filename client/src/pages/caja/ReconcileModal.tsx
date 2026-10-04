@@ -29,10 +29,12 @@ export function ReconcileModal({ account, onClose }: { account: AccountRow | nul
     }
   }, [open, account?.id])
 
-  // Saldo del sistema a la fecha del arqueo (si es hoy, el saldo actual).
+  // Saldo del sistema al cierre de la fecha del arqueo: lo mismo que usa el servidor para calcular el ajuste.
+  // (El saldo de la tarjeta incluye movimientos con fecha futura, si los hubiera; por eso siempre se pide a esa fecha.)
   const isToday = date === today()
-  const atDate = useApi<AccountRow[]>('/accounts', { as_of: date }, { enabled: open && !isToday && !!date })
-  const system = isToday ? account?.balance : atDate.data?.find((a) => a.id === account?.id)?.balance
+  const future = !!date && date > today()
+  const atDate = useApi<AccountRow[]>('/accounts', { as_of: date }, { enabled: open && !!date && !future })
+  const system = future ? undefined : atDate.data?.find((a) => a.id === account?.id)?.balance
   const diff = counted != null && system != null ? round2(counted - system) : null
 
   const save = useApiMutation(() => api.post<ReconcileResult>(`/accounts/${account!.id}/reconcile`, { date, counted }), {
@@ -80,7 +82,9 @@ export function ReconcileModal({ account, onClose }: { account: AccountRow | nul
         </div>
 
         <div className="rounded-xl bg-cream-deep px-3.5 py-3 text-[14.5px] text-ink">
-          {system == null ? (
+          {future ? (
+            <span className="text-bad">La fecha no puede ser futura: el arqueo es de plata que ya contaste.</span>
+          ) : system == null ? (
             <span className="text-ink-soft">Buscando el saldo del sistema…</span>
           ) : (
             <>

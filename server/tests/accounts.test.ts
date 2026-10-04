@@ -266,6 +266,14 @@ describe('Arqueo', () => {
     expect(missing.body.error).toMatch(/cuánta plata contaste/)
     expect((await t.post('/accounts/999/reconcile', { date: T, counted: 1 })).status).toBe(404)
   })
+
+  it('no acepta un arqueo con fecha futura (no se puede contar plata de mañana)', async () => {
+    const caja = acc('Caja').id
+    const r = await t.post(`/accounts/${caja}/reconcile`, { date: addDays(T, 1), counted: 500 })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toMatch(/no puede ser futura/)
+    expect(get('SELECT COUNT(*) AS n FROM payments')).toEqual({ n: 0 })
+  })
 })
 
 describe('GET /movements', () => {
@@ -316,6 +324,45 @@ describe('GET /movements', () => {
     const manual = (await t.get('/movements?from=2026-01-01&to=2026-12-31&ref_type=manual')).body
     expect(manual.rows).toHaveLength(4)
     expect((await t.get('/movements?from=2026-01-01&to=2026-12-31&ref_type=transfer')).body.rows).toHaveLength(2)
+  })
+
+  it('mirando todas las cuentas, las transferencias no son entrada ni salida (en pantalla y en el Excel); filtradas, sí se suman', async () => {
+    const caja = acc('Caja').id
+    const banco = acc('Banco').id
+    await t.post('/movements', { date: T, kind: 'aporte', amount: 1000, account_id: caja })
+    await t.post('/movements', { date: T, kind: 'retiro', amount: 300, account_id: banco })
+    await t.post('/transfers', { date: T, from_account_id: caja, to_account_id: banco, amount: 700 })
+    const q = `from=${startOfMonth(T)}&to=${endOfMonth(T)}`
+
+    const all = (await t.get(`/movements?${q}`)).body
+    expect(all.rows).toHaveLength(4)
+    expect(all.summary).toMatchObject({ total_in: 1000, total_out: 300, transfers: 700 })
+
+    // Pidiendo ver solo las transferencias, se muestran sus montos (si no, "entró/salió" daría 0 con renglones en la tabla).
+    const onlyTransfers = (await t.get(`/movements?${q}&ref_type=transfer`)).body
+    expect(onlyTransfers.summary).toMatchObject({ total_in: 700, total_out: 700, count: 2 })
+
+    // El TOTAL del Excel coincide con la pantalla: las transferencias van en "Entre tus cuentas" (suma cero).
+    const res = await t.raw(`/movements/export?${q}`)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await res.arrayBuffer())
+    const ws = wb.getWorksheet('Movimientos')!
+    const headers = (ws.getRow(4).values as unknown[]).slice(1)
+    expect(headers).toEqual(['Fecha', 'Cuenta', 'Tipo', 'Detalle', 'Cliente / proveedor', 'Nota', 'Entró', 'Salió', 'Entre tus cuentas'])
+    const total = ws.getRow(5 + all.rows.length)
+    expect(total.getCell(1).value).toBe('TOTAL')
+    expect((total.getCell(7).value as any).result).toBe(1000)
+    expect((total.getCell(8).value as any).result).toBe(300)
+    // Suma cero (exceljs no guarda un resultado 0 en caché, así que se verifica la fórmula y los renglones).
+    expect((total.getCell(9).value as any).formula).toBe(`SUM(I5:I${4 + all.rows.length})`)
+    const legs = all.rows.map((_: unknown, i: number) => ws.getRow(5 + i).getCell(9).value).filter((v: unknown) => v != null)
+    expect(legs.sort()).toEqual([-700, 700])
+
+    // Con filtros, el subtítulo lo dice (así nadie confunde una planilla filtrada con el total).
+    const filtered = await t.raw(`/movements/export?${q}&direction=out&ref_type=retiro`)
+    const wb2 = new ExcelJS.Workbook()
+    await wb2.xlsx.load(await filtered.arrayBuffer())
+    expect(String(wb2.getWorksheet('Movimientos')!.getCell(2, 1).value)).toMatch(/Solo lo que salió · Retiro de socios \/ dueños/)
   })
 
   it('exporta los movimientos a Excel con la hoja de saldos por cuenta', async () => {

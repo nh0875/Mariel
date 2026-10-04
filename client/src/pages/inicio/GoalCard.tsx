@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowRight, StickyNote, Target, TrendingDown, TrendingUp } from 'lucide-react'
 import { int, pct } from '@/lib/format'
-import { money0 } from './fmt'
+import { budgetPct, money0, progressPct } from './fmt'
 import { Badge, Button, Card, EmptyState, InfoTip, ProgressBar } from '@/components/ui'
 import type { DashboardGoal } from './types'
 
@@ -16,6 +16,20 @@ export function PaceBar({ progress, expected, className }: { progress: number; e
       {expected != null && expected > 0 && expected < 1 && (
         <span className="pointer-events-none absolute -top-1 -bottom-1 w-[3px] -translate-x-1/2 rounded-full bg-ink" style={{ left: `${expected * 100}%` }} aria-hidden />
       )}
+    </div>
+  )
+}
+
+/**
+ * Barra de meta o de presupuesto con su % al lado. El % lo calculamos nosotros (no el redondeo común):
+ * en una meta, 99,9 % muestra "99 %" (todavía no llegaste); en un presupuesto, 100,4 % muestra "101 %" (te pasaste).
+ */
+export function GoalBar({ value, max, mode = 'goal', className }: { value: number; max: number; mode?: 'goal' | 'budget'; className?: string }) {
+  const ratio = max > 0 ? value / max : null
+  return (
+    <div className={clsx('flex items-center gap-3', className)}>
+      <ProgressBar value={value} max={max} mode={mode} showLabel={false} className="flex-1" />
+      <span className="vh-num w-14 text-right text-sm font-extrabold text-ink">{mode === 'budget' ? budgetPct(ratio) : progressPct(ratio)}</span>
     </div>
   )
 }
@@ -69,7 +83,7 @@ export function GoalCard({ goal, month, monthLabel, className }: { goal: Dashboa
             </div>
             <PaceBar progress={g.progress} expected={running ? g.expected_progress : null} />
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="vh-num text-[22px] leading-none font-extrabold text-ink">{pct(g.progress, 0)}</span>
+              <span className="vh-num text-[22px] leading-none font-extrabold text-ink">{progressPct(g.progress)}</span>
               {running && g.pace != null && (
                 <Badge tone={ahead ? 'good' : 'warn'} icon={ahead ? <TrendingUp size={13} aria-hidden /> : <TrendingDown size={13} aria-hidden />}>
                   {Math.abs(g.pace) < 0.02 ? 'Justo al ritmo' : `${pct(Math.abs(g.pace), 0)} ${ahead ? 'adelante' : 'atrás'} del ritmo`}
@@ -103,7 +117,7 @@ export function GoalCard({ goal, month, monthLabel, className }: { goal: Dashboa
                 <b className="vh-num text-ink">{int(g.bottles)}</b> de {int(g.bottles_target)}
               </span>
             </div>
-            <ProgressBar value={g.bottles} max={g.bottles_target} />
+            <GoalBar value={g.bottles} max={g.bottles_target} />
           </div>
         )}
         {g.expense_budget != null && g.expense_progress != null && (
@@ -116,7 +130,7 @@ export function GoalCard({ goal, month, monthLabel, className }: { goal: Dashboa
                 <b className="vh-num text-ink">{money0(g.expenses)}</b> de {money0(g.expense_budget)}
               </span>
             </div>
-            <ProgressBar value={g.expenses} max={g.expense_budget} mode="budget" />
+            <GoalBar value={g.expenses} max={g.expense_budget} mode="budget" />
             {g.expense_progress > 1 && <p className="mt-1.5 text-[13px] font-semibold text-bad">Te pasaste {money0(g.expenses - g.expense_budget)} del presupuesto.</p>}
           </div>
         )}

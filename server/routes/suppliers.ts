@@ -309,7 +309,7 @@ router.delete('/suppliers/:id', (req, res) => {
     const parts = [purchases ? `${purchases} ${purchases === 1 ? 'compra' : 'compras'}` : '', expenses ? `${expenses} ${expenses === 1 ? 'gasto' : 'gastos'}` : ''].filter(Boolean)
     throw new HttpError(
       409,
-      `«${s.name}» tiene ${parts.join(' y ')} cargados. Si lo borrás se pierde ese historial, por eso no se puede. ` +
+      `«${s.name}» ya tiene historial (${parts.join(' y ')}). Si lo borrás se pierde, por eso no se puede. ` +
         'Desactivalo: deja de aparecer al cargar compras y gastos, y sus números se conservan.',
       { purchases, expenses },
     )

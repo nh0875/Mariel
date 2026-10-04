@@ -286,6 +286,31 @@ describe('GET /purchases/summary', () => {
   })
 })
 
+describe('GET /purchases/last-prices', () => {
+  it('devuelve el último precio de factura (sin flete) de cada vino, prefiriendo el del proveedor elegido', async () => {
+    const malbec = wine('Malbec', 10, 1000)
+    const torrontes = wine('Torrontés')
+    const s1 = supplier('Bodega Uno')
+    const s2 = supplier('Distribuidora Dos')
+    await t.post('/purchases', { date: '2026-01-10', supplier_id: s1, shipping: 3000, items: [{ product_id: malbec, qty: 10, unit_cost: 1100 }] })
+    await t.post('/purchases', { date: '2026-02-10', supplier_id: s2, items: [{ product_id: malbec, qty: 10, unit_cost: 1300 }, { product_id: torrontes, qty: 6, unit_cost: 800 }] })
+
+    const any = await t.get('/purchases/last-prices')
+    expect(any.status).toBe(200)
+    const byId = new Map(any.body.map((r: { product_id: number }) => [r.product_id, r]))
+    // El último precio es el de factura (1.300), no el costo promedio (que incluye el flete de la primera compra).
+    expect(byId.get(malbec)).toMatchObject({ unit_cost: 1300, date: '2026-02-10', supplier_name: 'Distribuidora Dos', same_supplier: false })
+    expect(byId.get(torrontes)).toMatchObject({ unit_cost: 800 })
+    expect(product(malbec).unit_cost).toBeCloseTo(1233.3333, 3) // promedio con flete: no sirve como precio de factura
+
+    const fromS1 = await t.get(`/purchases/last-prices?supplier_id=${s1}`)
+    const m1 = fromS1.body.find((r: { product_id: number }) => r.product_id === malbec)
+    expect(m1).toMatchObject({ unit_cost: 1100, date: '2026-01-10', same_supplier: true })
+    // Un vino que nunca le compraste a ese proveedor: se sugiere el último de cualquier proveedor.
+    expect(fromS1.body.find((r: { product_id: number }) => r.product_id === torrontes)).toMatchObject({ unit_cost: 800, same_supplier: false })
+  })
+})
+
 describe('GET /purchases/:id', () => {
   it('devuelve 404 si no existe o el id no es válido', async () => {
     const r = await t.get('/purchases/999')
@@ -332,12 +357,84 @@ describe('PUT /purchases/:id', () => {
     // La compra no cambió.
     expect(product(p).stock).toBe(10)
 
-    // Marcarla pagada reemplaza los pagos parciales por uno solo por el total.
+    // Marcarla pagada con un total menor a lo pagado: el pago parcial se recorta al nuevo total (y conserva su fecha).
     const full = await t.put(`/purchases/${r.body.id}`, { date: '2026-02-01', items: [{ product_id: p, qty: 5, unit_cost: 1000 }], paid: true })
     expect(full.status).toBe(200)
     expect(full.body).toMatchObject({ total: 5000, paid: 5000, status: 'pagado' })
     expect(full.body.payments).toHaveLength(1)
-    expect(full.body.payments[0].account_id).toBe(banco.id)
+    expect(full.body.payments[0]).toMatchObject({ account_id: banco.id, date: '2026-02-05', amount: 5000 })
+  })
+
+  it('editar una compra que pagaste después (a 30 días) NO mueve el pago: conserva su fecha, su cuenta y el vencimiento', async () => {
+    const p = wine('Malbec')
+    const mp = account('Mercado Pago')
+    const r = await t.post('/purchases', { date: '2026-02-01', paid: false, due_date: '2026-03-03', items: [{ product_id: p, qty: 10, unit_cost: 1000 }] })
+    await t.post(`/purchases/${r.body.id}/payments`, { date: '2026-03-03', amount: 10000, account_id: mp.id })
+    const before = account('Mercado Pago').balance
+
+    // Solo corrijo el número de factura (como lo manda el formulario: pagada, con la cuenta del pago).
+    const fix = await t.put(`/purchases/${r.body.id}`, {
+      date: '2026-02-01',
+      invoice_number: 'B-0002-00000099',
+      due_date: '2026-03-03',
+      items: [{ product_id: p, qty: 10, unit_cost: 1000 }],
+      paid: true,
+      account_id: mp.id,
+    })
+    expect(fix.status).toBe(200)
+    expect(fix.body).toMatchObject({ invoice_number: 'B-0002-00000099', status: 'pagado', due_date: '2026-03-03' })
+    expect(fix.body.payments).toHaveLength(1)
+    expect(fix.body.payments[0]).toMatchObject({ date: '2026-03-03', account_id: mp.id, amount: 10000 })
+    expect(account('Mercado Pago').balance).toBe(before)
+
+    // Corrijo el precio: el pago se ajusta al nuevo total, pero sigue siendo del 3/3.
+    const up = await t.put(`/purchases/${r.body.id}`, { date: '2026-02-01', items: [{ product_id: p, qty: 10, unit_cost: 1100 }], paid: true, account_id: mp.id })
+    expect(up.body).toMatchObject({ total: 11000, paid: 11000, status: 'pagado' })
+    expect(up.body.payments).toEqual([expect.objectContaining({ date: '2026-03-03', account_id: mp.id, amount: 11000 })])
+    expect(account('Mercado Pago').balance).toBe(before - 1000)
+  })
+
+  it('pagada en dos partes: bajar el total recorta el último pago; elegir otra cuenta mueve los pagos a esa cuenta', async () => {
+    const p = wine('Syrah')
+    const banco = account('Banco')
+    const caja = account('Caja')
+    const r = await t.post('/purchases', { date: '2026-02-01', paid: false, items: [{ product_id: p, qty: 10, unit_cost: 1000 }] })
+    await t.post(`/purchases/${r.body.id}/payments`, { date: '2026-02-10', amount: 4000, account_id: banco.id })
+    await t.post(`/purchases/${r.body.id}/payments`, { date: '2026-02-20', amount: 6000, account_id: banco.id })
+
+    const lower = await t.put(`/purchases/${r.body.id}`, { date: '2026-02-01', items: [{ product_id: p, qty: 8, unit_cost: 1000 }], paid: true, account_id: banco.id })
+    expect(lower.body).toMatchObject({ total: 8000, paid: 8000, status: 'pagado' })
+    expect(lower.body.payments.map((x: { date: string; amount: number }) => [x.date, x.amount])).toEqual([
+      ['2026-02-10', 4000],
+      ['2026-02-20', 4000],
+    ])
+
+    const moved = await t.put(`/purchases/${r.body.id}`, { date: '2026-02-01', items: [{ product_id: p, qty: 8, unit_cost: 1000 }], paid: true, account_id: caja.id })
+    expect(moved.body.payments.map((x: { date: string; account_id: number }) => [x.date, x.account_id])).toEqual([
+      ['2026-02-10', caja.id],
+      ['2026-02-20', caja.id],
+    ])
+  })
+
+  it('pagada en parte y la marcás pagada: se mantienen los pagos y se agrega uno por lo que faltaba', async () => {
+    const p = wine('Bonarda')
+    const banco = account('Banco')
+    const caja = account('Caja')
+    const r = await t.post('/purchases', { date: '2026-02-01', paid: false, items: [{ product_id: p, qty: 10, unit_cost: 1000 }] })
+    await t.post(`/purchases/${r.body.id}/payments`, { date: '2026-02-15', amount: 3000, account_id: banco.id })
+    const full = await t.put(`/purchases/${r.body.id}`, { date: '2026-02-01', items: [{ product_id: p, qty: 10, unit_cost: 1000 }], paid: true, account_id: caja.id })
+    expect(full.body).toMatchObject({ total: 10000, paid: 10000, balance: 0, status: 'pagado' })
+    expect(full.body.payments.map((x: { date: string; amount: number; account_id: number }) => [x.date, x.amount, x.account_id])).toEqual([
+      ['2026-02-15', 3000, banco.id],
+      ['2026-02-15', 7000, caja.id],
+    ])
+  })
+
+  it('si el pago era del mismo día que la compra y cambiás la fecha, el pago acompaña', async () => {
+    const p = wine('Petit Verdot')
+    const r = await t.post('/purchases', { date: '2026-02-01', items: [{ product_id: p, qty: 2, unit_cost: 1000 }] })
+    const up = await t.put(`/purchases/${r.body.id}`, { date: '2026-02-03', items: [{ product_id: p, qty: 2, unit_cost: 1000 }], paid: true })
+    expect(up.body.payments).toEqual([expect.objectContaining({ date: '2026-02-03', amount: 2000 })])
   })
 
   it('404 si la compra no existe', async () => {
@@ -489,5 +586,21 @@ describe('GET /purchases/export', () => {
     expect(String(ws.getCell(2, 1).value)).toMatch(/solo por pagar/)
     expect(ws.getCell(5, 3).value).toBe('Bodega Uno')
     expect(ws.getCell(6, 1).value).toBe('TOTAL')
+  })
+
+  it('"por pagar" sin fechas exporta todo lo que debés, de cualquier fecha (como la pantalla)', async () => {
+    const p = wine('Malbec')
+    await t.post('/purchases', { date: '2025-11-20', paid: false, items: [{ product_id: p, qty: 1, unit_cost: 1000 }] })
+    await t.post('/purchases', { date: '2026-02-02', paid: false, items: [{ product_id: p, qty: 2, unit_cost: 1000 }] })
+    await t.post('/purchases', { date: '2026-02-03', items: [{ product_id: p, qty: 3, unit_cost: 1000 }] }) // pagada
+    const res = await t.raw('/purchases/export?status=por_pagar')
+    expect(res.headers.get('content-disposition')).toMatch(/vinoh-compras-por-pagar-/)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load((await res.arrayBuffer()) as ArrayBuffer)
+    const ws = wb.getWorksheet('Compras')!
+    expect(String(ws.getCell(2, 1).value)).toMatch(/Todas las fechas/)
+    expect(ws.getCell(7, 1).value).toBe('TOTAL') // las 2 por pagar + totales
+    const detalle = wb.getWorksheet('Detalle por vino')!
+    expect(detalle.getCell(7, 1).value).toBe('TOTAL')
   })
 })

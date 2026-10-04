@@ -175,6 +175,8 @@ export function GoalFormModal({ month, goal, onClose }: { month: string | null; 
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
+    // Enter dos veces seguidas no manda dos veces.
+    if (save.isPending || remove.isPending) return
     if (form.sales_target == null && form.bottles_target == null && form.expense_budget == null) {
       setError('Completá al menos una meta: de ventas, de botellas o un presupuesto de gastos.')
       return
@@ -202,6 +204,9 @@ export function GoalFormModal({ month, goal, onClose }: { month: string | null; 
     }))
     setError(null)
     setFilled(true)
+    // Cerramos el panel y llevamos la vista a los campos ya completados, para que se vea qué se cargó.
+    setSuggest(false)
+    window.setTimeout(() => document.getElementById('goal-sales')?.focus(), 60)
   }
 
   const askDelete = async () => {
@@ -214,7 +219,8 @@ export function GoalFormModal({ month, goal, onClose }: { month: string | null; 
     if (ok) remove.mutate()
   }
 
-  const actual = goal && goal.status !== 'future' ? goal.actual : null
+  // Lo real del mes (si ya empezó y hay algo cargado), para tenerlo a mano al decidir la meta.
+  const actual = goal && goal.status !== 'future' && (goal.actual.sales > 0 || goal.actual.expenses > 0) ? goal.actual : null
 
   return (
     <Modal
@@ -263,7 +269,14 @@ export function GoalFormModal({ month, goal, onClose }: { month: string | null; 
               <SuggestionPanel month={month} onUse={applySuggestion} />
             </div>
           )}
-          {filled && <p className="mt-2 text-[13px] font-semibold text-good">Completamos los campos con la sugerencia. Ajustalos si querés y guardá.</p>}
+          {filled && !suggest && (
+            <p className="mt-2 text-[13px] font-semibold text-good">
+              Completamos los campos de abajo con la sugerencia. Ajustalos si querés y guardá.{' '}
+              <button type="button" className="font-bold text-sky-deep hover:underline" onClick={() => setSuggest(true)}>
+                Ver de dónde sale
+              </button>
+            </p>
+          )}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

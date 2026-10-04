@@ -11,7 +11,7 @@ import { addMonths, endOfMonth, monthKey, monthLabel, monthLabelLong, monthsBetw
 import type { Goal, MonthlyPoint } from '../../shared/types'
 import { all, get, run } from '../db'
 import { badRequest, HttpError, notFound, qs, validate } from '../lib/http'
-import { excelFilename, sendWorkbook } from '../lib/excel'
+import { excelFilename, periodSubtitle, sendWorkbook } from '../lib/excel'
 import { monthlySeries } from '../services/finance'
 
 const router = Router()
@@ -72,7 +72,7 @@ const ASSUMED_MONTHLY_INFLATION = 2
 
 const nf0 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 const nf1 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 })
-const nf2 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 })
+const nf3 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 3 })
 const $ = (n: number) => `$\u00a0${nf0.format(Math.round(n))}`
 const pctTxt = (ratio: number) => `${nf1.format(ratio * 100)} %`
 
@@ -168,7 +168,8 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
   const totVariable = active.reduce((s, m) => s + m.cogs + m.fees + m.shrinkage + m.expenses_variable, 0)
   const totBottles = active.reduce((s, m) => s + m.bottles_sold, 0)
   const fixedAvg = active.length ? round2(active.reduce((s, m) => s + m.expenses_fixed, 0) / active.length) : null
-  const contribution = totSales > 0 ? (totSales - totVariable) / totSales : null
+  // Redondeado a 3 decimales: es el número que mostramos en la cuenta ("÷ 0,28"), así se puede verificar con la calculadora.
+  const contribution = totSales > 0 ? Math.round(((totSales - totVariable) / totSales) * 1000) / 1000 : null
   const breakEven = fixedAvg != null && fixedAvg > 0 && contribution != null && contribution > 0 ? round2(fixedAvg / contribution) : null
   const monthsTxt = active.map((m) => monthLabelLong(m.month).split(' ')[0]).join(', ')
 
@@ -178,7 +179,7 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
         Math.round(contribution! * 100),
       )} después de pagar el vino, las comisiones, las mermas y los gastos variables (margen de contribución ${pctTxt(contribution!)}). Para cubrir los fijos necesitás vender ${$(
         fixedAvg!,
-      )} ÷ ${nf2.format(contribution!)} = ${$(breakEven)}. Ese es tu piso: vendiendo eso no ganás ni perdés. Con un 15 % de colchón para que quede ganancia: ${$(breakEven * 1.15)}.`,
+      )} ÷ ${nf3.format(contribution!)} = ${$(breakEven)}. Ese es tu piso: vendiendo eso no ganás ni perdés. Con un 15 % de colchón para que quede ganancia: ${$(breakEven * 1.15)}.`,
     )
   } else if (!active.length) {
     steps.push('Punto de equilibrio: todavía no hay ventas ni gastos cargados en los 3 meses anteriores, así que no lo podemos calcular.')
@@ -213,9 +214,9 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
     : ''
   if (lastYearPlus != null) {
     steps.push(
-      `Año pasado + inflación: en ${monthLabelLong(lyMonth)} vendiste ${$(lastYearSales!)}. Con la inflación de los 12 meses siguientes (${pctTxt(factor - 1)} acumulada) eso equivale hoy a ${$(
+      `Año pasado + inflación: en ${monthLabelLong(lyMonth)} vendiste ${$(lastYearSales!)}. Con la inflación de los 12 meses siguientes (${pctTxt(factor - 1)} acumulada) eso equivale a ${$(
         lastYearPlus,
-      )}. Vender menos que eso sería achicarte en términos reales, aunque en pesos parezca más.${assumedTxt}`,
+      )} en pesos de ${monthLabelLong(month)}. Vender menos que eso sería achicarte en términos reales, aunque en pesos parezca más.${assumedTxt}`,
     )
   } else {
     steps.push(`Año pasado + inflación: no hay ventas cargadas en ${monthLabelLong(lyMonth)} para comparar.`)
@@ -237,7 +238,7 @@ export function suggestGoal(month: string, ref: string = today()): GoalSuggestio
     basis = best.basis
     steps.push(
       candidates.length > 1
-        ? `Te sugerimos el mayor de los dos (${basis === 'break_even' ? 'punto de equilibrio + 15 %' : 'año pasado + inflación'}), redondeado: ${$(suggestion)}. Es una meta que te asegura ganar plata y no achicarte.`
+        ? `Te sugerimos el mayor de los dos (${basis === 'break_even' ? 'punto de equilibrio + 15 %' : 'año pasado + inflación'}), redondeado: ${$(suggestion)}. Si llegás, cubrís los gastos fijos con resto y no vendés menos que el año pasado en términos reales.`
         : `Te sugerimos ${$(suggestion)} (${basis === 'break_even' ? 'punto de equilibrio + 15 %' : 'año pasado + inflación'}, redondeado).`,
     )
   } else if (avg3 != null) {
@@ -290,23 +291,42 @@ router.get('/goals/suggest', (req, res) => {
 
 router.get('/goals/export', async (req, res) => {
   const year = readYear(qs(req, 'year'))
-  const rows = goalsForYear(year)
+  const STATUS = { past: 'Terminado', current: 'En curso', future: 'Todavía no empezó' } as const
+  // Los meses que todavía no empezaron van sin "real" (vacío, no 0 %): no hay nada que medir.
+  const rows = goalsForYear(year).map((r) => {
+    const future = r.status === 'future'
+    return {
+      label: r.label.charAt(0).toUpperCase() + r.label.slice(1),
+      status: STATUS[r.status],
+      sales_target: r.sales_target,
+      sales: future ? null : r.actual.sales,
+      progress: future ? null : r.progress,
+      bottles_target: r.bottles_target,
+      bottles: future ? null : r.actual.bottles,
+      expense_budget: r.expense_budget,
+      expenses: future ? null : r.actual.expenses,
+      expense_progress: future ? null : r.expense_progress,
+      net_result: future ? null : r.actual.net_result,
+      notes: r.notes,
+    }
+  })
   await sendWorkbook(res, excelFilename(`metas-${year}`), [
     {
       name: `Metas ${year}`,
       title: `Metas ${year}: meta vs. real`,
-      subtitle: `Año ${year}`,
+      subtitle: periodSubtitle(`${year}-01-01`, `${year}-12-31`),
       columns: [
         { header: 'Mes', key: 'label', width: 16 },
+        { header: 'Estado', key: 'status', width: 18 },
         { header: 'Meta de ventas', key: 'sales_target', type: 'money' },
-        { header: 'Ventas reales', key: 'sales', value: (r: GoalMonth) => r.actual.sales, type: 'money' },
+        { header: 'Ventas reales', key: 'sales', type: 'money' },
         { header: 'Avance de la meta', key: 'progress', type: 'percent', total: false },
         { header: 'Meta de botellas', key: 'bottles_target', type: 'int' },
-        { header: 'Botellas vendidas', key: 'bottles', value: (r: GoalMonth) => r.actual.bottles, type: 'int' },
+        { header: 'Botellas vendidas', key: 'bottles', type: 'int' },
         { header: 'Presupuesto de gastos', key: 'expense_budget', type: 'money' },
-        { header: 'Gastos reales', key: 'expenses', value: (r: GoalMonth) => r.actual.expenses, type: 'money' },
+        { header: 'Gastos reales', key: 'expenses', type: 'money' },
         { header: 'Uso del presupuesto', key: 'expense_progress', type: 'percent', total: false },
-        { header: 'Resultado', key: 'net_result', value: (r: GoalMonth) => r.actual.net_result, type: 'money' },
+        { header: 'Resultado', key: 'net_result', type: 'money' },
         { header: 'Notas', key: 'notes', width: 30 },
       ],
       rows,
@@ -314,7 +334,8 @@ router.get('/goals/export', async (req, res) => {
         'Avance de la meta = ventas reales ÷ meta de ventas. 100 % o más = meta cumplida.',
         'Uso del presupuesto = gastos reales ÷ presupuesto. Más de 100 % = te pasaste del presupuesto.',
         'Las ventas y los gastos cuentan en su fecha (aunque se cobren o paguen después), igual que en Inicio y Reportes.',
-        'El mes en curso todavía no terminó: compará su avance con cuánto del mes ya pasó.',
+        'El mes "En curso" todavía no terminó: compará su avance con cuánto del mes ya pasó. Los meses que no empezaron quedan vacíos.',
+        'La fila TOTAL suma las metas de todo el año (incluidas las de los meses que faltan) y lo real hasta hoy.',
       ],
     },
   ])

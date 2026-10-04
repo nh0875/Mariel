@@ -11,6 +11,7 @@
 import express, { Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
+import { z } from 'zod'
 import { settingsInput } from '../../shared/schemas'
 import {
   ACCOUNT_KIND_LABELS,
@@ -38,7 +39,7 @@ import {
 import { marginOnPrice, round2 } from '../../shared/calc'
 import { monthLabelLong } from '../../shared/dates'
 import type { Client, Goal, InflationRate, Product, RecurringExpense, Supplier, WineEvent } from '../../shared/types'
-import { all, BACKUP_DIR, DATA_DIR, DATA_TABLES, DB_PATH, IN_MEMORY, PROJECT_ROOT, scalar } from '../db'
+import { all, BACKUP_DIR, DATA_DIR, DATA_TABLES, DB_PATH, IN_MEMORY, PROJECT_ROOT, run, scalar, tx } from '../db'
 import { HttpError, badRequest, notFound, validate } from '../lib/http'
 import { addSheet, excelFilename, newWorkbook, sendWorkbookFile, type ExcelSheet } from '../lib/excel'
 import { backupPath, createBackup, listBackups, restoreFromBuffer, restoreFromFile, type BackupInfo } from '../lib/backup'
@@ -58,18 +59,63 @@ router.get('/settings', (_req, res) => {
   res.json(getSettings())
 })
 
+const normName = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+/**
+ * Renombres de categorías que manda la pantalla junto con la lista nueva ({ from, to }).
+ * Los gastos ya cargados NO cambian (quedan como se registraron), pero los gastos fijos sí: son
+ * plantillas para los meses que vienen, y si quedaran con el nombre viejo seguirían generando gastos
+ * con una categoría que ya no está en la lista.
+ */
+const categoryRenames = z
+  .array(z.object({ from: z.string().trim().min(1).max(80), to: z.string().trim().min(1).max(80) }))
+  .max(100)
+  .optional()
+
 /** Guarda solo las claves que vienen (los objetos como "business" se mezclan con lo que ya había). */
 router.put('/settings', (req, res) => {
   const patch = validate(settingsInput, req.body)
+  const renames = validate(categoryRenames, (req.body as Record<string, unknown> | undefined)?.category_renames) ?? []
   if (patch.expense_categories) {
     const seen = new Set<string>()
     for (const c of patch.expense_categories) {
-      const k = c.name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+      const k = normName(c.name)
       if (seen.has(k)) throw badRequest(`La categoría «${c.name}» está repetida. Dejá una sola.`)
       seen.add(k)
     }
   }
-  res.json(updateSettings(patch))
+  if (patch.payment_methods) {
+    // Se guardan por medio de pago: los que no vienen quedan como estaban (así nunca se pierde uno).
+    const seen = new Set<string>()
+    for (const m of patch.payment_methods) {
+      if (seen.has(m.key)) throw badRequest(`El medio de pago «${m.label}» vino repetido. Recargá la página y probá de nuevo.`)
+      seen.add(m.key)
+    }
+    const accounts = all<{ id: number; name: string; active: number }>('SELECT id, name, active FROM accounts')
+    for (const m of patch.payment_methods) {
+      if (m.account_id == null) continue
+      const acc = accounts.find((a) => a.id === m.account_id)
+      if (!acc) throw badRequest(`La cuenta elegida para «${m.label}» ya no existe. Elegí otra.`)
+      if (!acc.active) throw badRequest(`La cuenta «${acc.name}» (elegida para «${m.label}») está desactivada. Elegí una cuenta activa.`)
+    }
+    const current = getSettings().payment_methods
+    const byKey = new Map(patch.payment_methods.map((m) => [m.key, m]))
+    const merged = current.map((m) => ({ ...m, ...(byKey.get(m.key) ?? {}) }))
+    for (const m of patch.payment_methods) if (!current.some((c) => c.key === m.key)) merged.push(m)
+    patch.payment_methods = merged
+  }
+  const result = tx(() => {
+    const saved = updateSettings(patch)
+    if (patch.expense_categories && renames.length) {
+      const names = new Set(saved.expense_categories.map((c) => c.name))
+      for (const r of renames) {
+        if (r.from === r.to || !names.has(r.to)) continue
+        run('UPDATE recurring_expenses SET category = ? WHERE category = ?', [r.to, r.from])
+      }
+    }
+    return saved
+  })
+  res.json(result)
 })
 
 /**
@@ -478,6 +524,7 @@ export function buildFullExport() {
     rows: saleItems,
     notes: [
       'Una fila por cada vino (o ítem) de cada venta. El costo por botella es el costo promedio del día de la venta.',
+      'La "Cantidad" también cuenta ítems que no son vino (entradas a un evento, cajas de regalo…): por eso el total puede dar más que las botellas de la hoja Ventas, que cuenta solo vino.',
       'La ganancia bruta es antes de descuentos, comisiones y gastos; la ganancia de cada venta completa está en la hoja Ventas.',
     ],
   })

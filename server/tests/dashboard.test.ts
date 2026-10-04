@@ -12,7 +12,7 @@ import { updateSettings } from '../services/settings'
 import { lowStock, monthlySeries, payables, periodSummary, receivables, salesByChannel, salesByProduct, stockValue } from '../services/finance'
 import { expenseInput, purchaseInput, saleInput } from '../../shared/schemas'
 import { addDays, addMonths, endOfMonth, monthKey, previousPeriod, startOfMonth, today } from '../../shared/dates'
-import { comparisonPeriods, rangeInWords } from '../routes/dashboard'
+import { buildDashboard, comparisonPeriods, isPartialComparison, periodPhrase, rangeInWords } from '../routes/dashboard'
 import { startTestServer, type TestServer } from './helpers'
 
 let t: TestServer
@@ -252,7 +252,7 @@ describe('Alertas', () => {
     expense(addDays(p.from, 3), 10000, 'fijo')
     const r = await t.get(`/dashboard?from=${p.from}&to=${p.to}`)
     const neg = find(r.body.alerts, 'perdiste')
-    expect(neg).toMatchObject({ tone: 'bad', link: '/reportes' })
+    expect(neg).toMatchObject({ tone: 'bad', link: '/reportes?tab=resultados' })
     const margin = find(r.body.alerts, 'margen bruto bajó')
     expect(margin).toMatchObject({ tone: 'warn' })
     expect(margin.title).toContain('30 puntos')
@@ -361,5 +361,144 @@ describe('GET /dashboard/export', () => {
     expect(ws.getCell('B5').value).toBe(8000)
     expect(ws.getCell('A12').value).toBe('= RESULTADO')
     expect(ws.getCell('B12').value).toBe(4000)
+  })
+})
+
+// ───────────── Revisión: casos que daban números engañosos ─────────────
+
+describe('Comparación honesta', () => {
+  const plainIns = (d: any): string[] => d.insights.map((x: string) => x.replace(/\u00a0/g, ' '))
+
+  it('si los registros empiezan a mitad del período anterior no muestra variaciones ("vendiste 900 % más")', async () => {
+    const malbec = wine('Malbec', 500, 1000)
+    const p = pastMonth()
+    const prev = previousPeriod(p)
+    sale(addDays(prev.from, 20), malbec, 1, 2000) // el anterior tiene solo sus últimos días cargados
+    sale(addDays(p.from, 2), malbec, 20, 2000)
+    sale(addDays(p.from, 3), malbec, 10, 1000) // margen más bajo: no debe disparar "tu margen bajó"
+    const r = await t.get(`/dashboard?from=${p.from}&to=${p.to}`)
+    const c = r.body.comparison
+    expect(c.partial).toBe(true)
+    expect(c.data_since).toBe(addDays(prev.from, 20))
+    expect(c.detail).toContain('a medias')
+    expect(plainIns(r.body).some((x) => /Vendiste \d+ % (más|menos)/.test(x))).toBe(false)
+    expect(r.body.alerts.some((a: any) => a.title.includes('margen bruto bajó'))).toBe(false)
+  })
+
+  it('con pocos días faltantes (menos del 10 %) sí compara', () => {
+    expect(isPartialComparison({ from: '2026-09-01', to: '2026-09-30' }, '2026-09-02')).toBe(false)
+    expect(isPartialComparison({ from: '2026-09-01', to: '2026-09-30' }, '2026-09-10')).toBe(true)
+    expect(isPartialComparison({ from: '2026-09-01', to: '2026-09-04' }, '2026-09-03')).toBe(true)
+    expect(isPartialComparison({ from: '2026-09-01', to: '2026-09-30' }, null)).toBe(false)
+  })
+
+  it('si no hay nada cargado antes, lo dice en vez de comparar contra 1972', async () => {
+    const malbec = wine('Malbec', 100, 1000)
+    sale('2025-03-05', malbec, 2, 2000)
+    const r = await t.get('/dashboard?from=2000-01-01&to=2025-12-31')
+    expect(r.body.comparison.partial).toBe(true)
+    expect(r.body.comparison.detail).toContain('No hay nada cargado antes del 5 de marzo de 2025')
+    expect(r.body.period_phrase).toBe('desde el 5 de marzo de 2025')
+    expect(plainIns(r.body).some((x) => x.includes('período anterior'))).toBe(false)
+  })
+
+  it('lo cargado con fecha posterior a hoy suma en el período pero no en la comparación, y se explica', () => {
+    const malbec = wine('Malbec', 100, 1000)
+    sale('2025-03-02', malbec, 5, 2000)
+    sale('2025-02-02', malbec, 5, 2000)
+    expense('2025-03-01', 1000, 'fijo')
+    expense('2025-03-20', 7000, 'fijo') // gasto fijo generado para todo el mes, con fecha más adelante
+    const d = buildDashboard({ from: '2025-03-01', to: '2025-03-31' }, '2025-03-10')
+    expect(d.comparison.mode).toBe('same_days')
+    expect(d.summary.expenses).toBe(8000)
+    expect(d.comparison.current.expenses).toBe(1000)
+    expect(d.comparison.after_today).toEqual({ sales: 0, expenses: 7000, net_result: -7000 })
+    expect(d.comparison.detail.replace(/\u00a0/g, ' ')).toContain('ya hay $ 7.000 de gastos cargados con fecha posterior a hoy')
+    // Ese gasto se cargó como pagado: el saldo de caja ya lo descuenta y lo informamos para explicarlo.
+    expect(d.cash.scheduled).toEqual({ out: 7000, in: 0 })
+    // Sin nada después de hoy, no hay nota.
+    const d2 = buildDashboard({ from: '2025-03-01', to: '2025-03-31' }, '2025-03-25')
+    expect(d2.comparison.after_today).toBeNull()
+  })
+})
+
+describe('Principio de mes', () => {
+  it('no lo trata como alerta y dice cuánto falta vender para salir del rojo', () => {
+    const malbec = wine('Malbec', 100, 1000)
+    sale('2025-02-03', malbec, 5, 2000)
+    expense('2025-03-01', 10000, 'fijo')
+    sale('2025-03-02', malbec, 5, 2000) // ventas 10.000, vino 5.000 → de cada $ 100 quedan $ 50
+    const d = buildDashboard({ from: '2025-03-01', to: '2025-03-31' }, '2025-03-04')
+    expect(d.summary.net_result).toBe(-5000)
+    expect(d.alerts.some((a) => a.title.includes('perdiste') || a.title.includes('en rojo'))).toBe(false)
+    const ins = d.insights.map((x) => x.replace(/\u00a0/g, ' '))
+    expect(ins.some((x) => x.includes('te faltan vender unos $ 10.000 más'))).toBe(true)
+    // A mitad de mes el resultado negativo sí es una alerta.
+    const late = buildDashboard({ from: '2025-03-01', to: '2025-03-31' }, '2025-03-20')
+    expect(late.alerts.some((a) => a.title.includes('perdiste'))).toBe(true)
+  })
+})
+
+describe('Meta que muestra Inicio y frases del período', () => {
+  it('período pasado → su último mes; período futuro → su primer mes; el actual → este mes', async () => {
+    const y = Number(today().slice(0, 4)) + 1
+    run('INSERT INTO goals (month, sales_target) VALUES (?, ?)', [`${y}-02`, 50000])
+    let r = await t.get(`/dashboard?from=${y}-02-01&to=${y}-04-30`)
+    expect(r.body.goal_month).toBe(`${y}-02`)
+    expect(r.body.goal).toMatchObject({ month: `${y}-02`, sales_target: 50000, days_elapsed: 0 })
+    r = await t.get('/dashboard?from=2024-01-01&to=2024-03-31')
+    expect(r.body.goal_month).toBe('2024-03')
+    r = await t.get('/dashboard')
+    expect(r.body.goal_month).toBe(monthKey(today()))
+  })
+
+  it('el período en una frase', () => {
+    expect(periodPhrase({ from: '2024-10-01', to: '2024-10-31' }, null)).toBe('en octubre 2024')
+    expect(periodPhrase({ from: '2024-01-01', to: '2024-12-31' }, null)).toBe('en el año 2024')
+    expect(periodPhrase({ from: '2024-08-01', to: '2024-10-31' }, null)).toBe('del 1 de agosto al 31 de octubre de 2024')
+    expect(periodPhrase({ from: '2000-01-01', to: '2024-12-31' }, null)).toBe('desde siempre')
+  })
+
+  it('en un año compara "con los mismos días del año pasado" (no "del período anterior")', () => {
+    const malbec = wine('Malbec', 500, 1000)
+    sale('2024-01-10', malbec, 10, 2000)
+    sale('2025-01-10', malbec, 12, 2000)
+    const d = buildDashboard({ from: '2025-01-01', to: '2025-12-31' }, '2025-06-30')
+    expect(d.comparison.label).toBe('vs. mismos días del año pasado')
+    expect(d.insights[0]).toContain('que en los mismos días del año pasado')
+  })
+
+  it('avisa el stock negativo como algo a revisar', async () => {
+    const id = wine('Malbec raro', 1, 1000, 6)
+    addMovement({ product_id: id, date: '2024-02-01', kind: 'ajuste', qty: -3 })
+    const r = await t.get('/dashboard')
+    const a = r.body.alerts.find((x: any) => x.link === '/vinos')
+    expect(a.text).toContain('Malbec raro (stock negativo: -2, revisalo)')
+  })
+})
+
+describe('Excel de Inicio: la variación se puede verificar', () => {
+  it('en el mes en curso agrega "Hasta hoy" y la variación sale de esa columna', async () => {
+    const from = startOfMonth(today())
+    const to = endOfMonth(today())
+    if (today() === to) return // el último día del mes se compara contra el mes anterior completo (ya cubierto)
+    const malbec = wine('Malbec', 200, 1000)
+    sale(addMonths(from, -1), malbec, 2, 2000)
+    sale(from, malbec, 3, 2000)
+    expense(to, 5000, 'fijo') // con fecha más adelante
+    const res = await t.raw(`/dashboard/export?from=${from}&to=${to}`)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await res.arrayBuffer())
+    const ws = wb.getWorksheet('Resultado')!
+    expect(String(ws.getCell('D4').value)).toMatch(/^Hasta hoy/)
+    expect(String(ws.getCell('E4').value)).toMatch(/^Mismos días del período anterior/)
+    expect(ws.getCell('F4').value).toBe('Variación')
+    // Ventas: hasta hoy 6.000 vs. 4.000 → +50 %
+    expect(ws.getCell('D5').value).toBe(6000)
+    expect(ws.getCell('E5').value).toBe(4000)
+    expect(ws.getCell('F5').value).toBeCloseTo(0.5, 6)
+    // Gastos fijos: el período completo los incluye, "hasta hoy" no.
+    expect(ws.getCell('B10').value).toBe(-5000)
+    expect(ws.getCell('D10').value).toBe(0)
   })
 })

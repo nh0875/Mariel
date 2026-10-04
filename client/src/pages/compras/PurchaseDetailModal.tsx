@@ -1,6 +1,6 @@
 // Detalle de una compra: qué vinos entraron, cuánto costó cada botella de verdad (con flete),
 // qué se pagó y qué falta. Desde acá se registra un pago, se edita o se borra.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, FileText, HandCoins, Pencil, Trash2, Truck } from 'lucide-react'
 import clsx from 'clsx'
@@ -34,6 +34,11 @@ export function PurchaseDetailModal({ purchaseId, onClose, onEdit }: { purchaseI
     },
     { success: (id) => `Compra #${id} borrada. Las botellas salieron del stock y el costo de cada vino se recalculó.` },
   )
+  // Cuando el detalle ya se cerró, liberamos ese número: la base puede volver a usarlo para la próxima compra
+  // (si no, al abrir esa compra nueva el detalle quedaría vacío).
+  useEffect(() => {
+    if (purchaseId == null) setGone(null)
+  }, [purchaseId])
 
   const removePayment = useApiMutation(
     async (pay: { id: number }) => {
@@ -154,13 +159,14 @@ export function PurchaseDetailModal({ purchaseId, onClose, onEdit }: { purchaseI
             </div>
 
             {/* Números grandes */}
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {/* En el celular: Total arriba (ancho completo) y Pagado / Falta pagar abajo, así los montos con centavos no se cortan. */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
               {[
-                { label: 'Total', value: money(p.total), tone: '' },
-                { label: 'Pagado', value: money(p.paid), tone: '' },
-                { label: 'Falta pagar', value: money(p.balance), tone: hasBalance ? 'text-warn' : 'text-good' },
+                { label: 'Total', value: money(p.total), tone: '', span: 'col-span-2 sm:col-span-1' },
+                { label: 'Pagado', value: money(p.paid), tone: '', span: '' },
+                { label: 'Falta pagar', value: money(p.balance), tone: hasBalance ? 'text-warn' : 'text-good', span: '' },
               ].map((x) => (
-                <div key={x.label} className="min-w-0 rounded-2xl bg-cream-deep px-3 py-2.5 sm:px-4">
+                <div key={x.label} className={clsx('min-w-0 rounded-2xl bg-cream-deep px-3 py-2.5 sm:px-4', x.span)}>
                   <p className="text-[12.5px] font-bold text-ink-soft">{x.label}</p>
                   <p className={clsx('vh-num truncate text-[1.1rem] font-extrabold text-ink sm:text-[1.35rem]', x.tone)} title={x.value}>
                     {x.value}

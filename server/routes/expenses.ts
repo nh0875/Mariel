@@ -245,11 +245,25 @@ router.get('/expenses/summary', (req, res) => {
   // Por categoría, con lo que se gastó en la ventana de comparación (para "lo que más creció").
   const prevByCat = new Map(expensesByCategory(cmpPrev.from, cmpPrev.to).map((c) => [c.category, c.amount]))
   const curByCat = partial ? new Map(expensesByCategory(cmpCur.from, cmpCur.to).map((c) => [c.category, c.amount])) : null
+  // Cuánto de cada categoría fue fijo y cuánto variable (una categoría puede tener de los dos:
+  // ej. "Impuestos" con el monotributo fijo y los Ingresos Brutos variables).
+  const split = new Map<string, { fixed: number; variable: number }>()
+  for (const e of list) {
+    const s = split.get(e.category) ?? { fixed: 0, variable: 0 }
+    if (e.nature === 'fijo') s.fixed += e.amount
+    else s.variable += e.amount
+    split.set(e.category, s)
+  }
   const by_category = expensesByCategory(from, to).map((c) => {
     const current = curByCat ? (curByCat.get(c.category) ?? 0) : c.amount
     const previous = prevByCat.get(c.category) ?? 0
+    const sp = split.get(c.category) ?? { fixed: 0, variable: 0 }
     return {
       ...c,
+      // 'mixto' si en el período hubo gastos fijos y variables con esta categoría.
+      nature: sp.fixed > 0.009 && sp.variable > 0.009 ? 'mixto' : sp.fixed > 0.009 ? 'fijo' : 'variable',
+      fixed: round2(sp.fixed),
+      variable: round2(sp.variable),
       pct: safeDiv(c.amount, ps.expenses),
       compare_current: round2(current),
       compare_previous: round2(previous),
@@ -421,6 +435,9 @@ router.get('/expenses/export', async (req, res) => {
         'Todos los gastos de cada mes (sin filtros), separados en fijos y variables.',
         'Gastos sobre ventas = total de gastos ÷ ventas del mes. Ej: 30 % quiere decir que de cada $100 que vendiste, $30 se fueron en gastos (sin contar el costo del vino).',
         'Si los fijos suben mes a mes sin que suban las ventas, el punto de equilibrio se te aleja: revisá alquiler, abonos y suscripciones.',
+        ...(months.some((m) => m.month === monthKey(today()))
+          ? [`El mes de ${monthLabelLong(monthKey(today()))} todavía no terminó: sus números van hasta hoy, así que no los compares tal cual con un mes completo.`]
+          : []),
       ],
     } as (typeof sheets)[number])
   }
@@ -454,7 +471,14 @@ router.post('/expenses', (req, res) => {
         [data.description, data.category, round2(data.amount), data.nature, templateDay(data.date), data.account_id, repeatAutoPaid],
       ).lastInsertRowid
     }
-    return createExpense({ ...data, recurring_id: recurringId } as ExpenseData)
+    const expenseId = createExpense({ ...data, recurring_id: recurringId } as ExpenseData)
+    // Si no eligieron cuenta pero lo pagaron (salió de la caja principal), la plantilla recuerda esa misma cuenta:
+    // así "se debita solo" sabe de dónde sale cada mes.
+    if (recurringId && data.account_id == null) {
+      const used = paymentsFor('expense', expenseId)[0]?.account_id
+      if (used) run('UPDATE recurring_expenses SET account_id = ? WHERE id = ?', [used, recurringId])
+    }
+    return expenseId
   })
   res.status(201).json(getExpenseDetail(id))
 })

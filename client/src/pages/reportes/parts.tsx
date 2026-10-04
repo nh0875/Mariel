@@ -12,14 +12,14 @@ import type { AbcClass, ReportPeriod } from './types'
 
 // ───────────────────────── Formatos ─────────────────────────
 
-const NBSP = ' '
+const NBSP = '\u00A0'
 const glue = (s: string) => s.replace(/ /g, NBSP)
 
 /** Pesos sin centavos (en un reporte los centavos solo molestan), sin corte de línea. */
 export const money0 = (v: number | null | undefined, opts: { sign?: boolean } = {}) => glue(money(v == null ? v : Math.round(v), { ...opts, decimals: 0 }))
-/** "$ 1,2 M", "$ 350 mil". */
+/** "$ 1,2 M", "$ 350 mil". */
 export const compact = (v: number | null | undefined) => glue(moneyCompact(v))
-/** "$ 61" (de cada $ 100). */
+/** "$ 61" (de cada $ 100). */
 export const pesos = (n: number) => `$${NBSP}${n}`
 /** 'YYYY-MM' → 'Octubre 2026' */
 export const monthTitle = (m: string) => {

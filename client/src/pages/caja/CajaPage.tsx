@@ -24,30 +24,57 @@ import type { AccountRow, MovementRow, PendingResult } from './types'
 type TabKey = 'movimientos' | 'pendientes' | 'flujo'
 const TAB_KEYS: TabKey[] = ['movimientos', 'pendientes', 'flujo']
 
+/** true en pantallas de celular (menos de 640 px). */
+function useNarrow(): boolean {
+  const query = '(max-width: 639px)'
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(query)
+    if (!mq) return
+    const on = () => setNarrow(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return narrow
+}
+
 /**
  * Colores de las cuentas en "¿Dónde está?". Sin el coral: en los gráficos el coral significa
  * "gastos/salidas" y una cuenta con plata no tiene que leerse como algo malo.
  */
 const ACCOUNT_COLORS = [CHART_COLORS.ventas, CHART_COLORS.costo, CHART_COLORS.ganancia, CHART_COLORS.extra, CHART_COLORS.envios]
 
-/** Barra apilada "¿Dónde está la plata?" con la parte de cada cuenta. */
-function WhereBar({ accounts, total }: { accounts: AccountRow[]; total: number }) {
-  const positive = accounts.filter((a) => a.balance > 0.004)
+/**
+ * Barra apilada "¿Dónde está la plata?" con la parte de cada cuenta (de la que más tiene a la que menos).
+ * Como máximo 5 tramos: si hay más cuentas con plata, las más chicas se juntan en "Otras cuentas".
+ */
+function WhereBar({ accounts }: { accounts: AccountRow[] }) {
+  const positive = accounts.filter((a) => a.balance > 0.004).sort((a, b) => b.balance - a.balance)
   const sum = positive.reduce((s, a) => s + a.balance, 0)
   if (!positive.length) return null
+  const MAX = ACCOUNT_COLORS.length
+  const parts =
+    positive.length > MAX
+      ? [
+          ...positive.slice(0, MAX - 1).map((a) => ({ key: String(a.id), name: a.name, value: a.balance })),
+          { key: 'otras', name: `Otras cuentas (${positive.length - MAX + 1})`, value: positive.slice(MAX - 1).reduce((s, a) => s + a.balance, 0) },
+        ]
+      : positive.map((a) => ({ key: String(a.id), name: a.name, value: a.balance }))
   return (
     <div className="min-w-0">
       <p className="mb-2 text-[13px] font-bold text-ink-soft">¿Dónde está?</p>
       <div className="flex h-3.5 overflow-hidden rounded-full bg-cream-deep" role="img" aria-label="Parte de la plata en cada cuenta">
-        {positive.map((a, i) => (
-          <div key={a.id} style={{ width: `${(a.balance / sum) * 100}%`, background: ACCOUNT_COLORS[i % ACCOUNT_COLORS.length] }} className="h-full border-r-2 border-paper last:border-r-0" />
+        {parts.map((p, i) => (
+          <div key={p.key} style={{ width: `${(p.value / sum) * 100}%`, background: ACCOUNT_COLORS[i] }} className="h-full border-r-2 border-paper last:border-r-0" />
         ))}
       </div>
       <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
-        {positive.map((a, i) => (
-          <li key={a.id} className="inline-flex items-center gap-1.5 text-ink-soft">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: ACCOUNT_COLORS[i % ACCOUNT_COLORS.length] }} aria-hidden />
-            {a.name} <b className="vh-num text-ink">{pct(total > 0 ? a.balance / sum : 0, 0)}</b>
+        {parts.map((p, i) => (
+          <li key={p.key} className="flex max-w-full min-w-0 items-baseline gap-1.5 text-ink-soft">
+            <span className="h-2.5 w-2.5 shrink-0 translate-y-px rounded-full" style={{ background: ACCOUNT_COLORS[i] }} aria-hidden />
+            <span className="min-w-0">
+              {p.name} <b className="vh-num whitespace-nowrap text-ink">{nb(pct(p.value / sum, 0))}</b>
+            </span>
           </li>
         ))}
       </ul>
@@ -147,12 +174,21 @@ export default function CajaPage() {
   const [reconcile, setReconcile] = useState<AccountRow | null>(null)
   const tabsRef = useRef<HTMLDivElement>(null)
 
+  // ?tab=pendientes (ej: «Me pagaron una deuda» desde Inicio) → bajamos directo a esa pestaña, que queda debajo de las cuentas.
+  const arrivedWithTab = useRef(!!urlTab)
+  useEffect(() => {
+    if (!arrivedWithTab.current || !accountsQ.data) return
+    arrivedWithTab.current = false
+    window.setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+  }, [accountsQ.data])
+
   // ?cuenta=ID → muestra los movimientos de esa cuenta (links desde otras pantallas).
   useEffect(() => {
     const acc = Number(params.get('cuenta'))
     if (acc > 0) {
       setFilters((f) => ({ ...f, accountId: acc }))
       setSavedTab('movimientos')
+      window.setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120)
       const next = new URLSearchParams(params)
       next.delete('cuenta')
       next.delete('tab')
@@ -173,6 +209,11 @@ export default function CajaPage() {
   const total = accounts.reduce((s, a) => s + a.balance, 0)
   const usdRate = settings?.usd_rate ?? 0
   const pending = pendingQ.data?.totals
+  // Recién empezás: ninguna cuenta tiene saldo inicial ni movimientos → te contamos cómo cargar lo que ya tenés.
+  const fresh = accounts.length > 0 && accounts.every((a) => a.movements_count === 0 && Math.abs(a.initial_balance) < 0.005)
+
+  // Si estás mirando una cuenta, los formularios la proponen (solo si está activa: en una desactivada no se carga nada).
+  const filteredActiveId = active.some((a) => a.id === filters.accountId) ? filters.accountId : null
 
   const showMovements = (a: AccountRow) => {
     setFilters({ accountId: a.id, direction: '', type: '' })
@@ -204,15 +245,21 @@ export default function CajaPage() {
   const flow = flowPeriod(flowRange)
   const exportProps =
     tab === 'movimientos'
-      ? { path: '/movements/export', params: { from: period.from, to: period.to, account_id: filters.accountId } }
+      ? {
+          path: '/movements/export',
+          // Los mismos filtros que la tabla, así el Excel trae lo mismo que estás viendo.
+          params: { from: period.from, to: period.to, account_id: filters.accountId, direction: filters.direction || null, ref_type: filters.type || null },
+        }
       : tab === 'pendientes'
         ? { path: '/pending/export', params: undefined }
         : { path: '/cashflow/export', params: { from: flow.from, to: flow.to } }
 
+  // En el celular, sin íconos: así las tres pestañas entran en dos renglones (con íconos quedaba una por renglón).
+  const narrow = useNarrow()
   const tabs: TabItem<TabKey>[] = [
-    { key: 'movimientos', label: 'Movimientos', icon: List },
-    { key: 'pendientes', label: 'Por cobrar y por pagar', icon: Wallet, count: pending ? pending.receivables_count + pending.payables_count : undefined },
-    { key: 'flujo', label: 'Flujo de caja', icon: TrendingUp },
+    { key: 'movimientos', label: 'Movimientos', icon: narrow ? undefined : List },
+    { key: 'pendientes', label: 'Por cobrar y por pagar', icon: narrow ? undefined : Wallet, count: pending ? pending.receivables_count + pending.payables_count : undefined },
+    { key: 'flujo', label: 'Flujo de caja', icon: narrow ? undefined : TrendingUp },
   ]
 
   return (
@@ -267,7 +314,15 @@ export default function CajaPage() {
                 <span className="h-2.5 w-2.5 rounded-full bg-orange" aria-hidden />
                 Plata disponible hoy <InfoTip term="caja" />
               </p>
-              <p className={clsx('vh-num mt-1.5 text-[2.6rem] leading-none font-extrabold tracking-tight sm:text-[3rem]', total < 0 ? 'text-bad' : 'text-ink')} title={money(total)}>
+              <p
+                className={clsx(
+                  'vh-num mt-1.5 leading-none font-extrabold tracking-tight sm:text-[3rem]',
+                  // Montos de 11+ cifras no entran a 2.6rem en un celular de 390 px.
+                  money(total, { decimals: 0 }).length > 14 ? 'text-[2.1rem]' : 'text-[2.6rem]',
+                  total < 0 ? 'text-bad' : 'text-ink',
+                )}
+                title={money(total)}
+              >
                 {nb(money(total, { decimals: 0 }))}
               </p>
               <p className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[13.5px] text-ink-soft">
@@ -286,6 +341,14 @@ export default function CajaPage() {
                   </>
                 )}
               </p>
+              {fresh && active[0] && (
+                <p className="mt-3 rounded-xl bg-sky-soft/70 px-3 py-2 text-[13.5px] text-ink">
+                  <b>¿Ya tenés plata en la caja o en el banco?</b> Cargá cuánto hay hoy en cada cuenta (menú ⋮ → «Editar») y los saldos arrancan bien.{' '}
+                  <button type="button" className="font-bold text-sky-deep hover:underline" onClick={() => setAccountModal({ account: active[0] })}>
+                    Empezar por «{active[0].name}»
+                  </button>
+                </p>
+              )}
               {Math.abs(inactiveMoney) > 0.004 && (
                 <p className="mt-1 text-[13px] text-muted">
                   Incluye {nb(money(inactiveMoney, { decimals: 0 }))} que quedaron en {inactive.filter((a) => Math.abs(a.balance) > 0.004).map((a) => `«${a.name}»`).join(', ')} (desactivada). Si esa plata
@@ -306,7 +369,7 @@ export default function CajaPage() {
                 </button>
               )}
             </div>
-            <WhereBar accounts={Math.abs(inactiveMoney) > 0.004 ? accounts : active} total={total} />
+            <WhereBar accounts={Math.abs(inactiveMoney) > 0.004 ? accounts : active} />
           </section>
 
           {/* Cuentas */}
@@ -354,16 +417,17 @@ export default function CajaPage() {
       )}
 
       <div ref={tabsRef} className="mt-7 scroll-mt-20">
-        <Tabs items={tabs} value={tab} onChange={setTab} className="mb-4" />
+        {/* flex-wrap: en el celular las tres pestañas no entran en un renglón y «Flujo de caja» quedaba escondida. */}
+        <Tabs items={tabs} value={tab} onChange={setTab} className="mb-4 flex-wrap" />
         {tab === 'movimientos' && (
           <MovementsTab accounts={accounts} filters={filters} setFilters={setFilters} onNew={openNew} onEdit={(m) => setEditMovement(m)} />
         )}
         {tab === 'pendientes' && <PendingTab />}
-        {tab === 'flujo' && <CashflowTab range={flowRange} setRange={setFlowRange} />}
+        {tab === 'flujo' && <CashflowTab range={flowRange} setRange={setFlowRange} onNew={openNew} />}
       </div>
 
-      <MovementFormModal open={newOpen || !!editMovement} movement={editMovement} defaultAccountId={filters.accountId} onClose={() => (editMovement ? setEditMovement(null) : closeNew())} />
-      <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} defaultFromId={filters.accountId} />
+      <MovementFormModal open={newOpen || !!editMovement} movement={editMovement} defaultAccountId={filteredActiveId} onClose={() => (editMovement ? setEditMovement(null) : closeNew())} />
+      <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} defaultFromId={filteredActiveId} />
       <AccountFormModal open={!!accountModal} account={accountModal?.account ?? null} onClose={() => setAccountModal(null)} />
       <ReconcileModal account={reconcile} onClose={() => setReconcile(null)} />
     </>

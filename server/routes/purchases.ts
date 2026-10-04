@@ -16,11 +16,11 @@ import { purchaseInput, settlementInput } from '../../shared/schemas'
 import { round2, safeDiv } from '../../shared/calc'
 import { addMonths, endOfMonth, monthsBetween, startOfMonth, today } from '../../shared/dates'
 import type { Payment, PurchaseDetail, PurchaseWithStatus } from '../../shared/types'
-import { all, get, scalar } from '../db'
+import { all, get, scalar, tx } from '../db'
 import { badRequest, notFound, parseId, parsePeriod, qn, qs, validate } from '../lib/http'
-import { excelFilename, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
-import { createPurchase, deletePurchase, getPurchaseDetail, listPurchases, updatePurchase, type PurchasesFilter } from '../services/purchases'
-import { addSettlement, deletePayment, paidFor } from '../services/payments'
+import { excelFilename, fmtDate, periodSubtitle, sendWorkbook, type ExcelColumn } from '../lib/excel'
+import { createPurchase, deletePurchase, getPurchaseDetail, listPurchases, updatePurchase, type PurchaseData, type PurchasesFilter } from '../services/purchases'
+import { addPayment, addSettlement, defaultAccountId, deletePayment, deletePaymentsByRef, paidFor, paymentsFor } from '../services/payments'
 import { monthlySeries, periodSummary, stockValue } from '../services/finance'
 
 const router = Router()
@@ -155,6 +155,64 @@ function checkDueDate(data: { date: string; due_date: string | null; paid: boole
   }
 }
 
+/** Total de la compra con el mismo redondeo que services/purchases.ts (subtotal y flete redondeados por separado). */
+function purchaseTotal(data: PurchaseData): number {
+  return round2(round2(data.items.reduce((s, i) => s + i.qty * i.unit_cost, 0)) + round2(data.shipping ?? 0))
+}
+
+interface PlannedPayment {
+  date: string
+  account_id: number
+  amount: number
+  description: string | null
+}
+
+/**
+ * Al editar una compra que sigue (o pasa a estar) pagada, el servicio reemplaza todos los pagos por uno solo
+ * con la fecha de la compra. Eso "movería" plata en la Caja: una factura a 30 días que pagaste el 8/10 pasaría
+ * a figurar pagada el 8/9 solo por corregir el número de factura. Acá se arma cómo tienen que quedar los pagos
+ * respetando las fechas y cuentas reales:
+ * - Los pagos se mantienen (los que eran del mismo día de la compra acompañan el cambio de fecha).
+ * - Si estaba pagada y elegiste otra cuenta, los pagos pasan a esa cuenta (corregiste de dónde salió la plata).
+ * - Si bajó el total, se descuenta de los últimos pagos; si subió, se suma al último pago.
+ * - Si estaba pagada en parte, se agrega un pago por lo que faltaba, desde la cuenta elegida.
+ */
+function planPayments(
+  id: number,
+  prev: { date: string; payments: Payment[]; fullyPaid: boolean },
+  data: PurchaseData,
+  total: number,
+): PlannedPayment[] {
+  const first = prev.payments[0]
+  const moveTo = prev.fullyPaid && data.account_id != null && data.account_id !== first.account_id ? data.account_id : null
+  const out: PlannedPayment[] = prev.payments.map((p) => ({
+    date: p.date === prev.date ? data.date : p.date,
+    account_id: moveTo ?? p.account_id,
+    amount: p.amount,
+    description: p.description,
+  }))
+  let sum = round2(out.reduce((s, p) => s + p.amount, 0))
+  for (let i = out.length - 1; i >= 0 && sum > total + 0.009; i--) {
+    const cut = Math.min(out[i].amount, round2(sum - total))
+    out[i].amount = round2(out[i].amount - cut)
+    sum = round2(sum - cut)
+  }
+  const kept = out.filter((p) => p.amount > 0.009)
+  const missing = round2(total - sum)
+  if (missing > 0.009) {
+    const last = kept[kept.length - 1]
+    if (prev.fullyPaid && last) last.amount = round2(last.amount + missing)
+    else
+      kept.push({
+        date: last && last.date > data.date ? last.date : data.date,
+        account_id: data.account_id ?? last?.account_id ?? defaultAccountId('transferencia'),
+        amount: missing,
+        description: `Pago compra #${id}`,
+      })
+  }
+  return kept
+}
+
 // ───────────────────────── Listado y resumen ─────────────────────────
 
 router.get('/purchases', (req, res) => {
@@ -263,8 +321,11 @@ router.get('/purchases/summary', (req, res) => {
 // ───────────────────────── Excel ─────────────────────────
 
 router.get('/purchases/export', async (req, res) => {
-  const period = parsePeriod(req)
-  const f = readFilters(req, period)
+  // "Por pagar" y "Vencidas" sin fechas: lo que debés hoy, de cualquier fecha (igual que la pantalla).
+  const status = qs(req, 'status')
+  const allDates = !qs(req, 'from') && !qs(req, 'to') && (status === 'por_pagar' || status === 'vencida')
+  const period = allDates ? null : parsePeriod(req)
+  const f = readFilters(req, period ?? undefined)
   const list = applyStatus(listPurchases(f.base), f.status)
   const ids = new Set(list.map((p) => p.id))
   const byId = new Map(list.map((p) => [p.id, p]))
@@ -281,9 +342,9 @@ router.get('/purchases/export', async (req, res) => {
      FROM purchase_items pi
      JOIN purchases pu ON pu.id = pi.purchase_id
      JOIN products p ON p.id = pi.product_id
-     WHERE pu.date BETWEEN ? AND ?
+     ${period ? 'WHERE pu.date BETWEEN ? AND ?' : ''}
      ORDER BY pu.date, pu.id, pi.id`,
-    [period.from, period.to],
+    period ? [period.from, period.to] : [],
   ).filter((i) => ids.has(i.purchase_id))
 
   const rows = [...list].sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1))
@@ -339,9 +400,12 @@ router.get('/purchases/export', async (req, res) => {
     f.base.supplier_id ? `proveedor ${get<{ name: string }>('SELECT name FROM suppliers WHERE id = ?', [f.base.supplier_id])?.name ?? '—'}` : '',
     f.base.product_id ? `vino ${get<{ name: string }>('SELECT name FROM products WHERE id = ?', [f.base.product_id])?.name ?? '—'}` : '',
   ].filter(Boolean)
-  const subtitle = periodSubtitle(period.from, period.to) + (filterParts.length ? ` · Filtro: ${filterParts.join(', ')}` : '')
+  const subtitle =
+    (period ? periodSubtitle(period.from, period.to) : `Todas las fechas (lo que debés hoy, al ${fmtDate(today())})`) +
+    (filterParts.length ? ` · Filtro: ${filterParts.join(', ')}` : '')
+  const filename = period ? `compras-${period.from}-al-${period.to}` : status === 'vencida' ? 'compras-vencidas' : 'compras-por-pagar'
 
-  await sendWorkbook(res, excelFilename('compras'), [
+  await sendWorkbook(res, excelFilename(filename), [
     {
       name: 'Compras',
       title: 'Compras de vino',
@@ -372,6 +436,43 @@ router.get('/purchases/export', async (req, res) => {
   ])
 })
 
+// ───────────────────────── Último precio de factura ─────────────────────────
+
+export interface LastPrice {
+  product_id: number
+  /** Precio por botella de la factura (sin flete) de la última compra de ese vino. */
+  unit_cost: number
+  date: string
+  supplier_id: number | null
+  supplier_name: string | null
+  /** true si es la última compra a ESE proveedor (cuando se pasa ?supplier_id). */
+  same_supplier: boolean
+}
+
+/**
+ * Para completar el precio en "Nueva compra": el último precio de factura de cada vino (preferentemente
+ * del proveedor elegido). Es mejor sugerencia que el costo promedio, porque el promedio ya incluye flete:
+ * si se usara como precio de factura, el flete se contaría dos veces.
+ */
+router.get('/purchases/last-prices', (req, res) => {
+  const supplierId = qn(req, 'supplier_id') ?? null
+  const rows = all<Omit<LastPrice, 'same_supplier'> & { same_supplier: number }>(
+    `SELECT product_id, unit_cost, date, supplier_id, supplier_name, same_supplier FROM (
+       SELECT pi.product_id, pi.unit_cost, pu.date, pu.supplier_id, s.name AS supplier_name,
+         CASE WHEN ? IS NOT NULL AND pu.supplier_id = ? THEN 1 ELSE 0 END AS same_supplier,
+         ROW_NUMBER() OVER (
+           PARTITION BY pi.product_id
+           ORDER BY CASE WHEN ? IS NOT NULL AND pu.supplier_id = ? THEN 0 ELSE 1 END, pu.date DESC, pi.id DESC
+         ) AS rn
+       FROM purchase_items pi
+       JOIN purchases pu ON pu.id = pi.purchase_id
+       LEFT JOIN suppliers s ON s.id = pu.supplier_id
+     ) WHERE rn = 1`,
+    [supplierId, supplierId, supplierId, supplierId],
+  )
+  res.json(rows.map((r) => ({ ...r, same_supplier: !!r.same_supplier })))
+})
+
 // ───────────────────────── Una compra ─────────────────────────
 
 router.get('/purchases/:id', (req, res) => {
@@ -389,23 +490,30 @@ router.post('/purchases', (req, res) => {
 router.put('/purchases/:id', (req, res) => {
   const id = parseId(req.params.id, 'esa compra')
   const data = validate(purchaseInput, req.body)
-  const prev = get<{ total: number }>('SELECT total FROM purchases WHERE id = ?', [id])
+  const prev = get<{ total: number; date: string }>('SELECT total, date FROM purchases WHERE id = ?', [id])
   if (!prev) throw notFound('esa compra')
   checkDueDate(data)
+  const newTotal = purchaseTotal(data)
+  const prevPayments = paymentsFor('purchase', id)
+  const paid = paidFor('purchase', id)
+  const fullyPaid = prevPayments.length > 0 && paid >= prev.total - 0.01
   // Si queda "sin pagar" y ya tenía pagos parciales, esos pagos se mantienen:
   // no puede quedar pagado más de lo que vale la compra.
-  if (!data.paid) {
-    const newTotal = round2(data.items.reduce((s, i) => s + i.qty * i.unit_cost, 0) + (data.shipping ?? 0))
-    const paid = paidFor('purchase', id)
-    const wasFullyPaid = paid >= prev.total - 0.01
-    if (!wasFullyPaid && paid > newTotal + 0.01) {
-      throw badRequest(
-        `Ya le pagaste $${paid.toLocaleString('es-AR')} de esta compra y el nuevo total sería $${newTotal.toLocaleString('es-AR')}. ` +
-          'Marcala como pagada, o borrá algún pago desde el detalle de la compra antes de bajar el total.',
-      )
-    }
+  if (!data.paid && !fullyPaid && paid > newTotal + 0.01) {
+    throw badRequest(
+      `Ya le pagaste $${paid.toLocaleString('es-AR')} de esta compra y el nuevo total sería $${newTotal.toLocaleString('es-AR')}. ` +
+        'Marcala como pagada, o borrá algún pago desde el detalle de la compra antes de bajar el total.',
+    )
   }
-  updatePurchase(id, data)
+  // Pagada (antes o ahora) y con pagos previos: se respetan sus fechas y cuentas (ver planPayments).
+  const plan = data.paid && prevPayments.length ? planPayments(id, { date: prev.date, payments: prevPayments, fullyPaid }, data, newTotal) : null
+  tx(() => {
+    updatePurchase(id, data)
+    if (plan) {
+      deletePaymentsByRef('purchase', id)
+      for (const p of plan) addPayment({ ...p, direction: 'out', ref_type: 'purchase', ref_id: id })
+    }
+  })
   res.json(detail(id))
 })
 

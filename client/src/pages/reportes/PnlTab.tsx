@@ -101,7 +101,7 @@ function pnlInsights(d: PnlReport): Insight[] {
             tone: 'good',
             text: (
               <>
-                En el período vendiste <b>{money0(s.sales)}</b> y te quedaron <b>{money0(s.net_result)}</b> limpios: de cada $ 100 que vendiste, ganaste {pesos(Math.round(s.net_margin * 100))}.
+                En el período vendiste <b>{money0(s.sales)}</b> y te quedaron <b>{money0(s.net_result)}</b> limpios: de cada $ 100 que vendiste, ganaste {pesos(Math.round(s.net_margin * 100))}.
               </>
             ),
           }
@@ -119,8 +119,21 @@ function pnlInsights(d: PnlReport): Insight[] {
       tone: 'info',
       text: (
         <>
-          De cada $ 100 que vendiste, <b>{per(s.cogs)}</b> fueron para pagar el vino, <b>{per(s.expenses_fixed)}</b> para gastos fijos, <b>{per(s.expenses_variable)}</b> para gastos variables y{' '}
+          De cada $ 100 que vendiste, <b>{per(s.cogs)}</b> fueron para pagar el vino, <b>{per(s.expenses_fixed)}</b> para gastos fijos, <b>{per(s.expenses_variable)}</b> para gastos variables y{' '}
           <b>{per(s.fees + s.shrinkage)}</b> se fueron en comisiones y mermas.
+        </>
+      ),
+    })
+  }
+  const current = d.months.find((m) => isPartial(m.month))
+  const day = Number(today().slice(8, 10))
+  if (current && day <= 10 && current.net_result < 0 && current.expenses_fixed > 0) {
+    out.push({
+      tone: 'info',
+      text: (
+        <>
+          Tranqui con {monthTitle(current.month).toLowerCase()}: recién empieza, los gastos fijos ({money0(current.expenses_fixed)}) ya están cargados y las ventas recién arrancan. El resultado del
+          mes mejora a medida que vendés.
         </>
       ),
     })
@@ -217,8 +230,8 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
 
   return (
     <>
-      <div ref={scroller} className="vh-scroll overflow-x-auto rounded-2xl border border-line bg-paper">
-        <table className="w-full border-separate border-spacing-0 text-[14px]">
+      <div ref={scroller} className="vh-scroll vh-pnl-scroll overflow-x-auto rounded-2xl border border-line bg-paper">
+        <table className="vh-pnl w-full border-separate border-spacing-0 text-[14px]">
           <caption className="sr-only">Estado de resultados mes a mes</caption>
           <thead>
             <tr>
@@ -305,8 +318,9 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
         </table>
       </div>
       <p className="mt-2 text-[12.5px] text-muted">
-        {full ? 'Montos en pesos, sin centavos.' : 'Montos abreviados ("mil" = miles, "M" = millones); pasá el mouse por un número para verlo completo.'} Los que te restan van sin signo en su columna.
-        {scrollable && ' Deslizá la tabla hacia los costados para ver los demás meses (arranca en los más recientes).'}
+        {full ? 'Montos en pesos, sin centavos.' : 'Montos abreviados ("mil" = miles, "M" = millones).'}
+        {!full && <span className="print:hidden"> Prendé «Montos completos» para verlos enteros.</span>} Los que te restan van sin signo en su columna.
+        {scrollable && <span className="print:hidden"> Deslizá la tabla hacia los costados para ver los demás meses (arranca en los más recientes).</span>}
         {anyPartial && ' * Mes en curso: todavía no terminó, así que sus números van a seguir cambiando.'}
       </p>
     </>
@@ -318,13 +332,15 @@ function PnlTable({ d, full, detail }: { d: PnlReport; full: boolean; detail: bo
 export function PnlTab({ period }: { period: Period }) {
   const q = useReport<PnlReport>('/reports/pnl', period)
   const navigate = useNavigate()
-  const [full, setFull] = useState(false)
+  const [fullPref, setFull] = useState<boolean | null>(null)
   const [detail, setDetail] = useState(false)
 
   return (
     <ReportGuard q={q}>
       {(d) => {
         const s = d.total
+        // Con pocos meses entran los montos completos; con muchos, abreviados (se puede cambiar).
+        const full = fullPref ?? d.months.length <= 4
         const intro = (
           <TabIntro title="Estado de resultados" period={d.period} actions={<ExportButton path="/reports/pnl/export" params={{ from: period.from, to: period.to }} />}>
             Es la cuenta que haría tu contador para saber si el negocio <b>gana o pierde plata</b>: arranca en lo que vendiste y le va restando, en orden, lo que te costó el vino, las comisiones, las
@@ -381,7 +397,7 @@ export function PnlTab({ period }: { period: Period }) {
                 term="ganancia_bruta"
                 tone="mustard"
                 value={<Amount value={s.gross_profit} className={s.gross_profit < 0 ? 'text-bad' : undefined} />}
-                hint={s.sales > 0 ? `Margen bruto ${pct(s.gross_margin)}: de cada $ 100, quedan ${pesos(Math.round(s.gross_margin * 100))} después del vino.` : 'Se calcula cuando hay ventas.'}
+                hint={s.sales > 0 ? `Margen bruto ${pct(s.gross_margin)}: de cada $ 100, quedan ${pesos(Math.round(s.gross_margin * 100))} después del vino.` : 'Se calcula cuando hay ventas.'}
               />
               <StatTile label="Gastos" term="gastos" tone="coral" value={<Amount value={s.expenses} />} hint={`Fijos ${compact(s.expenses_fixed)} · variables ${compact(s.expenses_variable)}`} />
               <StatTile
@@ -489,7 +505,7 @@ export function PnlTab({ period }: { period: Period }) {
                 <ChartCard
                   className="lg:col-span-2"
                   title="¿Cómo vienen tus márgenes?"
-                  subtitle="Margen bruto: lo que queda de cada $ 100 después de pagar el vino. Margen neto: lo que queda después de todo. Si el bruto baja mes a mes, revisá precios."
+                  subtitle="Margen bruto: lo que queda de cada $ 100 después de pagar el vino. Margen neto: lo que queda después de todo. Si el bruto baja mes a mes, revisá precios."
                   legend={
                     <Legend
                       items={[

@@ -56,6 +56,9 @@ const Op = ({ icon: Icon }: { icon: typeof Plus }) => (
 function ProjectionCard({ p }: { p: Projection }) {
   const [open, setOpen] = useState(false)
   const short = p.expected_balance < 0
+  // ¿Cómo quedaría si NO cobrás lo que ya está vencido? (lo vencido es lo más difícil de cobrar)
+  const withoutOverdue = p.expected_balance - p.in_breakdown.overdue
+  const nothing = p.next_30_days_in < 0.005 && p.next_30_days_out < 0.005
   return (
     <Card
       title={
@@ -89,15 +92,26 @@ function ProjectionCard({ p }: { p: Projection }) {
         <EquationBox label="Te quedarían" value={p.expected_balance} tone="result" />
       </div>
       <p className={clsx('mt-3 flex items-start gap-2 text-[14.5px]', short ? 'text-bad' : 'text-ink')}>
-        {short ? <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden /> : <CircleCheck size={18} className="mt-0.5 shrink-0 text-good" aria-hidden />}
+        {short ? (
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden />
+        ) : !nothing && withoutOverdue < 0 ? (
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+        ) : (
+          <CircleCheck size={18} className="mt-0.5 shrink-0 text-good" aria-hidden />
+        )}
         <span>
           {short ? (
             <>
               <b>Ojo: no te alcanzaría.</b> Te faltarían {money(-p.expected_balance, { decimals: 0 })}. Cobrá lo vencido, negociá plazos con proveedores o frená retiros este mes.
             </>
-          ) : p.in_breakdown.overdue > p.cash_now * 0.5 && p.in_breakdown.overdue > 0 ? (
+          ) : nothing ? (
             <>
-              <b>Te alcanza, pero dependés de cobrar lo vencido</b> ({money(p.in_breakdown.overdue, { decimals: 0 })}). Llamá primero a los que deben hace más tiempo.
+              <b>No tenés nada por cobrar ni por pagar</b> en los próximos 30 días: la caja queda como está hoy (sin contar lo que vendas o compres).
+            </>
+          ) : withoutOverdue < 0 ? (
+            <>
+              <b>Te alcanza, pero solo si cobrás lo vencido</b> ({money(p.in_breakdown.overdue, { decimals: 0 })}): sin eso te faltarían {money(-withoutOverdue, { decimals: 0 })}. Llamá primero a
+              los que deben hace más tiempo.
             </>
           ) : (
             <>

@@ -9,6 +9,12 @@ import { money, moneyCompact } from '@/lib/format'
 import { TONE_VAR, type Tone } from '@/lib/nav'
 import { InfoTip } from '@/components/ui'
 
+/**
+ * Para <Button> de solo ícono: el kit le pone px-3 y px-0 a la vez y gana px-3, así que el ícono queda
+ * aplastado (8 px de ancho en un botón de 32). px-0! lo corrige hasta que se arregle en el Button del kit.
+ */
+export const ICON_ONLY = 'px-0!'
+
 /** Evita que un monto o una fecha se corte en dos renglones. */
 export const nb = (s: string) => s.replace(/ /g, ' ')
 

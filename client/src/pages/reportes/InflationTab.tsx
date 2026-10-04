@@ -15,22 +15,41 @@ import { LineTrend } from './charts'
 import { Amount, BlockTitle, Growth, Insights, money0, monthTitle, ReportGuard, TabIntro, useReport, type Insight } from './parts'
 import type { InflationMonthRow, InflationReport } from './types'
 
-const fmtRate = (r: number) => `${num(r, 2)} %`
+const fmtRate = (r: number) => `${num(r, 2)}\u00A0%`
+/** "enero 2026, febrero 2026 y 3 más (marcados con «Falta» en la tabla)" */
+const listMonths = (ms: string[]) => {
+  const names = ms.map((m) => monthTitle(m).toLowerCase())
+  return names.length <= 4 ? names.join(', ') : `${names.slice(0, 3).join(', ')} y ${names.length - 3} más (están marcados con «Falta» en la tabla)`
+}
 
-/** Crecimiento real "resumen": últimos 3 meses completos vs. primeros 3 (si hay 6), o último mes vs. el anterior. */
+/**
+ * Crecimiento real "resumen", sin que lo engañe la estacionalidad (diciembre siempre vende más):
+ * 1) si hay datos, el último mes completo contra el mismo mes del año anterior;
+ * 2) si no, los últimos 3 meses completos contra los 3 anteriores;
+ * 3) si no, el último mes completo contra el anterior.
+ */
 function realSummary(d: InflationReport): { value: number | null; label: string } {
   const complete = d.months.filter((m) => !m.partial)
+  const last = complete.at(-1)
+  if (last) {
+    const [y, mm] = last.month.split('-')
+    const yearAgo = d.months.find((m) => m.month === `${Number(y) - 1}-${mm}`)
+    if (yearAgo && yearAgo.sales_today_pesos > 0) {
+      return { value: last.sales_today_pesos / yearAgo.sales_today_pesos - 1, label: `${last.label} vs. ${yearAgo.label} · mismo mes del año anterior` }
+    }
+  }
   if (complete.length >= 6) {
-    const avg = (xs: InflationMonthRow[]) => xs.reduce((s, m) => s + m.sales_today_pesos, 0) / xs.length
-    const first = avg(complete.slice(0, 3))
-    const last = avg(complete.slice(-3))
-    return { value: first > 0 ? last / first - 1 : null, label: `${complete.at(-3)!.label}–${complete.at(-1)!.label} vs. ${complete[0].label}–${complete[2].label}` }
+    const sum = (xs: InflationMonthRow[]) => xs.reduce((s, m) => s + m.sales_today_pesos, 0)
+    const recent = complete.slice(-3)
+    const before = complete.slice(-6, -3)
+    const b = sum(before)
+    if (b <= 0) return { value: null, label: 'Hace falta tener ventas para comparar.' }
+    return { value: sum(recent) / b - 1, label: `${recent[0].label}–${recent[2].label} vs. ${before[0].label}–${before[2].label} · últimos 3 meses vs. los 3 anteriores` }
   }
   if (complete.length >= 2) {
-    const last = complete.at(-1)!
-    return { value: last.real_growth_vs_prev, label: `${last.label} vs. ${complete.at(-2)!.label}` }
+    return { value: last!.real_growth_vs_prev, label: `${last!.label} vs. ${complete.at(-2)!.label}` }
   }
-  return { value: null, label: 'Hace falta más de un mes completo' }
+  return { value: null, label: 'Hace falta más de un mes completo para comparar.' }
 }
 
 function inflationInsights(d: InflationReport): Insight[] {
@@ -112,6 +131,8 @@ function RateEditor({
           if (e.key === 'Escape' && dirty) {
             e.preventDefault()
             e.stopPropagation()
+            // Primero se suelta el campo (al soltarlo confirma lo escrito) y después se descarta el cambio.
+            ;(e.target as HTMLInputElement).blur()
             setDraft(undefined)
           }
         }}
@@ -123,16 +144,17 @@ function RateEditor({
               size="sm"
               variant="soft"
               icon={Check}
+              className="!px-0"
               loading={saving}
               disabled={!canSave}
               onClick={() => canSave && onSave(draft!)}
               title="Guardar (Enter)"
               aria-label={`Guardar inflación de ${monthTitle(row.month)}`}
             />
-            <Button size="sm" variant="ghost" icon={Undo2} onClick={() => setDraft(undefined)} title="Deshacer (Esc)" aria-label="Deshacer el cambio" />
+            <Button size="sm" variant="ghost" icon={Undo2} className="!px-0" onClick={() => setDraft(undefined)} title="Deshacer (Esc)" aria-label="Deshacer el cambio" />
           </>
         ) : row.rate != null ? (
-          <Button size="sm" variant="ghost" icon={Trash2} onClick={onDelete} title="Borrar el dato de este mes" aria-label={`Borrar inflación de ${monthTitle(row.month)}`} />
+          <Button size="sm" variant="ghost" icon={Trash2} className="!px-0" onClick={onDelete} title="Borrar el dato de este mes" aria-label={`Borrar inflación de ${monthTitle(row.month)}`} />
         ) : null}
       </span>
     </div>
@@ -159,7 +181,7 @@ export function InflationTab({ period }: { period: Period }) {
       {(d) => {
         const intro = (
           <TabIntro title="Inflación" period={d.period} actions={<ExportButton path="/reports/inflation/export" params={{ from: period.from, to: period.to }} />}>
-            Con inflación, comparar pesos de meses distintos engaña: si en marzo vendiste $ 1.000.000 y en abril $ 1.050.000 pero los precios subieron 4 %, en realidad creciste apenas 1 %. Acá
+            Con inflación, comparar pesos de meses distintos engaña: si en marzo vendiste $ 1.000.000 y en abril $ 1.050.000 pero los precios subieron 4 %, en realidad creciste apenas 1 %. Acá
             llevamos las ventas de cada mes a <b>pesos de hoy</b> para que veas si vendés más de verdad <InfoTip term="inflacion" />.
           </TabIntro>
         )
@@ -232,8 +254,8 @@ export function InflationTab({ period }: { period: Period }) {
                 <div className="min-w-0">
                   {missingPast.length > 0 && (
                     <p>
-                      <b>Falta cargar la inflación de {missingPast.length === 1 ? 'un mes' : `${missingPast.length} meses`}:</b> {missingPast.map((m) => monthTitle(m).toLowerCase()).join(', ')}.
-                      Mientras tanto los tomamos como 0 %, así que los montos en pesos de hoy quedan un poco bajos.
+                      <b>Falta cargar la inflación de {missingPast.length === 1 ? 'un mes' : `${missingPast.length} meses`}:</b> {listMonths(missingPast)}. Mientras tanto los tomamos como 0 %, así que
+                      los montos en pesos de hoy quedan un poco bajos.
                     </p>
                   )}
                   {missingCurrent.length > 0 && (
@@ -263,7 +285,7 @@ export function InflationTab({ period }: { period: Period }) {
                     '—'
                   ) : (
                     <span
-                      className={real.value < -0.004 ? 'text-bad' : real.value > 0.004 ? 'text-good' : undefined}
+                      className={real.value <= -0.005 ? 'text-bad' : real.value >= 0.005 ? 'text-good' : undefined}
                     >{`${real.value > 0 ? '+' : real.value < 0 ? '−' : ''}${pct(Math.abs(real.value), 1)}`}</span>
                   )
                 }
@@ -314,7 +336,7 @@ export function InflationTab({ period }: { period: Period }) {
               <DataTable rows={d.months} columns={cols} rowKey={(m) => m.month} searchable={false} pageSize={60} dense />
               <div className="mt-3 rounded-2xl bg-cream-deep/70 px-4 py-3 text-[13.5px] leading-relaxed text-ink-soft">
                 <p className="font-bold text-ink">¿Cómo se calcula?</p>
-                <p className="mt-1">{d.explanation}</p>
+                <p className="mt-1">{d.explanation.replace(/(\d) %/g, '$1\u00A0%')}</p>
                 <p className="mt-1">
                   «En pesos» compara los pesos de cada mes con los del mes anterior, tal cual. «Real» saca la inflación: si vendiste 10 % más en pesos con 10 % de inflación, el real es 0 %.
                 </p>

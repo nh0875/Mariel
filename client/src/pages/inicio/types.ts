@@ -59,6 +59,8 @@ export interface DashboardResponse {
   period: { from: string; to: string }
   today: string
   period_label: string
+  /** "en octubre 2026", "en el año 2026", "del 1 de agosto al 31 de octubre", "desde el 1 de septiembre de 2025". */
+  period_phrase: string
   summary: PeriodSummary
   previous: PeriodSummary
   same_days_previous: PeriodSummary | null
@@ -68,15 +70,22 @@ export interface DashboardResponse {
     detail: string
     current: PeriodSummary
     previous: PeriodSummary
+    /** El período anterior está cargado a medias (los registros empiezan después): no se muestran variaciones. */
+    partial: boolean
+    data_since: string | null
+    /** Lo cargado con fecha posterior a hoy (suma en el período, no en la comparación). */
+    after_today: { sales: number; expenses: number; net_result: number } | null
   }
   series: MonthlyPoint[]
-  cash: { total: number; accounts: AccountWithBalance[] }
+  /** scheduled: pagos/cobros ya cargados con fecha posterior a hoy (el saldo ya los descuenta). */
+  cash: { total: number; accounts: AccountWithBalance[]; scheduled: { out: number; in: number } }
   stock: { value: number; bottles: number; products: number }
   receivables: { total: number; count: number; overdue: number }
   payables: { total: number; count: number; overdue: number; purchases: number; expenses: number }
   low_stock: { id: number; name: string; stock: number; min_stock: number; winery: string | null }[]
   top_products: ProductSales[]
   by_channel: ChannelSales[]
+  goal_month: string
   goal: DashboardGoal | null
   alerts: DashboardAlert[]
   insights: string[]

@@ -48,7 +48,7 @@ export default function ConfiguracionPage() {
           Acá le contás al sistema <b>cómo es tu negocio</b>, para que todas las cuentas usen tus números reales. Cada sección tiene su propio botón <b>Guardar</b>: cambiás algo, guardás y listo.
         </p>
         <p>
-          <b>Ejemplo:</b> si Mercado Pago te cobra 6,29 % y lo cargás en «Medios de pago», cada venta de $ 20.000 por QR descuenta sola $ 1.258 de comisión. Sin eso, el sistema creería que ganaste $ 1.258
+          <b>Ejemplo:</b> si Mercado Pago te cobra 6,29 % y lo cargás en «Medios de pago», cada venta de $ 20.000 por QR descuenta sola $ 1.258 de comisión. Sin eso, el sistema creería que ganaste $ 1.258
           más de lo que ganaste.
         </p>
         <ul>

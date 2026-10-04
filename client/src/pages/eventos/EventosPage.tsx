@@ -21,15 +21,15 @@ const plural = (n: number, one: string, many: string) => `${int(n)} ${n === 1 ? 
 
 /** "De 4 eventos, 2 dejaron plata y 2 perdieron. En total dejó $ X: por cada $ 100 que pusiste… volvieron $ 130." */
 function verdict(n: number, winners: number, losers: number, someEmpty: boolean, result: number, roi: number | null): string {
-  const of = someEmpty ? `De los ${plural(n, 'evento', 'eventos')} con datos` : n === 1 ? 'Del único evento' : `De ${plural(n, 'evento', 'eventos')}`
+  const back = roi != null && result > 0 ? `: por cada $\u00a0100 que pusiste en gastos y botellas, volvieron $\u00a0${int(Math.round(100 + roi * 100))}` : ''
+  // Un solo evento: "Hubo un solo evento y dejó $ X: por cada $ 100…"
+  if (n === 1) return `Hubo un solo evento${someEmpty ? ' con datos' : ''} y ${resultPhrase(result).toLowerCase()}${back}.`
+  const of = someEmpty ? `De los ${plural(n, 'evento', 'eventos')} con datos` : `De ${plural(n, 'evento', 'eventos')}`
   let how: string
-  if (n === 1) how = winners ? 'dejó plata' : losers ? 'perdió plata' : 'salió hecho'
-  else if (winners === n) how = 'todos dejaron plata'
+  if (winners === n) how = 'todos dejaron plata'
   else if (losers === n) how = 'ninguno dejó plata'
   else how = `${int(winners)} ${winners === 1 ? 'dejó' : 'dejaron'} plata${losers ? ` y ${int(losers)} ${losers === 1 ? 'perdió' : 'perdieron'}` : ''}`
-  const total = `En total ${resultPhrase(result).toLowerCase()}`
-  const back = roi != null && result > 0 ? `: por cada $\u00a0100 que pusiste en gastos y botellas, volvieron $\u00a0${int(Math.round(100 + roi * 100))}` : ''
-  return `${of}, ${how}. ${total}${back}.`
+  return `${of}, ${how}. En total ${resultPhrase(result).toLowerCase()}${back}.`
 }
 
 export default function EventosPage() {
@@ -93,7 +93,7 @@ export default function EventosPage() {
         description="Degustaciones, ferias, catas y cenas: cuánto te costó cada una y cuánto te dejó."
         actions={
           <>
-            <ExportButton path="/events/export" params={{ from: period.from, to: period.to }} />
+            <ExportButton path="/events/export" params={{ from: period.from, to: period.to }} disabled={!events.length} title={events.length ? undefined : 'Todavía no hay eventos para exportar'} />
             <Button variant="primary" icon={Plus} onClick={openForm}>
               Nuevo evento
             </Button>
@@ -107,9 +107,9 @@ export default function EventosPage() {
           <b>Acá ves si volvió.</b>
         </p>
         <p>
-          <b>Ejemplo:</b> una degustación de 25 personas a $ 8.000 la entrada ($ 200.000) donde vendiste 18 botellas por $ 350.000 (que te costaron $ 180.000). Gastaste $ 120.000
-          en picada y copas y abriste 6 botellas que te costaron $ 54.000. Resultado: 200.000 + 350.000 − 180.000 − 120.000 − 54.000 = <b>$ 196.000</b>, o sea{' '}
-          <b>$ 7.840 por persona</b>.
+          <b>Ejemplo:</b> una degustación de 25 personas a $ 8.000 la entrada ($ 200.000) donde vendiste 18 botellas por $ 350.000 (que te costaron $ 180.000). Gastaste $ 120.000
+          en picada y copas y abriste 6 botellas que te costaron $ 54.000. Resultado: 200.000 + 350.000 − 180.000 − 120.000 − 54.000 = <b>$ 196.000</b>, o sea{' '}
+          <b>$ 7.840 por persona</b>.
         </p>
         <ul>
           <li>
@@ -172,7 +172,8 @@ export default function EventosPage() {
                 icon={CalendarHeart}
                 title="No hubo eventos en este período"
                 action={
-                  <Button onClick={() => setPreset(widen)}>{widen === 'todo' ? 'Ver todos los eventos' : 'Ver los últimos 12 meses'}</Button>
+                  // Solo tiene sentido ampliar el período si hay algún evento ya hecho para ver.
+                  lastDone ? <Button onClick={() => setPreset(widen)}>{widen === 'todo' ? 'Ver todos los eventos' : 'Ver los últimos 12 meses'}</Button> : undefined
                 }
               >
                 {lastDone ? (
@@ -181,7 +182,7 @@ export default function EventosPage() {
                     para compararlo con los demás.
                   </>
                 ) : (
-                  'Todavía no hiciste ningún evento: los que cargaste son a futuro (están arriba, en «Próximos»).'
+                  'Todavía no pasó ningún evento: los que cargaste son de hoy o a futuro (están arriba, en «Próximos»). Cuando pasen, acá vas a ver cuánto dejó cada uno.'
                 )}
               </EmptyState>
             </Card>

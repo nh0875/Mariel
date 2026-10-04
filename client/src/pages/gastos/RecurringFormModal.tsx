@@ -1,6 +1,6 @@
 // Formulario de "gasto fijo" (plantilla): lo que se repite todos los meses (alquiler, sueldos, abonos).
 // Se carga una vez; cada mes se genera el gasto real con un clic.
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Repeat, Trash2, Waves } from 'lucide-react'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
 import { api } from '@/lib/api'
@@ -72,6 +72,8 @@ export function RecurringFormModal({ open, onClose, template }: { open: boolean;
   const hasErrors = Object.values(errors).some(Boolean)
   const err = (k: keyof typeof errors) => (showErrors ? errors[k] : undefined)
 
+  // Candado para no mandar dos veces el mismo formulario (dos Enter seguidos llegan antes de que se vuelva a dibujar).
+  const submitting = useRef(false)
   const save = useApiMutation(
     (body: Record<string, unknown>) => (isEdit ? api.put<RecurringRow>(`/recurring-expenses/${template!.id}`, body) : api.post<RecurringRow>('/recurring-expenses', body)),
     {
@@ -89,20 +91,26 @@ export function RecurringFormModal({ open, onClose, template }: { open: boolean;
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
+    // Enter dos veces seguidas no tiene que crear el gasto fijo dos veces.
+    if (save.isPending || submitting.current) return
     if (hasErrors) {
       setShowErrors(true)
       return
     }
-    save.mutate({
-      description: f.description.trim(),
-      category: f.category,
-      amount: f.amount,
-      nature: f.nature,
-      day_of_month: f.day,
-      account_id: f.accountId,
-      auto_paid: f.autoPaid,
-      active: f.active,
-    })
+    submitting.current = true
+    save.mutate(
+      {
+        description: f.description.trim(),
+        category: f.category,
+        amount: f.amount,
+        nature: f.nature,
+        day_of_month: f.day,
+        account_id: f.accountId,
+        auto_paid: f.autoPaid,
+        active: f.active,
+      },
+      { onSettled: () => (submitting.current = false) },
+    )
   }
 
   const askDelete = async () => {

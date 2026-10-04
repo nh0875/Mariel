@@ -197,6 +197,7 @@ router.post('/accounts/:id/reconcile', (req, res) => {
     throw badRequest('Contanos cuánta plata contaste (si no hay nada, poné 0).')
   }
   const data = validate(reconcileInput, { date: body.date ?? today(), counted: body.counted })
+  if (data.date > today()) throw badRequest('El arqueo es de plata que ya contaste: la fecha no puede ser futura. Poné la de hoy (o la del día en que contaste).')
   const system = accountBalances(data.date).find((a) => a.id === id)?.balance ?? 0
   const difference = round2(data.counted - system)
   if (Math.abs(difference) < 0.005) {
@@ -356,6 +357,22 @@ const MOVEMENTS_SQL = `
   LEFT JOIN accounts oa ON oa.id = t.account_id
 `
 
+/**
+ * ¿Las transferencias suman en "entró/salió"? Mirando una cuenta sola, sí (para esa cuenta es plata que entra o sale).
+ * Mirando todas juntas, no: se cancelan (salvo que se pida ver justamente las transferencias).
+ */
+function transfersCount(f: MovementsFilter): boolean {
+  return !!f.account_id || (!!f.ref_types?.length && f.ref_types.every((t) => t === 'transfer'))
+}
+
+/** "Solo lo que salió · Retiro de socios / dueños" para el subtítulo del Excel (vacío si no hay filtros). */
+function filterLabel(f: MovementsFilter): string {
+  const parts: string[] = []
+  if (f.direction) parts.push(f.direction === 'in' ? 'Solo lo que entró' : 'Solo lo que salió')
+  if (f.ref_types?.length) parts.push(f.ref_types.map((t) => PAYMENT_REF_LABELS[t] ?? t).join(', '))
+  return parts.join(' · ')
+}
+
 /** Saldo de una cuenta (o de todas) al final de un día. */
 function balanceAt(asOf: string, accountId?: number): number {
   if (!accountId) return totalCash(asOf)
@@ -403,7 +420,7 @@ function listMovements(f: MovementsFilter): MovementsResult {
   const rows = withBalance
     .filter((m) => (!f.direction || m.direction === f.direction) && (!f.ref_types || f.ref_types.includes(m.ref_type)))
     .reverse()
-  const counted = f.account_id ? rows : rows.filter((m) => m.ref_type !== 'transfer')
+  const counted = transfersCount(f) ? rows : rows.filter((m) => m.ref_type !== 'transfer')
   const total_in = round2(counted.filter((m) => m.direction === 'in').reduce((s, m) => s + m.amount, 0))
   const total_out = round2(counted.filter((m) => m.direction === 'out').reduce((s, m) => s + m.amount, 0))
   const transfers = round2(withBalance.filter((m) => m.ref_type === 'transfer' && m.direction === 'out').reduce((s, m) => s + m.amount, 0))
@@ -474,6 +491,10 @@ router.get('/movements/export', async (req, res) => {
   const data = listMovements(f)
   const account = f.account_id ? readAccount(f.account_id) : undefined
   const rows = [...data.rows].reverse() // en Excel, del más viejo al más nuevo (como un resumen de banco)
+  // Igual que en la pantalla: mirando todas las cuentas juntas, las transferencias no son "entró" ni "salió"
+  // (van en su propia columna y suman cero), así el TOTAL del Excel coincide con lo que ves en Caja.
+  const withTransfers = transfersCount(f)
+  const isMove = (m: MovementRow) => withTransfers || m.ref_type !== 'transfer'
   const cols: ExcelColumn<MovementRow>[] = [
     { header: 'Fecha', key: 'date', type: 'date' },
     { header: 'Cuenta', key: 'account_name', width: 20 },
@@ -481,10 +502,14 @@ router.get('/movements/export', async (req, res) => {
     { header: 'Detalle', key: 'document', width: 38 },
     { header: 'Cliente / proveedor', key: 'counterpart', value: (m) => m.counterpart ?? '', width: 26 },
     { header: 'Nota', key: 'description', value: (m) => (m.description && m.description !== m.document ? m.description : ''), width: 30 },
-    { header: 'Entró', key: 'in', value: (m) => (m.direction === 'in' ? m.amount : null), type: 'money' },
-    { header: 'Salió', key: 'out', value: (m) => (m.direction === 'out' ? m.amount : null), type: 'money' },
+    { header: 'Entró', key: 'in', value: (m) => (m.direction === 'in' && isMove(m) ? m.amount : null), type: 'money' },
+    { header: 'Salió', key: 'out', value: (m) => (m.direction === 'out' && isMove(m) ? m.amount : null), type: 'money' },
   ]
+  if (!withTransfers && rows.some((m) => m.ref_type === 'transfer')) {
+    cols.push({ header: 'Entre tus cuentas', key: 'transfer', value: (m) => (m.ref_type === 'transfer' ? m.signed_amount : null), type: 'money' })
+  }
   if (f.account_id) cols.push({ header: 'Saldo de la cuenta', key: 'running_balance', type: 'money', total: false })
+  const filters = filterLabel(f)
 
   // Hoja 2: saldo de cada cuenta al empezar y terminar el período.
   const startBal = accountBalances(addDays(f.from, -1))
@@ -508,14 +533,17 @@ router.get('/movements/export', async (req, res) => {
     {
       name: 'Movimientos',
       title: account ? `Movimientos de ${account.name}` : 'Movimientos de caja',
-      subtitle: periodSubtitle(f.from, f.to),
+      subtitle: `${periodSubtitle(f.from, f.to)}${filters ? ` · ${filters}` : ''}`,
       columns: cols,
       rows,
       notes: [
         'Cada renglón es plata que entró o salió de una cuenta (efectivo, banco, billetera virtual), ordenado del más viejo al más nuevo.',
         'Cobro de venta / Pago de compra / Pago de gasto: vienen de lo que cargaste en Ventas, Compras y Gastos. Comisión de cobro: lo que se queda Mercado Pago o la tarjeta.',
         'Aportes y retiros: plata que ponen o sacan los dueños. No es venta ni gasto, por eso no cambia el resultado del negocio.',
-        'Transferencias entre cuentas: aparecen dos veces (sale de una y entra en otra). Si sumás todas las cuentas, se cancelan.',
+        withTransfers
+          ? 'Transferencias entre cuentas: para cada cuenta sí es plata que entra o sale, por eso acá suman en "Entró" y "Salió".'
+          : 'Transferencias entre cuentas: aparecen dos veces (sale de una y entra en otra) en la columna "Entre tus cuentas", que suma cero. No cuentan como "Entró" ni "Salió" porque la plata sigue siendo tuya.',
+        ...(filters ? [`Ojo: esta planilla está filtrada (${filters}). Los saldos de abajo y la hoja "Saldos por cuenta" son sin filtros.`] : []),
         f.account_id
           ? `Saldo de la cuenta = saldo después de cada movimiento. Al empezar el período había ${moneyText(data.summary.opening_balance)} y al terminar ${moneyText(data.summary.closing_balance)}.`
           : `Plata total en todas las cuentas: ${moneyText(data.summary.opening_balance)} al empezar el período y ${moneyText(data.summary.closing_balance)} al terminar.`,

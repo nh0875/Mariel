@@ -85,7 +85,10 @@ export interface ExpensesSummary {
   vs_sales: number | null
   by_category: {
     category: string
-    nature: string
+    /** 'mixto' = en el período hubo gastos fijos y variables con esta categoría. */
+    nature: 'fijo' | 'variable' | 'mixto'
+    fixed: number
+    variable: number
     amount: number
     count: number
     pct: number
@@ -122,6 +125,9 @@ export const NATURE_FILTER_OPTIONS: { value: '' | ExpenseNature; label: string }
 ]
 
 export const NATURE_SHORT: Record<ExpenseNature, string> = { fijo: 'Fijo', variable: 'Variable' }
+/** Para categorías: pueden ser "Mixto" si tienen gastos fijos y variables. */
+export const natureShort = (n: string) => (n === 'fijo' ? 'Fijo' : n === 'variable' ? 'Variable' : 'Mixto')
+export const natureTone = (n: string) => (n === 'fijo' ? 'coral' : n === 'variable' ? 'mustard' : 'sky') as 'coral' | 'mustard' | 'sky'
 export const NATURE_TERM: Record<ExpenseNature, GlossaryKey> = { fijo: 'gastos_fijos', variable: 'gastos_variables' }
 
 /**

@@ -138,7 +138,17 @@ export default function ProveedoresPage() {
       key: 'total_bought',
       header: 'Total comprado',
       align: 'right',
-      cell: (s) => (s.total_bought > 0 ? <span className="font-semibold">{money(s.total_bought, { decimals: 0 })}</span> : <span className="text-muted">—</span>),
+      cell: (s) =>
+        s.total_bought > 0 ? (
+          <span className="font-semibold">{money(s.total_bought, { decimals: 0 })}</span>
+        ) : s.expenses_total > 0 ? (
+          // Proveedores de servicios: no les comprás vino, pero sí les pagás gastos. Lo mostramos aparte (no suma al total de vino).
+          <span className="text-[12.5px] whitespace-nowrap text-muted" title="Gastos cargados con este proveedor (no es compra de vino)">
+            {money(s.expenses_total, { decimals: 0 })} en gastos
+          </span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
       hideBelow: 'sm',
       footer: money(totals.bought, { decimals: 0 }),
     },

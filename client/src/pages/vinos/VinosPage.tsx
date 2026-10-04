@@ -337,6 +337,12 @@ export default function VinosPage() {
                   </EmptyState>
                 }
               />
+              {!showInactive && kpi.inactiveWithStock.length > 0 && (
+                <p className="mt-2.5 text-[13px] text-muted">
+                  El total de la tabla no incluye {kpi.inactiveWithStock.length === 1 ? '1 vino desactivado que todavía tiene' : `${kpi.inactiveWithStock.length} vinos desactivados que todavía tienen`}{' '}
+                  {int(kpi.inactiveWithStock.reduce((s, p) => s + p.stock, 0))} botellas (los números de arriba sí). Tildá «Ver desactivados» para verlos.
+                </p>
+              )}
             </div>
           </Card>
         </>

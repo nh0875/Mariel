@@ -98,7 +98,7 @@ export const FAQ: FaqItem[] = [
             Poné el flete (y otros costos de esa compra) en el campo de <b>flete / envío</b>. Indicá si ya la pagaste o si queda por pagar.
           </li>
         </Steps>
-        El sistema reparte el flete entre las botellas, proporcional al precio de cada vino. Ejemplo: $ 40.000 de vino + $ 4.000 de flete → cada botella cuesta 10 % más que en la factura.
+        El sistema reparte el flete entre las botellas, proporcional al precio de cada vino. Ejemplo: $ 40.000 de vino + $ 4.000 de flete → cada botella cuesta 10 % más que en la factura.
         <Why>
           Así el costo de cada botella es el real («puesto en tu depósito») y el margen no te miente. Ver <L to="/ayuda#flete_prorrateado">flete repartido en el costo</L>.
         </Why>
@@ -272,7 +272,7 @@ export const FAQ: FaqItem[] = [
         En <L to="/calculadora">Calculadora</L> elegís qué querés saber: <b>a cuánto vender</b> un vino (ponés el costo o elegís el vino, y el margen que querés), <b>cuánto te deja</b> un precio que
         ya tenés, o <b>cuánto tenés que vender</b> por mes para no perder plata (punto de equilibrio). Usa las comisiones, el IVA y los Ingresos Brutos que cargaste en Configuración.
         <Why>
-          El error más común es sumarle un 40 % al costo y creer que ganás 40 %: ganás 28,6 %. La calculadora hace la cuenta bien. Ver <L to="/ayuda#margen_vs_markup">margen vs. markup</L>.
+          El error más común es sumarle un 40 % al costo y creer que ganás 40 %: ganás 28,6 %. La calculadora hace la cuenta bien. Ver <L to="/ayuda#margen_vs_markup">margen vs. markup</L>.
         </Why>
       </>
     ),

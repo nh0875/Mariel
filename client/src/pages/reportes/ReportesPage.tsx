@@ -1,7 +1,7 @@
 // Reportes: el análisis a fondo de "¿Cómo venimos?".
 // Seis pestañas (resultados, vinos, canales y cobros, clientes, gastos, inflación), cada una con su
 // explicación, su Excel y frases que traducen los números. Todo sale del mismo motor que Inicio y Metas.
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { CalendarClock, ChartColumn, Landmark, Printer, Receipt, TrendingUp, Users, Wine } from 'lucide-react'
@@ -28,6 +28,16 @@ const TABS: { key: TabKey; label: string; icon: typeof Wine }[] = [
 /** Pestañas donde lo importante es ver la evolución mes a mes. */
 const MONTHLY_TABS: TabKey[] = ['resultados', 'gastos', 'inflacion']
 
+const PRINT_CSS = `
+@page { size: A4 landscape; margin: 10mm; }
+div:has(> aside.vh-no-print) { display: block !important; }
+main { max-width: none !important; padding: 0 !important; }
+button[aria-label^="¿Qué es"] { display: none !important; }
+.vh-pnl-scroll { overflow: visible !important; }
+.vh-pnl th, .vh-pnl td { padding-left: 4px !important; padding-right: 4px !important; font-size: 10.5px !important; position: static !important; }
+.vh-pnl th[scope='row'] { min-width: 150px !important; }
+`
+
 const QUICK: { preset: PeriodPreset; label: string }[] = [
   { preset: 'ultimos_12_meses', label: 'Últimos 12 meses' },
   { preset: 'este_anio', label: 'Este año' },
@@ -47,8 +57,16 @@ export default function ReportesPage() {
     },
     [params, setParams],
   )
+  // En celulares las pestañas se deslizan: que la elegida siempre quede a la vista.
+  const tabsBox = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const active = tabsBox.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+    const list = active?.parentElement
+    if (active && list && list.scrollWidth > list.clientWidth) {
+      list.scrollLeft = Math.max(0, list.scrollLeft + active.getBoundingClientRect().left - list.getBoundingClientRect().left - 24)
+    }
+  }, [tab])
   const singleMonth = period.from.slice(0, 7) === period.to.slice(0, 7)
-  const tabLabel = TABS.find((t) => t.key === tab)!.label
 
   return (
     <>
@@ -71,7 +89,7 @@ export default function ReportesPage() {
         </p>
         <ul>
           <li>
-            <b>Estado de resultados:</b> ¿gano o pierdo plata? Ejemplo: si en un mes vendiste $ 4.000.000, el vino te costó $ 2.300.000 y los gastos fueron $ 1.200.000, te quedaron $ 500.000 (un
+            <b>Estado de resultados:</b> ¿gano o pierdo plata? Ejemplo: si en un mes vendiste $ 4.000.000, el vino te costó $ 2.300.000 y los gastos fueron $ 1.200.000, te quedaron $ 500.000 (un
             margen neto del 12,5 %).
           </li>
           <li>
@@ -120,12 +138,17 @@ export default function ReportesPage() {
         </p>
       )}
 
+      {/* Impresión prolija (solo mientras esta pantalla está abierta): hoja apaisada, sin la columna del menú
+          (el layout deja el contenido en la columna de 264 px si el menú se oculta), tablas sin barra de scroll y sin los «?». */}
+      <style media="print">{PRINT_CSS}</style>
       {/* Solo al imprimir: qué reporte y de qué período es. */}
       <p className="hidden text-[14px] text-ink-soft print:mt-2 print:block">
-        <b className="text-ink">{tabLabel}</b> · {label} ({date(period.from)} al {date(period.to)})
+        <b className="text-ink">Período:</b> {label} ({date(period.from)} al {date(period.to)})
       </p>
 
-      <Tabs<TabKey> className="mt-5 mb-6" value={tab} onChange={setTab} items={TABS} />
+      <div ref={tabsBox}>
+        <Tabs<TabKey> className="mt-5 mb-6" value={tab} onChange={setTab} items={TABS} />
+      </div>
 
       {tab === 'resultados' && <PnlTab period={period} />}
       {tab === 'vinos' && <ProductsTab period={period} />}

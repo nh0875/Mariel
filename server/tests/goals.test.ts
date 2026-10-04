@@ -234,9 +234,50 @@ describe('GET /goals/export', () => {
     await wb.xlsx.load(await res.arrayBuffer())
     const ws = wb.worksheets[0]
     expect(ws.name).toBe('Metas 2025')
-    expect(ws.getCell('A6').value).toBe('febrero 2025')
-    expect(ws.getCell('B6').value).toBe(10000)
-    expect(ws.getCell('C6').value).toBe(8000)
-    expect(ws.getCell('D6').value).toBeCloseTo(0.8, 6)
+    expect(ws.getCell('A6').value).toBe('Febrero 2025')
+    expect(ws.getCell('B6').value).toBe('Terminado')
+    expect(ws.getCell('C6').value).toBe(10000)
+    expect(ws.getCell('D6').value).toBe(8000)
+    expect(ws.getCell('E6').value).toBeCloseTo(0.8, 6)
+    expect(String(ws.getCell('A2').value)).toContain('Período: 01/01/2025 al 31/12/2025')
+  })
+
+  it('los meses que todavía no empezaron van vacíos (no "0 %" de avance)', async () => {
+    const y = Number(today().slice(0, 4)) + 1
+    await t.put(`/goals/${y}-01`, { sales_target: 10000, expense_budget: 5000 })
+    const res = await t.raw(`/goals/export?year=${y}`)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(await res.arrayBuffer())
+    const ws = wb.worksheets[0]
+    expect(ws.getCell('B5').value).toBe('Todavía no empezó')
+    expect(ws.getCell('C5').value).toBe(10000)
+    expect(ws.getCell('D5').value).toBeNull() // ventas reales
+    expect(ws.getCell('E5').value).toBeNull() // avance
+    expect(ws.getCell('J5').value).toBeNull() // uso del presupuesto
+  })
+})
+
+describe('Sugerencia: la cuenta se puede verificar con la calculadora', () => {
+  it('el punto de equilibrio es exactamente gastos fijos ÷ el margen que se muestra', async () => {
+    const p = wine(1000, 1000)
+    for (const m of ['2025-03', '2025-04', '2025-05']) {
+      sale(`${m}-10`, p, 10, 3000) // ventas 30.000, vino 10.000
+      expense(`${m}-05`, 9000, 'fijo')
+      expense(`${m}-06`, 6300, 'variable')
+    }
+    // Margen de contribución real 0,45666… → se muestra y se usa 0,457.
+    const r = await t.get('/goals/suggest?month=2025-06')
+    expect(r.body.contribution_margin).toBe(0.457)
+    expect(r.body.break_even_sales).toBe(Math.round((9000 / 0.457) * 100) / 100)
+    const text = r.body.explanation.replace(/\u00a0/g, ' ')
+    expect(text).toContain('$ 9.000 ÷ 0,457 = $ 19.694')
+  })
+
+  it('el año pasado + inflación se expresa en pesos del mes de la meta (no "de hoy")', async () => {
+    const p = wine(1000, 1000)
+    sale('2024-06-15', p, 15, 2000)
+    const r = await t.get('/goals/suggest?month=2025-06')
+    expect(r.body.explanation).toContain('en pesos de junio 2025')
+    expect(r.body.explanation).not.toContain('te asegura')
   })
 })

@@ -142,15 +142,15 @@ export function TrendChart({
   area?: boolean
   zeroLine?: boolean
 }) {
-  const common = (
-    <>
-      <CartesianGrid vertical={false} stroke={GRID} />
-      <XAxis dataKey={xKey} tickLine={false} axisLine={{ stroke: AXIS.stroke }} tick={{ fontSize: AXIS.fontSize, fill: AXIS.fill }} interval="preserveStartEnd" minTickGap={16} />
-      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: AXIS.fontSize, fill: AXIS.fill }} tickFormatter={(v) => fmtAxis(v, format)} width={80} />
-      <Tooltip content={<TooltipBox format={format} />} cursor={{ stroke: '#c3b3a2', strokeWidth: 1 }} />
-      {zeroLine && <ReferenceLine y={0} stroke="#b9a693" />}
-    </>
-  )
+  // Ojo: Recharts 2 (con React 19) no reconoce componentes envueltos en un Fragment,
+  // por eso van como array con keys.
+  const common = [
+    <CartesianGrid key="grid" vertical={false} stroke={GRID} />,
+    <XAxis key="x" dataKey={xKey} tickLine={false} axisLine={{ stroke: AXIS.stroke }} tick={{ fontSize: AXIS.fontSize, fill: AXIS.fill }} interval="preserveStartEnd" minTickGap={16} />,
+    <YAxis key="y" tickLine={false} axisLine={false} tick={{ fontSize: AXIS.fontSize, fill: AXIS.fill }} tickFormatter={(v) => fmtAxis(v, format)} width={80} />,
+    <Tooltip key="tip" content={<TooltipBox format={format} />} cursor={{ stroke: '#c3b3a2', strokeWidth: 1 }} />,
+    ...(zeroLine ? [<ReferenceLine key="zero" y={0} stroke="#b9a693" />] : []),
+  ]
   return (
     <ResponsiveContainer width="100%" height={height}>
       {area ? (

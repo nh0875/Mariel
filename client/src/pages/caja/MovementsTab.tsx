@@ -2,7 +2,7 @@
 // (venta, compra, gasto, aporte, retiro…) y, si mirás una cuenta sola, el saldo después de cada movimiento.
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowUpRight, ArrowRightLeft, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowRightLeft, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import { MANUAL_CASH_KINDS } from '@shared/constants'
 import { addDays } from '@shared/dates'
@@ -11,7 +11,7 @@ import { date as fmtDate, dateShort, money } from '@/lib/format'
 import { usePeriod } from '@/lib/period'
 import { useApi, useApiMutation } from '@/lib/queries'
 import { Button, DataTable, EmptyState, ErrorState, InfoTip, Loading, PeriodPicker, Select, useConfirm, type Column } from '@/components/ui'
-import { ACCOUNT_ICON, SignedMoney, docLink, nb } from './parts'
+import { ACCOUNT_ICON, ICON_ONLY, SignedMoney, docLink, nb } from './parts'
 import type { AccountRow, MovementRow, MovementsResult } from './types'
 
 export const TYPE_FILTERS: { value: string; label: string }[] = [
@@ -83,7 +83,8 @@ export function MovementsTab({
       title: isTransfer ? '¿Borrar la transferencia?' : '¿Borrar este movimiento?',
       message: isTransfer ? (
         <>
-          Se borran las dos partes: la salida de una cuenta y la entrada en la otra ({m.document.toLowerCase()}, {money(m.amount)}). Los saldos vuelven a como estaban.
+          Las transferencias no se editan: si te equivocaste, borrala y cargala de nuevo. Se borran las dos partes: la salida de una cuenta y la entrada en la otra (
+          {m.document.toLowerCase()}, {money(m.amount)}). Los saldos vuelven a como estaban.
         </>
       ) : (
         <>
@@ -170,9 +171,12 @@ export function MovementsTab({
         ]
       : []),
     {
+      // En el celular no hay columna de acciones (no entra): tocar un movimiento suelto abre su edición (que tiene «Borrar»)
+      // y tocar una transferencia ofrece borrarla.
       key: 'actions',
       header: <span className="sr-only">Acciones</span>,
       sortable: false,
+      hideBelow: 'sm',
       className: 'w-[1%]',
       cell: (m) => {
         const link = m.ref_exists ? docLink(m.ref_type, m.ref_id) : null
@@ -186,6 +190,7 @@ export function MovementsTab({
                   icon={Pencil}
                   aria-label="Editar movimiento"
                   title="Editar"
+                  className={ICON_ONLY}
                   onClick={(e) => {
                     e.stopPropagation()
                     onEdit(m)
@@ -198,7 +203,7 @@ export function MovementsTab({
                 icon={Trash2}
                 aria-label={m.ref_type === 'transfer' ? 'Borrar transferencia' : 'Borrar movimiento'}
                 title="Borrar"
-                className={clsx('hover:bg-bad-soft hover:text-bad', isManualKind(m.ref_type) && 'hidden sm:inline-flex')}
+                className={clsx(ICON_ONLY, 'hover:bg-bad-soft hover:text-bad')}
                 onClick={(e) => {
                   e.stopPropagation()
                   askDelete(m)
@@ -209,13 +214,14 @@ export function MovementsTab({
         }
         if (link) {
           return (
-            <div className="hidden justify-end sm:flex">
+            <div className="flex justify-end">
               <Button
                 size="sm"
                 variant="ghost"
-                icon={ArrowUpRight}
+                icon={ChevronRight}
                 aria-label={`Abrir ${m.document}`}
                 title={`Abrir ${m.document}`}
+                className={ICON_ONLY}
                 onClick={(e) => {
                   e.stopPropagation()
                   navigate(link)
@@ -329,6 +335,7 @@ export function MovementsTab({
               const link = m.ref_exists ? docLink(m.ref_type, m.ref_id) : null
               if (link) navigate(link)
               else if (isManualKind(m.ref_type)) onEdit(m)
+              else if (m.ref_type === 'transfer') askDelete(m)
             }}
             empty={
               <div className="vh-card">

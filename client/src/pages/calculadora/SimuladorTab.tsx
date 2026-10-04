@@ -7,19 +7,7 @@ import { priceChangeToKeepResult, simulate, type CalculatorContext, type Simulat
 import { ChartCard, ResultChart } from '@/components/charts'
 import { Badge, Button, Field, InfoTip, IntInput, MoneyInput, Money } from '@/components/ui'
 import { int, pct, pctDelta } from '@/lib/format'
-import {
-  ExampleNote,
-  InputsCard,
-  MobileResult,
-  Note,
-  PercentField,
-  SliderField,
-  Ticket,
-  TicketHero,
-  baseNumbers,
-  money,
-  monthsText,
-} from './parts'
+import { ExampleNote, InputsCard, MobileResult, Note, PercentField, SliderField, Ticket, TicketHero, baseNumbers, money, monthsText } from './parts'
 
 export type ScenarioKey = 'bodega15' | 'promo2x1' | 'alquiler25' | null
 
@@ -214,125 +202,135 @@ export function SimuladorTab({ ctx, state, set, onReset }: { ctx: CalculatorCont
                 <Field label="Gastos fijos por mes" info="gastos_fijos">
                   <MoneyInput value={state.fixed} onChange={(v) => set({ fixed: v })} aria-label="Gastos fijos por mes" />
                 </Field>
-                <PercentField label="Otros costos variables" info="gastos_variables" value={state.variablePct} onChange={(v) => set({ variablePct: v })} hint="Comisiones, mermas, envíos… en % de las ventas." />
+                <PercentField
+                  label="Otros costos variables"
+                  info="gastos_variables"
+                  value={state.variablePct}
+                  onChange={(v) => set({ variablePct: v })}
+                  hint="Comisiones, mermas, envíos… en % de las ventas."
+                />
               </div>
             )}
           </div>
         </InputsCard>
 
-        <Ticket
-          id="calc-simulador-resultado"
-          title="Hoy vs. con los cambios"
-          hero={
-            <TicketHero
-              label="Resultado del mes con los cambios"
-              info={<InfoTip term="resultado" />}
-              value={<Money value={r.after.result} decimals={0} tone="auto" />}
-              badge={
-                changed && Math.abs(r.delta.result) >= 1 ? (
-                  <Badge tone={r.delta.result > 0 ? 'good' : 'bad'} className="!px-3 !py-1 !text-[14px]">
-                    {money(r.delta.result, { decimals: 0, sign: true })} por mes
-                  </Badge>
-                ) : undefined
-              }
-              sub={
-                <>
-                  <span className="block font-semibold text-ink">{sentence(state, r)}</span>
-                  <span className="mt-1 block">
-                    Hoy: <Money value={r.before.result} decimals={0} tone="auto" className="font-bold" /> por mes
-                    {base.isExample ? ' (negocio de ejemplo).' : ` (tu mes promedio de ${months}).`}
-                  </span>
-                </>
-              }
+        <div className="min-w-0 space-y-5">
+          <Ticket
+            id="calc-simulador-resultado"
+            title="Hoy vs. con los cambios"
+            hero={
+              <TicketHero
+                label="Resultado del mes con los cambios"
+                info={<InfoTip term="resultado" />}
+                value={<Money value={r.after.result} decimals={0} tone="auto" />}
+                badge={
+                  changed && Math.abs(r.delta.result) >= 1 ? (
+                    <Badge tone={r.delta.result > 0 ? 'good' : 'bad'} className="!px-3 !py-1 !text-[14px]">
+                      {money(r.delta.result, { decimals: 0, sign: true })} por mes
+                    </Badge>
+                  ) : undefined
+                }
+                sub={
+                  <>
+                    <span className="block font-semibold text-ink">{sentence(state, r)}</span>
+                    <span className="mt-1 block">
+                      Hoy: <Money value={r.before.result} decimals={0} tone="auto" className="font-bold" /> por mes
+                      {base.isExample ? ' (negocio de ejemplo).' : ` (tu mes promedio de ${months}).`}
+                    </span>
+                  </>
+                }
+              />
+            }
+          >
+            <div className="-mx-1 overflow-x-auto">
+              <table className="w-full text-[14px]">
+                <thead>
+                  <tr className="border-b border-line text-[12px] font-extrabold tracking-wide text-ink-soft uppercase">
+                    <th className="px-1 py-2 text-left font-extrabold">Por mes</th>
+                    <th className="px-1 py-2 text-right font-extrabold">Hoy</th>
+                    <th className="px-1 py-2 text-right font-extrabold">Con cambios</th>
+                    <th className="hidden px-1 py-2 text-right font-extrabold sm:table-cell">Diferencia</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const b = r.before[row.key] as number
+                    const a = r.after[row.key] as number
+                    const d = a - b
+                    const good = row.cost ? d < 0 : d > 0
+                    return (
+                      <tr key={row.key} className={clsx('border-b border-dashed border-line last:border-0', row.strong && 'border-t-[1.5px] border-solid border-t-ink/70')}>
+                        <td className={clsx('px-1 py-2', row.strong ? 'font-extrabold text-ink' : 'text-ink-soft')}>
+                          {row.cost && <span className="mr-1 text-muted">−</span>}
+                          {row.label}
+                        </td>
+                        <td className={clsx('vh-num px-1 py-2 text-right whitespace-nowrap', row.strong ? 'font-extrabold' : 'font-semibold')}>
+                          {row.strong ? <Money value={b} decimals={0} tone="auto" /> : fmt(b, row.kind)}
+                        </td>
+                        <td className={clsx('vh-num px-1 py-2 text-right whitespace-nowrap', row.strong ? 'font-extrabold' : 'font-bold text-ink')}>
+                          {row.strong ? <Money value={a} decimals={0} tone="auto" /> : fmt(a, row.kind)}
+                        </td>
+                        <td className={clsx('vh-num hidden px-1 py-2 text-right whitespace-nowrap sm:table-cell', Math.abs(d) < 0.5 ? 'text-muted' : good ? 'text-good' : 'text-bad')}>
+                          {Math.abs(d) < 0.5 ? '=' : row.kind === 'int' ? `${d > 0 ? '+' : '−'}${int(Math.abs(Math.round(d)))}` : money(d, { decimals: 0, sign: true })}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {keep != null && (
+              <Note tone={keep > changes.price_change + 0.0005 ? 'warn' : 'good'} className="mt-4" title="Para seguir ganando lo mismo que hoy">
+                {keep > changes.price_change + 0.0005 ? (
+                  <>
+                    Con esos cambios, los precios tendrían que moverse <b>{pctDelta(keep)}</b>
+                    {changes.price_change ? <> (en la barrita pusiste {pctDelta(changes.price_change)})</> : null}.
+                  </>
+                ) : (
+                  <>
+                    Con esos cambios ya ganás lo mismo o más que hoy: alcanzaría con mover los precios <b>{pctDelta(keep)}</b>.
+                  </>
+                )}{' '}
+                {keep > 0.0005 && `Un vino de ${money(10000)} pasaría a ${money(10000 * (1 + keep), { decimals: 0 })}.`}
+              </Note>
+            )}
+            {r.after.sales > 0 && (
+              <p className="mt-4 text-[13px] text-muted">
+                Resultado = botellas × (precio − costo) − ventas × % de costos variables − gastos fijos.{' '}
+                {changed && Math.abs(r.after.margin - r.before.margin) >= 0.0005
+                  ? `El margen del mes pasaría de ${pct(r.before.margin)} a ${pct(r.after.margin)} de lo que vendés.`
+                  : `Hoy te queda el ${pct(r.before.margin)} de lo que vendés.`}
+              </p>
+            )}
+          </Ticket>
+          <ChartCard
+            title="Tu resultado del mes"
+            term="resultado"
+            subtitle="Verde si ganás, coral si perdés."
+            table={{
+              columns: [
+                { key: 'label', header: '' },
+                { key: 'result', header: 'Resultado del mes', align: 'right', format: (v) => money(Number(v), { decimals: 0 }) },
+              ],
+              rows: [
+                { label: 'Hoy', result: r.before.result },
+                { label: 'Con los cambios', result: r.after.result },
+              ],
+            }}
+          >
+            <ResultChart
+              data={[
+                { label: 'Hoy', result: r.before.result },
+                { label: 'Con los cambios', result: r.after.result },
+              ]}
+              valueKey="result"
+              label="Resultado del mes"
+              height={190}
             />
-          }
-        >
-          <div className="-mx-1 overflow-x-auto">
-            <table className="w-full text-[14px]">
-              <thead>
-                <tr className="border-b border-line text-[12px] font-extrabold tracking-wide text-ink-soft uppercase">
-                  <th className="px-1 py-2 text-left font-extrabold">Por mes</th>
-                  <th className="px-1 py-2 text-right font-extrabold">Hoy</th>
-                  <th className="px-1 py-2 text-right font-extrabold">Con cambios</th>
-                  <th className="hidden px-1 py-2 text-right font-extrabold sm:table-cell">Diferencia</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => {
-                  const b = r.before[row.key] as number
-                  const a = r.after[row.key] as number
-                  const d = a - b
-                  const good = row.cost ? d < 0 : d > 0
-                  return (
-                    <tr key={row.key} className={clsx('border-b border-dashed border-line last:border-0', row.strong && 'border-t-[1.5px] border-solid border-t-ink/70')}>
-                      <td className={clsx('px-1 py-2', row.strong ? 'font-extrabold text-ink' : 'text-ink-soft')}>
-                        {row.cost && <span className="mr-1 text-muted">−</span>}
-                        {row.label}
-                      </td>
-                      <td className={clsx('vh-num px-1 py-2 text-right whitespace-nowrap', row.strong ? 'font-extrabold' : 'font-semibold')}>
-                        {row.strong ? <Money value={b} decimals={0} tone="auto" /> : fmt(b, row.kind)}
-                      </td>
-                      <td className={clsx('vh-num px-1 py-2 text-right whitespace-nowrap', row.strong ? 'font-extrabold' : 'font-bold text-ink')}>
-                        {row.strong ? <Money value={a} decimals={0} tone="auto" /> : fmt(a, row.kind)}
-                      </td>
-                      <td className={clsx('vh-num hidden px-1 py-2 text-right whitespace-nowrap sm:table-cell', Math.abs(d) < 0.5 ? 'text-muted' : good ? 'text-good' : 'text-bad')}>
-                        {Math.abs(d) < 0.5 ? '=' : row.kind === 'int' ? `${d > 0 ? '+' : '−'}${int(Math.abs(Math.round(d)))}` : money(d, { decimals: 0, sign: true })}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {keep != null && (
-            <Note tone={keep > changes.price_change + 0.0005 ? 'warn' : 'good'} className="mt-4" title="Para seguir ganando lo mismo que hoy">
-              {keep > changes.price_change + 0.0005 ? (
-                <>
-                  Con esos cambios, los precios tendrían que moverse <b>{pctDelta(keep)}</b>
-                  {changes.price_change ? <> (en la barrita pusiste {pctDelta(changes.price_change)})</> : null}.
-                </>
-              ) : (
-                <>
-                  Con esos cambios ya ganás lo mismo o más que hoy: alcanzaría con mover los precios <b>{pctDelta(keep)}</b>.
-                </>
-              )}{' '}
-              {keep > 0.0005 && `Un vino de ${money(10000)} pasaría a ${money(10000 * (1 + keep), { decimals: 0 })}.`}
-            </Note>
-          )}
-          {r.after.sales > 0 && (
-            <p className="mt-4 text-[13px] text-muted">
-              Resultado = botellas × (precio − costo) − ventas × % de costos variables − gastos fijos. El margen del mes pasaría de {pct(r.before.margin)} a {pct(r.after.margin)}.
-            </p>
-          )}
-        </Ticket>
+          </ChartCard>
+        </div>
       </div>
-
-      <ChartCard
-        title="Tu resultado del mes"
-        term="resultado"
-        subtitle="Verde si ganás, coral si perdés."
-        table={{
-          columns: [
-            { key: 'label', header: '' },
-            { key: 'result', header: 'Resultado del mes', align: 'right', format: (v) => money(Number(v), { decimals: 0 }) },
-          ],
-          rows: [
-            { label: 'Hoy', result: r.before.result },
-            { label: 'Con los cambios', result: r.after.result },
-          ],
-        }}
-      >
-        <ResultChart
-          data={[
-            { label: 'Hoy', result: r.before.result },
-            { label: 'Con los cambios', result: r.after.result },
-          ]}
-          valueKey="result"
-          label="Resultado del mes"
-          height={220}
-        />
-      </ChartCard>
 
       <MobileResult label="Resultado con los cambios" value={money(r.after.result, { decimals: 0 })} targetId="calc-simulador-resultado" />
     </div>

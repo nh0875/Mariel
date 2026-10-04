@@ -1,6 +1,7 @@
 // Pestaña "Gastos": cuánto gastaste en el período, cuánto es fijo y cuánto variable,
 // cuánto se come de las ventas y qué falta pagar. Abajo, la lista completa.
 import { useMemo } from 'react'
+import clsx from 'clsx'
 import { CalendarClock, FilterX, Plus, Receipt, Repeat, Wand2 } from 'lucide-react'
 import type { ExpenseWithStatus } from '@shared/types'
 import { DEFAULT_EXPENSE_CATEGORIES, type ExpenseNature } from '@shared/constants'
@@ -10,7 +11,7 @@ import { dateShort, int, money, moneyCompact, monthName, pct } from '@/lib/forma
 import { usePeriod } from '@/lib/period'
 import { useApi, useApiMutation, useSettings } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, Loading, PeriodPicker, Select, type Column } from '@/components/ui'
-import { Callout, KpiTile, ExpenseStatusBadge } from './parts'
+import { Callout, KpiTile, ExpenseStatusBadge, useMinWidth } from './parts'
 import {
   categoryIcon,
   categoryShort,
@@ -22,8 +23,11 @@ import {
   type StatusFilter,
 } from './types'
 
-/** Plata para las tarjetas: completa hasta $ 10 M, abreviada arriba de eso (el valor exacto queda en el tooltip). */
-const tileMoney = (n: number) => (Math.abs(n) >= 10_000_000 ? moneyCompact(n) : money(n, { decimals: 0 }))
+/**
+ * Plata para las tarjetas: completa hasta $ 10 M; si el total del período pasa eso, todas las tarjetas
+ * van abreviadas ("$ 33,6 M", "$ 8,2 M") para que se lean parejas. El valor exacto queda en el tooltip.
+ */
+const tileMoney = (n: number, compact: boolean) => (compact ? moneyCompact(n) : money(n, { decimals: 0 }))
 
 export interface ExpenseFilters {
   category: string
@@ -58,6 +62,10 @@ export function ExpensesTab({
 
   const s = summary.data
   const rows = list.data ?? []
+  const compact = !!s && Math.abs(s.total) >= 10_000_000
+  // La columna "Proveedor" solo cuando entra sin apretar las demás; si no, el proveedor va debajo de la descripción.
+  const showSupplierCol = useMinWidth(1400)
+  const showTypeCol = useMinWidth(1180)
   const filtersOn = !!(filters.category || filters.nature || filters.status)
 
   // Comparación: solo si ya cargabas gastos al empezar el período anterior (si no, el % no significa nada).
@@ -85,19 +93,29 @@ export function ExpensesTab({
       key: 'description',
       header: 'Descripción',
       value: (r) => `${r.description} ${r.category} ${r.supplier_name ?? ''} ${r.event_name ?? ''}`,
-      cell: (r) => (
-        <div className="max-w-[44vw] min-w-0 sm:max-w-[38vw] lg:max-w-[340px]">
-          <span className="flex max-w-full items-center gap-1.5 font-semibold text-ink" title={r.description}>
-            <span className="truncate">{r.description}</span>
-            {r.recurring_id && <Repeat size={13} className="shrink-0 text-muted" aria-label="Gasto fijo automático" />}
-          </span>
-          <span className="block truncate text-[12.5px] text-muted md:hidden">
-            <span className="sm:hidden">{dateShort(r.date)} · </span>
-            {categoryShort(r.category)}
-          </span>
-          {r.event_name && <span className="hidden truncate text-[12.5px] text-muted md:block">Evento: {r.event_name}</span>}
-        </div>
-      ),
+      // Se queda con el espacio que sobra y corta con "…": así nunca empuja el monto o el estado fuera de la pantalla.
+      className: 'w-full max-w-0 min-w-[7.5rem]',
+      cell: (r) => {
+        const extra = [!showSupplierCol && r.supplier_name, r.event_name && `Evento: ${r.event_name}`].filter(Boolean).join(' · ')
+        return (
+          <div className="min-w-0">
+            <span className="flex max-w-full min-w-0 items-center gap-1.5 font-semibold text-ink" title={r.description}>
+              <span className="truncate">{r.description}</span>
+              {r.recurring_id && <Repeat size={13} className="shrink-0 text-muted" aria-label="Gasto fijo automático" />}
+            </span>
+            <span className={clsx('block truncate text-[12.5px] text-muted', !extra && 'md:hidden')}>
+              <span className="sm:hidden">{dateShort(r.date)} · </span>
+              <span className="md:hidden">{categoryShort(r.category)}</span>
+              {extra && (
+                <>
+                  <span className="md:hidden"> · </span>
+                  {extra}
+                </>
+              )}
+            </span>
+          </div>
+        )
+      },
     },
     {
       key: 'category',
@@ -106,22 +124,35 @@ export function ExpensesTab({
       cell: (r) => {
         const Icon = categoryIcon(r.category)
         return (
-          <span className="inline-flex max-w-[220px] items-center gap-1.5 text-ink-soft" title={r.category}>
+          <span className="inline-flex max-w-[150px] items-center gap-1.5 whitespace-nowrap text-ink-soft xl:max-w-[190px]" title={r.category}>
             <Icon size={15} className="shrink-0 text-muted" aria-hidden />
             <span className="truncate">{categoryShort(r.category)}</span>
           </span>
         )
       },
     },
-    {
-      key: 'nature',
-      header: 'Tipo',
-      hideBelow: 'lg',
-      value: (r) => NATURE_SHORT[r.nature],
-      cell: (r) => <Badge tone={r.nature === 'fijo' ? 'coral' : 'mustard'}>{NATURE_SHORT[r.nature]}</Badge>,
-      className: 'w-[1%]',
-    },
-    { key: 'supplier_name', header: 'Proveedor', hideBelow: 'lg', cell: (r) => <span className="block max-w-[180px] truncate text-ink-soft">{r.supplier_name || '—'}</span> },
+    ...(showTypeCol
+      ? [
+          {
+            key: 'nature',
+            header: 'Tipo',
+            hideBelow: 'lg' as const,
+            value: (r: ExpenseWithStatus) => NATURE_SHORT[r.nature],
+            cell: (r: ExpenseWithStatus) => <Badge tone={r.nature === 'fijo' ? 'coral' : 'mustard'}>{NATURE_SHORT[r.nature]}</Badge>,
+            className: 'w-[1%]',
+          },
+        ]
+      : []),
+    ...(showSupplierCol
+      ? [
+          {
+            key: 'supplier_name',
+            header: 'Proveedor',
+            hideBelow: 'lg' as const,
+            cell: (r: ExpenseWithStatus) => <span className="block max-w-[150px] truncate whitespace-nowrap text-ink-soft" title={r.supplier_name ?? undefined}>{r.supplier_name || '—'}</span>,
+          },
+        ]
+      : []),
     {
       key: 'amount',
       header: 'Monto',
@@ -208,7 +239,7 @@ export function ExpensesTab({
             className="md:col-span-2 min-[87.5rem]:col-span-1"
             term="gastos"
             tone="coral"
-            value={tileMoney(s.total)}
+            value={tileMoney(s.total, compact)}
             title={money(s.total)}
             delta={delta('total')}
             upIsGood={false}
@@ -219,23 +250,23 @@ export function ExpensesTab({
             label="Fijos"
             className="md:col-span-2 min-[87.5rem]:col-span-1"
             term="gastos_fijos"
-            value={tileMoney(s.fixed)}
+            value={tileMoney(s.fixed, compact)}
             title={money(s.fixed)}
             delta={delta('fixed')}
             upIsGood={false}
             deltaLabel={deltaLabel}
-            hint={s.total ? `${pct(s.fixed / s.total, 0)} del total: lo que pagás sí o sí` : '—'}
+            hint={s.total ? `${pct(s.fixed / s.total, 0)} del total: lo que pagás sí o sí` : 'Alquiler, sueldos, abonos: lo que pagás sí o sí'}
           />
           <KpiTile
             label="Variables"
             className="md:col-span-2 min-[87.5rem]:col-span-1"
             term="gastos_variables"
-            value={tileMoney(s.variable)}
+            value={tileMoney(s.variable, compact)}
             title={money(s.variable)}
             delta={delta('variable')}
             upIsGood={false}
             deltaLabel={deltaLabel}
-            hint={s.total ? `${pct(s.variable / s.total, 0)} del total: crecen con las ventas` : '—'}
+            hint={s.total ? `${pct(s.variable / s.total, 0)} del total: crecen con las ventas` : 'Envíos, packaging, publicidad: crecen con las ventas'}
           />
           <KpiTile
             label="Gastos sobre ventas"
@@ -276,12 +307,12 @@ export function ExpensesTab({
             term="por_pagar"
             tone="mustard"
             className="col-span-2 md:col-span-3 min-[87.5rem]:col-span-1"
-            value={tileMoney(s.pending)}
+            value={tileMoney(s.pending, compact)}
             title={money(s.pending)}
             hint={
               s.pending_count === 0 ? (
                 <>
-                  ¡Todo pagado en este período!
+                  {s.count > 0 ? '¡Todo pagado en este período!' : 'No hay nada por pagar en este período.'}
                   {s.payables_total > 0.01 && <> De gastos anteriores debés {money(s.payables_total, { decimals: 0 })}.</>}
                 </>
               ) : (

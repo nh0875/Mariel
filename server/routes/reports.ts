@@ -1095,7 +1095,7 @@ const INFLATION_SHEETS: SheetInfo[] = [
 function writeInflation(p: ReportPeriod): Writer {
   return (wb) => {
     const d = inflationReport(p.from, p.to)
-    addSheet<InflationMonthRow>(wb, {
+    const ws = addSheet<InflationMonthRow>(wb, {
       name: INFLATION_SHEETS[0].name,
       title: d.base_month ? `Ventas en pesos de ${monthLabelLong(d.base_month)}` : 'Ventas ajustadas por inflación',
       subtitle: periodSubtitle(p.from, p.to),
@@ -1118,6 +1118,12 @@ function writeInflation(p: ReportPeriod): Writer {
           ? `Meses sin inflación cargada (se toman como 0 %): ${d.missing_months.map((m) => monthLabelLong(m)).join(', ')}. Cargalos en Reportes → Inflación.`
           : 'Todos los meses necesarios tienen la inflación cargada.',
       ],
+    })
+    // Más decimales donde importan: la inflación (2,25 %) y el multiplicador (1,2100).
+    d.months.forEach((_, i) => {
+      ws.getCell(5 + i, 3).numFmt = '0.0#%'
+      ws.getCell(5 + i, 4).numFmt = '0.00'
+      ws.getCell(5 + i, 5).numFmt = '0.0000'
     })
   }
 }

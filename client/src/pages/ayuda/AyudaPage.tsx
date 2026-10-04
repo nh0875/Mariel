@@ -381,7 +381,7 @@ export default function AyudaPage() {
           Acá está <b>todo lo que necesitás para usar el sistema sin depender de nadie</b>: los primeros pasos, las preguntas de todos los días y el significado de cada número.
         </p>
         <p>
-          <b>Ejemplo:</b> si en Inicio ves «Margen bruto 38 %» y no sabés qué es, tocá el <b>?</b> que tiene al lado y después «Ver más en Ayuda»: te trae directo a la explicación, con la cuenta y un
+          <b>Ejemplo:</b> si en Inicio ves «Margen bruto 38 %» y no sabés qué es, tocá el <b>?</b> que tiene al lado y después «Ver más en Ayuda»: te trae directo a la explicación, con la cuenta y un
           ejemplo con pesos.
         </p>
         <p>

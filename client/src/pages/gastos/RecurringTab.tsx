@@ -1,6 +1,7 @@
 // Pestaña "Gastos fijos del mes": las plantillas de lo que se paga todos los meses
 // y el botón para generar los gastos de un mes (sin duplicar nunca).
 import { useMemo, useState } from 'react'
+import clsx from 'clsx'
 import { Link } from 'react-router-dom'
 import { ArrowRight, CalendarCheck, Check, Pencil, Plus, Repeat, Wand2 } from 'lucide-react'
 import { monthKey, today } from '@shared/dates'
@@ -8,7 +9,7 @@ import { api } from '@/lib/api'
 import { money, monthName } from '@/lib/format'
 import { useApi, useApiMutation } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, InfoTip, Loading, ProgressBar, type Column } from '@/components/ui'
-import { MonthStepper, ExpenseStatusBadge } from './parts'
+import { MonthStepper, ExpenseStatusBadge, useMinWidth } from './parts'
 import { RecurringFormModal } from './RecurringFormModal'
 import { categoryIcon, categoryShort, NATURE_SHORT, type RecurringRow, type RecurringStatus } from './types'
 
@@ -36,9 +37,12 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
   const st = status.data && status.data.month === month ? status.data : undefined
   const byTemplate = useMemo(() => new Map((st?.items ?? []).map((i) => [i.id, i])), [st])
   const active = rows.filter((r) => r.active)
+  const paused = rows.length - active.length
   const fixedTotal = active.filter((r) => r.nature === 'fijo').reduce((s, r) => s + r.amount, 0)
   const variableTotal = active.filter((r) => r.nature !== 'fijo').reduce((s, r) => s + r.amount, 0)
   const word = monthWord(month)
+  // "Cuenta" y "¿Se paga solo?" como columnas solo si entran; si no, van debajo del nombre.
+  const wide = useMinWidth(1360)
 
   /** Qué pasó con este gasto fijo en el mes elegido: ya cargado (y si se pagó) o falta generar. */
   const monthStatus = (r: RecurringRow) => {
@@ -73,16 +77,26 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
       key: 'description',
       header: 'Gasto',
       value: (r) => `${r.description} ${r.category}`,
-      cell: (r) => (
-        <div className="max-w-[46vw] min-w-0 sm:max-w-none">
-          <span className={r.active ? 'font-semibold text-ink' : 'font-semibold text-muted line-through decoration-1'}>{r.description}</span>
-          <span className="block truncate text-[12.5px] text-muted md:hidden">
-            <span className="sm:hidden">día {r.day_of_month} · </span>
-            {categoryShort(r.category)}
-            {r.auto_paid ? ' · se paga solo' : ''}
-          </span>
-        </div>
-      ),
+      className: 'w-full max-w-0 min-w-[7.5rem]',
+      footer: paused > 0 ? <span className="text-[13px] font-semibold text-ink-soft">Total por mes (sin {paused === 1 ? 'el pausado' : `los ${paused} pausados`})</span> : 'Total por mes',
+      cell: (r) => {
+        const how = wide ? '' : [r.account_name, r.auto_paid ? 'se paga solo' : 'lo pagás vos'].filter(Boolean).join(' · ')
+        return (
+          <div className="min-w-0">
+            <span className={clsx('block truncate font-semibold', r.active ? 'text-ink' : 'text-muted line-through decoration-1')} title={r.description}>
+              {r.description}
+            </span>
+            <span className="block truncate text-[12.5px] text-muted">
+              <span className="sm:hidden">día {r.day_of_month} · </span>
+              <span className="md:hidden">
+                {categoryShort(r.category)}
+                {how && ' · '}
+              </span>
+              {how}
+            </span>
+          </div>
+        )
+      },
     },
     {
       key: 'category',
@@ -91,7 +105,7 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
       cell: (r) => {
         const Icon = categoryIcon(r.category)
         return (
-          <span className="inline-flex max-w-[200px] items-center gap-1.5 text-ink-soft" title={r.category}>
+          <span className="inline-flex max-w-[200px] items-center gap-1.5 whitespace-nowrap text-ink-soft" title={r.category}>
             <Icon size={15} className="shrink-0 text-muted" aria-hidden />
             <span className="truncate">{categoryShort(r.category)}</span>
             {r.nature !== 'fijo' && <Badge tone="mustard">{NATURE_SHORT[r.nature]}</Badge>}
@@ -99,21 +113,25 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
         )
       },
     },
-    { key: 'account_name', header: 'Cuenta', hideBelow: 'lg', cell: (r) => <span className="whitespace-nowrap text-ink-soft">{r.account_name || '—'}</span> },
-    {
-      key: 'auto_paid',
-      header: '¿Se paga solo?',
-      hideBelow: 'lg',
-      value: (r) => (r.auto_paid ? 'Sí' : 'No'),
-      cell: (r) =>
-        r.auto_paid ? (
-          <Badge tone="good" icon={<Check size={13} strokeWidth={3} aria-hidden />}>
-            Débito automático
-          </Badge>
-        ) : (
-          <span className="text-[13.5px] text-muted">Lo pagás vos</span>
-        ),
-    },
+    ...(wide
+      ? ([
+          { key: 'account_name', header: 'Cuenta', hideBelow: 'lg', cell: (r) => <span className="whitespace-nowrap text-ink-soft">{r.account_name || '—'}</span> },
+          {
+            key: 'auto_paid',
+            header: '¿Se paga solo?',
+            hideBelow: 'lg',
+            value: (r) => (r.auto_paid ? 'Sí' : 'No'),
+            cell: (r) =>
+              r.auto_paid ? (
+                <Badge tone="good" icon={<Check size={13} strokeWidth={3} aria-hidden />}>
+                  Débito automático
+                </Badge>
+              ) : (
+                <span className="text-[13.5px] whitespace-nowrap text-muted">Lo pagás vos</span>
+              ),
+          },
+        ] as Column<RecurringRow>[])
+      : []),
     {
       key: 'amount',
       header: 'Monto',
@@ -174,7 +192,11 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
           ) : !st ? (
             <Loading />
           ) : st.templates === 0 ? (
-            <p className="mt-4 text-[14.5px] text-ink-soft">Todavía no hay gastos fijos activos. Agregá el primero con «Agregar gasto fijo» y después generalos acá.</p>
+            <p className="mt-4 text-[14.5px] text-ink-soft">
+              {rows.length > 0
+                ? 'Todos tus gastos fijos están pausados: no hay nada para generar. Para reactivar uno, tocalo en la lista y destildá «Pausado».'
+                : 'Todavía no cargaste gastos fijos. Agregá el primero en la lista de abajo y después los generás acá con un clic.'}
+            </p>
           ) : (
             <div className="mt-4 space-y-3">
               <ProgressBar value={st.generated} max={st.templates} />
@@ -211,8 +233,17 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
             <span className="ml-1 text-[15px] font-bold text-muted">por mes</span>
           </p>
           <p className="mt-3 text-[14.5px] leading-snug text-ink-soft">
-            Tus gastos fijos suman <b className="text-ink">{money(fixedTotal, { decimals: 0 })}</b> por mes: es lo mínimo que tenés que cubrir con la ganancia de tus ventas, vendas
-            mucho o poco.
+            {fixedTotal > 0 ? (
+              <>
+                Tus gastos fijos suman <b className="text-ink">{money(fixedTotal, { decimals: 0 })}</b> por mes: es lo mínimo que tenés que cubrir con la ganancia de tus ventas,
+                vendas mucho o poco.
+              </>
+            ) : (
+              <>
+                Cuando cargues lo que pagás todos los meses (alquiler, sueldos, abonos), acá vas a ver cuánto tenés que cubrir sí o sí cada mes, vendas mucho o poco. Ej: alquiler
+                $ 720.000 + sueldo $ 980.000 = $ 1.700.000 por mes.
+              </>
+            )}
             {variableTotal > 0 && <> Además se repiten {money(variableTotal, { decimals: 0 })} de gastos variables.</>}
           </p>
           <Link to="/calculadora" className="mt-3 inline-flex items-center gap-1.5 text-[14px] font-bold text-sky-deep hover:underline">
@@ -252,7 +283,8 @@ export function RecurringTab({ onOpenExpense }: { onOpenExpense: (id: number) =>
                   icon={Repeat}
                   title="Todavía no cargaste gastos fijos"
                   action={
-                    <Button icon={Plus} onClick={() => setCreating(true)}>
+                    // Sin gastos fijos no hay nada para generar: esta pasa a ser la acción principal de la pestaña.
+                    <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>
                       Agregar el primero
                     </Button>
                   }

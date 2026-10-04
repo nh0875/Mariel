@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto'
 import { all, get, run, scalar, tx } from '../db'
 import { round2 } from '../../shared/calc'
+import { today } from '../../shared/dates'
 import type { PaymentRefType, PaymentStatus } from '../../shared/constants'
 import type { AccountWithBalance, Payment } from '../../shared/types'
 import { HttpError } from '../lib/http'
@@ -162,8 +163,12 @@ export function addTransfer(t: { date: string; from_account_id: number; to_accou
   return transferId
 }
 
-/** Saldos de todas las cuentas (saldo inicial + entradas − salidas), opcionalmente a una fecha. */
-export function accountBalances(asOf?: string): AccountWithBalance[] {
+/**
+ * Saldos de todas las cuentas (saldo inicial + entradas − salidas) a una fecha.
+ * Por defecto, a HOY: un pago con fecha futura (ej. un gasto fijo generado para el día 20)
+ * todavía no salió de la cuenta, así que no se descuenta hasta esa fecha.
+ */
+export function accountBalances(asOf: string = today()): AccountWithBalance[] {
   const rows = all<Omit<AccountWithBalance, 'active'> & { active: number }>(
     `SELECT a.*,
        COALESCE(SUM(CASE WHEN p.direction = 'in' THEN p.amount END), 0) AS total_in,
@@ -183,7 +188,7 @@ export function accountBalances(asOf?: string): AccountWithBalance[] {
   }))
 }
 
-/** Plata total disponible sumando todas las cuentas. */
-export function totalCash(asOf?: string): number {
+/** Plata total disponible sumando todas las cuentas (por defecto, a hoy). */
+export function totalCash(asOf: string = today()): number {
   return round2(accountBalances(asOf).reduce((s, a) => s + a.balance, 0))
 }

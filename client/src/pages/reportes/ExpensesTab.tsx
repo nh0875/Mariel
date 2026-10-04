@@ -32,7 +32,7 @@ function expenseInsights(d: ExpensesReport): Insight[] {
       tone: t.total / t.sales > 0.45 ? 'warn' : 'info',
       text: (
         <>
-          De cada $ 100 que vendiste, <b>{pesos(Math.round((t.total / t.sales) * 100))}</b> se fueron en gastos ({pesos(Math.round((t.fixed / t.sales) * 100))} fijos y{' '}
+          De cada $ 100 que vendiste, <b>{pesos(Math.round((t.total / t.sales) * 100))}</b> se fueron en gastos ({pesos(Math.round((t.fixed / t.sales) * 100))} fijos y{' '}
           {pesos(Math.round((t.variable / t.sales) * 100))} variables).
         </>
       ),
@@ -126,7 +126,7 @@ export function ExpensesTab({ period }: { period: Period }) {
                 label="Variables sobre ventas"
                 term="gastos_variables"
                 value={t.sales > 0 ? pct(d.variable_pct_of_sales) : '—'}
-                hint={t.sales > 0 ? `De cada $ 100 vendidos, ${pesos(Math.round(d.variable_pct_of_sales * 100))} son gastos variables.` : 'Se calcula cuando hay ventas.'}
+                hint={t.sales > 0 ? `De cada $ 100 vendidos, ${pesos(Math.round(d.variable_pct_of_sales * 100))} son gastos variables.` : 'Se calcula cuando hay ventas.'}
               />
               <StatTile
                 label="Punto de equilibrio"
@@ -182,8 +182,8 @@ export function ExpensesTab({ period }: { period: Period }) {
             </ChartCard>
 
             <div className="mt-6 grid gap-4 xl:grid-cols-5">
-              <Card className="xl:col-span-2" title="Ranking de gastos" subtitle="Las categorías que más pesan en el período">
-                <RankBars items={d.by_category.map((c) => ({ label: c.category, value: c.total }))} color={CHART_COLORS.gastos} max={8} />
+              <Card className="self-start xl:col-span-2" title="Ranking de gastos" subtitle="Las categorías que más pesan en el período">
+                <RankBars items={d.by_category.map((c) => ({ label: c.category, value: Math.round(c.total) }))} color={CHART_COLORS.gastos} max={8} />
               </Card>
               <section className="min-w-0 xl:col-span-3" aria-label="Gastos por categoría">
                 <BlockTitle title="Por categoría">«Por mes» = total ÷ {plural(d.by_month.length, 'mes', 'meses')} del período. Comprar vino no es gasto: es stock.</BlockTitle>

@@ -224,13 +224,13 @@ describe('DELETE /suppliers/:id', () => {
 
     const r1 = await t.del(`/suppliers/${withPurchase}`)
     expect(r1.status).toBe(409)
-    expect(r1.body.error).toMatch(/2 compras/)
+    expect(r1.body.error).toMatch(/ya tiene historial \(2 compras\)/)
     expect(r1.body.error).toMatch(/Desactivalo/)
     expect(r1.body.details).toEqual({ purchases: 2, expenses: 0 })
 
     const r2 = await t.del(`/suppliers/${withExpense}`)
     expect(r2.status).toBe(409)
-    expect(r2.body.error).toMatch(/1 gasto/)
+    expect(r2.body.error).toMatch(/ya tiene historial \(1 gasto\)/)
 
     const list = await t.get('/suppliers')
     expect(list.body).toHaveLength(2)

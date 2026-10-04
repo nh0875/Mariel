@@ -344,10 +344,7 @@ export function breakEven(input: BreakEvenInput): BreakEvenResult {
   if (variable < 0) return fail('El costo variable no puede ser negativo.')
   if (price <= 0) return fail('Cargá el precio promedio por botella para calcular el punto de equilibrio.')
   if (contribution <= 0) {
-    return fail(
-      'Con estos números cada botella no deja nada (o te cuesta más de lo que cobrás): no hay cantidad de ventas que cubra los gastos fijos. Subí precios o bajá costos variables.',
-      Infinity,
-    )
+    return fail('Con estos números cada botella no deja nada (o te cuesta más de lo que cobrás): no hay cantidad de ventas que cubra los gastos fijos. Subí precios o bajá costos variables.', Infinity)
   }
   const exact = fixed / contribution
   // −1e-9 para que 300,0000001 (error de coma flotante) no pase a 301; Math.max evita el "−0".
@@ -579,10 +576,13 @@ export function boxDeal(input: BoxDealInput): BoxDealResult {
   const boxCost = round2(cost * units)
   const a = analyzePrice({ price: boxPrice, cost: boxCost, iibb_pct: input.iibb_pct, fee_pct: input.fee_pct, units_per_box: 1 })
   const noDiscount = analyzePrice({ price: list, cost: boxCost, iibb_pct: input.iibb_pct, fee_pct: input.fee_pct, units_per_box: 1 })
+  // Los umbrales se redondean hacia ABAJO (a centésimas de punto): así, si descontás exactamente
+  // lo que dice la pantalla, nunca quedás un pelito por debajo del margen mínimo o en pérdida.
   const threshold = (m: number) => {
     const k = 1 - t - m
     if (k <= 0 || list <= 0) return 0
-    return Math.max(0, Math.min(100, round2((1 - boxCost / (k * list)) * 100)))
+    const exact = (1 - boxCost / (k * list)) * 100
+    return Math.max(0, Math.min(100, Math.floor(exact * 100 + 1e-7) / 100))
   }
   let error: string | null = null
   if (price <= 0) error = 'Cargá el precio por botella.'
@@ -657,6 +657,8 @@ export interface CalculatorContext {
   avg_price_per_bottle: number
   /** Costo de lo vendido ÷ botellas. */
   avg_cost_per_bottle: number
+  /** Costo de lo vendido (CMV) promedio por mes. */
+  avg_cogs: number
   /** Gastos fijos promedio por mes. */
   avg_fixed_expenses: number
   /** Gastos variables promedio por mes. */
@@ -685,6 +687,33 @@ export interface CalculatorContext {
   units_per_box: number
   /** Vinos activos. */
   products: CalculatorProduct[]
+}
+
+/**
+ * Mes promedio "exacto" a partir del contexto, para el simulador y el punto de equilibrio.
+ *
+ * Usa los promedios sin redondear (botellas = ventas ÷ precio promedio; % variables =
+ * (comisiones + mermas + gastos variables) ÷ ventas), así el simulador sin cambios da el mismo
+ * resultado promedio que Reportes e Inicio (al peso), en vez de diferir por redondeos.
+ * Sin ventas devuelve null (la pantalla usa un ejemplo).
+ */
+export function baseFromContext(
+  ctx: Pick<CalculatorContext, 'avg_sales' | 'avg_price_per_bottle' | 'avg_cost_per_bottle' | 'avg_fixed_expenses' | 'avg_fees' | 'avg_shrinkage' | 'avg_variable_expenses'> &
+    Partial<Pick<CalculatorContext, 'avg_cogs'>>,
+): SimulationBase | null {
+  const sales = n(ctx.avg_sales)
+  const price = n(ctx.avg_price_per_bottle)
+  if (sales <= 0 || price <= 0) return null
+  const bottles = sales / price
+  const variable = n(ctx.avg_fees) + n(ctx.avg_shrinkage) + n(ctx.avg_variable_expenses)
+  return {
+    bottles,
+    avg_price: price,
+    // Con el CMV promedio, botellas × costo da exactamente el CMV (sin el redondeo del costo por botella).
+    avg_cost: n(ctx.avg_cogs) > 0 ? n(ctx.avg_cogs) / bottles : n(ctx.avg_cost_per_bottle),
+    fixed: n(ctx.avg_fixed_expenses),
+    variable_pct: (variable / sales) * 100,
+  }
 }
 
 // ───────────────────────── Revisión de precios de todo el catálogo ─────────────────────────
@@ -738,8 +767,7 @@ export function reviewPrices(products: CalculatorProduct[], p: PriceReviewParams
     const wholesale = analyzePrice({ price: prod.price_wholesale, cost, iibb_pct: p.iibb_pct, fee_pct: p.fee_pct })
     const s = cost > 0 ? suggestPrice({ cost, target_margin: target, iibb_pct: p.iibb_pct, fee_pct: p.fee_pct, round_to: p.round_to }) : null
     const suggested = s && s.ok ? s.price : null
-    const status: PriceReviewStatus =
-      cost <= 0 ? 'sin_costo' : n(prod.price_retail) <= 0 ? 'sin_precio' : retail.margin < target - REVIEW_TOLERANCE ? 'debajo' : 'ok'
+    const status: PriceReviewStatus = cost <= 0 ? 'sin_costo' : n(prod.price_retail) <= 0 ? 'sin_precio' : retail.margin < target - REVIEW_TOLERANCE ? 'debajo' : 'ok'
     return {
       id: prod.id,
       name: prod.name,

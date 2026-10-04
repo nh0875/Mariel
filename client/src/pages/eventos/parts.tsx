@@ -119,7 +119,10 @@ export function Kpi({
       </div>
       <div
         className={clsx(
-          'truncate leading-none font-extrabold tracking-tight text-ink',
+          'truncate leading-none font-extrabold tracking-tight',
+          // Si viene un color (verde si dejó plata, rojo si perdió), no le ponemos el color por defecto:
+          // las dos clases pelearían y ganaría la que esté después en el CSS.
+          !/(^|\s)!?text-(good|bad|warn|ink|muted|ink-soft)(\s|$)/.test(valueClassName ?? '') && 'text-ink',
           typeof value === 'string' && value.length > 11 ? 'text-[1.35rem]' : 'text-[1.6rem]',
           valueClassName,
         )}

@@ -186,12 +186,14 @@ function aggregate(eventId?: number): Map<number, Agg> {
     params,
   )) {
     const b = bucket(s.event_id)
+    // Se redondea venta por venta (igual que el listado de ventas y la planilla «Ventas»),
+    // así la suma de la tabla da exactamente lo mismo que las cuentas del evento.
     b.revenue += s.total || 0
     b.fees += s.fee || 0
-    b.tickets += ticketShare(s.tickets_gross, s.subtotal, s.total)
+    b.tickets += round2(ticketShare(s.tickets_gross, s.subtotal, s.total))
     b.tickets_qty += s.tickets_qty || 0
     b.bottles_sold += s.bottles || 0
-    b.cogs += s.cogs || 0
+    b.cogs += round2(s.cogs || 0)
     b.sales_count += 1
   }
 
@@ -356,6 +358,34 @@ function eventDetail(id: number): EventDetail {
   }
 }
 
+// ───────────────────────── Validación ─────────────────────────
+
+/**
+ * Nombres "humanos" de los campos propios de eventos. El validador común (lib/http.ts) no los
+ * conoce y el mensaje diría «attendees» o «ticket_price»; acá los traducimos.
+ */
+const EVENT_FIELD_LABELS: Record<string, string> = {
+  attendees: 'Personas',
+  ticket_price: 'Precio de la entrada',
+  budget: 'Presupuesto',
+  location: 'Lugar',
+  notes: 'Notas',
+}
+
+/** validate() de siempre, pero con los nombres de los campos de eventos en castellano. */
+function validateEvent<S extends z.ZodTypeAny>(schema: S, body: unknown): z.output<S> {
+  try {
+    return validate(schema, body)
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 400) {
+      let msg = err.message
+      for (const [key, label] of Object.entries(EVENT_FIELD_LABELS)) msg = msg.replace(new RegExp(`\\b${key}\\b`, 'g'), label)
+      throw new HttpError(400, msg, err.details)
+    }
+    throw err
+  }
+}
+
 // ───────────────────────── Validación de "botellas abiertas" ─────────────────────────
 
 const openBottlesInput = z.object({
@@ -368,11 +398,11 @@ const openBottlesInput = z.object({
   items: z
     .array(
       z.object({
-        product_id: z.number().int().positive(),
-        qty: z.number().int().min(1).max(10_000),
+        product_id: z.number({ required_error: 'elegí el vino' }).int().positive('elegí el vino'),
+        qty: z.number().int('tienen que ser botellas enteras').min(1, 'tiene que ser 1 o más').max(10_000, 'es demasiado (máx. 10.000 botellas por renglón)'),
       }),
     )
-    .min(1),
+    .min(1, 'elegí al menos un vino'),
   notes: z
     .string()
     .max(500)
@@ -383,6 +413,22 @@ const openBottlesInput = z.object({
 // ───────────────────────── Excel ─────────────────────────
 
 const kindLabel = (k: string) => EVENT_KIND_LABELS[k as EventKind] ?? k
+
+/** Plata y porcentajes con formato argentino para los textos del Excel ("$ 216.300", "118,6 %"). */
+const fmtMoney = (n: number) => `$ ${Math.round(n).toLocaleString('es-AR')}`
+const fmtPct = (r: number) => `${(Math.round(r * 1000) / 10).toLocaleString('es-AR')} %`
+
+/** ¿Tiene algo cargado? (ventas, gastos o botellas abiertas) */
+const hasData = (s: EventSummary) => s.sales_count + s.expenses_count + s.opened_count > 0
+
+/** Aclaración para la fila del evento en el Excel (así un $ 0 no se confunde con "salió hecho"). */
+function eventRemark(e: EventWithSummary): string {
+  const t = today()
+  if (e.date === t) return 'Es hoy: todavía puede sumar ventas, gastos y botellas'
+  if (e.date > t) return hasData(e.summary) ? 'Todavía no se hizo: por ahora solo lo que llevás puesto' : 'Todavía no se hizo'
+  if (!hasData(e.summary)) return 'Sin ventas, gastos ni botellas cargadas: los números están en cero'
+  return ''
+}
 
 const EVENT_COLUMNS: ExcelColumn<EventWithSummary>[] = [
   { header: 'Fecha', key: 'date', type: 'date' },
@@ -399,11 +445,12 @@ const EVENT_COLUMNS: ExcelColumn<EventWithSummary>[] = [
   { header: 'Botellas abiertas', key: 'bottles_opened', value: (e) => e.summary.bottles_opened, type: 'int', width: 11 },
   { header: 'Costo botellas abiertas', key: 'bottles_opened_cost', value: (e) => e.summary.bottles_opened_cost, type: 'money' },
   { header: 'Resultado', key: 'result', value: (e) => e.summary.result, type: 'money' },
-  { header: 'Resultado por persona', key: 'per_attendee', value: (e) => e.summary.per_attendee, type: 'money', total: false },
+  { header: 'Resultado por persona', key: 'per_attendee', value: (e) => (hasData(e.summary) ? e.summary.per_attendee : null), type: 'money', total: false },
   { header: 'Retorno', key: 'roi', value: (e) => e.summary.roi, type: 'percent', total: false, width: 10 },
   { header: 'Presupuesto', key: 'budget', type: 'money', total: false },
   { header: 'Presupuesto usado', key: 'budget_used', value: (e) => e.summary.budget_used, type: 'percent', total: false, width: 12 },
   { header: 'Botellas vendidas', key: 'bottles_sold', value: (e) => e.summary.bottles_sold, type: 'int', width: 11 },
+  { header: 'Observación', key: 'remark', value: eventRemark, width: 44 },
 ]
 
 const EVENT_NOTES = [
@@ -414,6 +461,7 @@ const EVENT_NOTES = [
   'Resultado = Ingresos − Costo del vino vendido − Comisiones − Gastos del evento − Costo botellas abiertas. Si es positivo, el evento dejó plata.',
   'Retorno = Resultado ÷ (Gastos del evento + Costo botellas abiertas). Ej: 50 % significa que por cada $100 que pusiste, recuperaste los $100 y ganaste $50 más.',
   'Presupuesto usado = (Gastos + botellas abiertas) ÷ Presupuesto. Más de 100 % = te pasaste.',
+  'Si un evento ya pasó y está todo en cero, es porque no le cargaste ventas, gastos ni botellas (mirá la columna «Observación»). Completalo desde su ficha para saber cómo le fue.',
 ]
 
 // ───────────────────────── Rutas ─────────────────────────
@@ -452,23 +500,58 @@ router.get('/events/:id/export', async (req, res) => {
   type Line = { concept: string; amount: number | null; detail: string }
   const resumen: Line[] = [
     { concept: '+ Entradas', amount: s.tickets, detail: s.tickets_qty ? `${s.tickets_qty} entradas u otros ítems que no son vino` : 'Sin entradas cargadas' },
-    { concept: '+ Ventas de vino', amount: s.wine_sales, detail: `${s.bottles_sold} botellas vendidas en ${s.sales_count} ${s.sales_count === 1 ? 'venta' : 'ventas'}` },
+    {
+      concept: '+ Ventas de vino',
+      amount: s.wine_sales,
+      detail: s.sales_count
+        ? `${s.bottles_sold} ${s.bottles_sold === 1 ? 'botella vendida' : 'botellas vendidas'} en ${s.sales_count} ${s.sales_count === 1 ? 'venta' : 'ventas'}`
+        : 'Sin ventas cargadas',
+    },
     { concept: '= Ingresos del evento', amount: s.revenue, detail: 'Todo lo cobrado en ventas asociadas al evento' },
     { concept: '− Costo del vino vendido', amount: -s.cogs, detail: 'Lo que te costaron las botellas vendidas (costo promedio)' },
     { concept: '− Comisiones de cobro', amount: -s.fees, detail: 'Lo que se quedaron Mercado Pago, tarjetas, etc.' },
-    { concept: '− Gastos del evento', amount: -s.expenses, detail: `${s.expenses_count} ${s.expenses_count === 1 ? 'gasto' : 'gastos'} (copas, comida, difusión…)` },
-    { concept: '− Botellas abiertas', amount: -s.bottles_opened_cost, detail: `${s.bottles_opened} botellas abiertas para degustar, a su costo` },
-    { concept: '= RESULTADO DEL EVENTO', amount: s.result, detail: s.result >= 0 ? 'El evento dejó plata' : 'El evento perdió plata' },
-    { concept: 'Resultado por persona', amount: s.per_attendee, detail: ev.attendees ? `Resultado ÷ ${ev.attendees} personas` : 'No cargaste cuánta gente fue' },
+    {
+      concept: '− Gastos del evento',
+      amount: -s.expenses,
+      detail: s.expenses_count ? `${s.expenses_count} ${s.expenses_count === 1 ? 'gasto' : 'gastos'} (copas, comida, difusión…)` : 'Sin gastos cargados',
+    },
+    {
+      concept: '− Botellas abiertas',
+      amount: -s.bottles_opened_cost,
+      detail: s.bottles_opened
+        ? `${s.bottles_opened} ${s.bottles_opened === 1 ? 'botella abierta' : 'botellas abiertas'} para degustar, a su costo`
+        : 'Ninguna registrada',
+    },
+    {
+      concept: '= RESULTADO DEL EVENTO',
+      amount: s.result,
+      detail: !hasData(s)
+        ? 'Todavía no hay ventas, gastos ni botellas cargadas para este evento'
+        : s.result > 0.004
+          ? 'El evento dejó plata'
+          : s.result < -0.004
+            ? 'El evento perdió plata'
+            : 'Salió hecho: ni ganó ni perdió',
+    },
+    {
+      concept: 'Resultado por persona',
+      amount: hasData(s) ? s.per_attendee : null,
+      detail: ev.attendees ? `Resultado ÷ ${ev.attendees} personas` : 'No cargaste cuánta gente fue',
+    },
     {
       concept: 'Retorno',
       amount: null,
-      detail: s.roi == null ? 'Sin gastos ni botellas abiertas: no hay inversión para comparar' : `${Math.round(s.roi * 1000) / 10} % (Resultado ÷ lo que pusiste en gastos y botellas)`,
+      detail:
+        s.roi == null
+          ? 'Sin gastos ni botellas abiertas: no hay inversión para comparar'
+          : `${fmtPct(s.roi)} (Resultado ÷ lo que pusiste en gastos y botellas: por cada $ 100 que pusiste volvieron ${fmtMoney(100 + s.roi * 100)})`,
     },
     {
       concept: 'Presupuesto',
       amount: ev.budget,
-      detail: ev.budget ? `Usaste ${Math.round((s.budget_used ?? 0) * 1000) / 10} % (gastos + botellas abiertas = $ ${s.investment.toLocaleString('es-AR')})` : 'Sin presupuesto cargado',
+      detail: ev.budget
+        ? `Usaste ${fmtPct(s.budget_used ?? 0)} (gastos + botellas abiertas = ${fmtMoney(s.investment)})${s.investment > ev.budget ? ': te pasaste' : ''}`
+        : 'Sin presupuesto cargado',
     },
   ]
   await sendWorkbook(res, excelFilename(`evento-${ev.name}`), [
@@ -548,7 +631,7 @@ router.get('/events/:id/export', async (req, res) => {
 })
 
 router.post('/events', (req, res) => {
-  const data = validate(eventInput, req.body)
+  const data = validateEvent(eventInput, req.body)
   const { lastInsertRowid: id } = run(
     'INSERT INTO events (name, date, kind, location, attendees, ticket_price, budget, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [data.name, data.date, data.kind, data.location, data.attendees, data.ticket_price, data.budget, data.notes],
@@ -559,19 +642,35 @@ router.post('/events', (req, res) => {
 
 router.put('/events/:id', (req, res) => {
   const id = parseId(req.params.id, 'ese evento')
-  if (!loadEvent(id)) throw notFound('ese evento')
-  const data = validate(eventInput, req.body)
-  run('UPDATE events SET name = ?, date = ?, kind = ?, location = ?, attendees = ?, ticket_price = ?, budget = ?, notes = ? WHERE id = ?', [
-    data.name,
-    data.date,
-    data.kind,
-    data.location,
-    data.attendees,
-    data.ticket_price,
-    data.budget,
-    data.notes,
-    id,
-  ])
+  const prev = loadEvent(id)
+  if (!prev) throw notFound('ese evento')
+  const data = validateEvent(eventInput, req.body)
+  tx(() => {
+    run('UPDATE events SET name = ?, date = ?, kind = ?, location = ?, attendees = ?, ticket_price = ?, budget = ?, notes = ? WHERE id = ?', [
+      data.name,
+      data.date,
+      data.kind,
+      data.location,
+      data.attendees,
+      data.ticket_price,
+      data.budget,
+      data.notes,
+      id,
+    ])
+    // Si cambió la fecha del evento, las botellas abiertas que estaban registradas el día del evento
+    // se mueven con él (si no, quedarían como merma de otro mes). Las que tienen otra fecha
+    // (las cargaste a propósito otro día) no se tocan. Ventas y gastos tampoco: son de sus pantallas.
+    if (data.date !== prev.date) {
+      const products = all<{ product_id: number }>(
+        "SELECT DISTINCT product_id FROM stock_movements WHERE ref_type = 'event' AND ref_id = ? AND date = ?",
+        [id, prev.date],
+      ).map((r) => r.product_id)
+      if (products.length) {
+        run("UPDATE stock_movements SET date = ? WHERE ref_type = 'event' AND ref_id = ? AND date = ?", [data.date, id, prev.date])
+        recalcProducts(products)
+      }
+    }
+  })
   const ev = loadEvent(id)!
   res.json({ ...ev, summary: eventSummary(ev) } satisfies EventWithSummary)
 })
@@ -593,9 +692,19 @@ router.delete('/events/:id', (req, res) => {
       s.expenses_count ? `${s.expenses_count} ${s.expenses_count === 1 ? 'gasto' : 'gastos'}` : '',
       s.opened_count ? `${s.opened_count} ${s.opened_count === 1 ? 'registro' : 'registros'} de botellas abiertas` : '',
     ].filter(Boolean)
+    const steps = [
+      s.sales_count && s.expenses_count
+        ? 'sacale el evento a esas ventas y gastos (o borralos)'
+        : s.sales_count
+          ? `sacale el evento a ${s.sales_count === 1 ? 'esa venta (o borrala)' : 'esas ventas (o borralas)'}`
+          : s.expenses_count
+            ? `sacale el evento a ${s.expenses_count === 1 ? 'ese gasto (o borralo)' : 'esos gastos (o borralos)'}`
+            : '',
+      s.opened_count ? 'quitá las botellas abiertas desde la ficha del evento' : '',
+    ].filter(Boolean)
     throw new HttpError(
       409,
-      `No se puede borrar «${ev.name}»: tiene ${joinParts(parts)}. Si lo borrás perdés la cuenta de cuánto te costó y cuánto te dejó, así que conviene dejarlo. Si igual querés borrarlo, primero sacale el evento a esas ventas y gastos (o borralos) y quitá las botellas abiertas.`,
+      `No se puede borrar «${ev.name}»: tiene ${joinParts(parts)}. Si lo borrás perdés la cuenta de cuánto te costó y cuánto te dejó, así que conviene dejarlo. Si igual querés borrarlo, primero ${joinParts(steps)}.`,
     )
   }
   run('DELETE FROM events WHERE id = ?', [id])
@@ -606,7 +715,7 @@ router.post('/events/:id/open-bottles', (req, res) => {
   const id = parseId(req.params.id, 'ese evento')
   const ev = loadEvent(id)
   if (!ev) throw notFound('ese evento')
-  const data = validate(openBottlesInput, req.body)
+  const data = validateEvent(openBottlesInput, req.body)
   const date = data.date ?? ev.date
 
   // Un renglón por vino (si eligieron el mismo vino dos veces, se suman).

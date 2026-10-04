@@ -16,14 +16,7 @@ import { monthlySeries } from '../services/finance'
 import { getSettings } from '../services/settings'
 import { round2, safeDiv } from '../../shared/calc'
 import { addMonths, endOfMonth, startOfMonth, today } from '../../shared/dates'
-import {
-  reviewPrices,
-  type CalculatorContext,
-  type CalculatorProduct,
-  type PriceReviewParams,
-  type PriceReviewRow,
-  type PriceReviewStatus,
-} from '../../shared/pricing'
+import { reviewPrices, type CalculatorContext, type CalculatorProduct, type PriceReviewParams, type PriceReviewRow, type PriceReviewStatus } from '../../shared/pricing'
 
 const router = Router()
 
@@ -76,6 +69,7 @@ export function calculatorContext(ref: string = today()): CalculatorContext {
     avg_bottles: count ? Math.round(bottles / count) : 0,
     avg_price_per_bottle: round2(safeDiv(sales, bottles)),
     avg_cost_per_bottle: round2(safeDiv(cogs, bottles)),
+    avg_cogs: avg(cogs),
     avg_fixed_expenses: avg(fixed),
     avg_variable_expenses: avg(variable),
     avg_fees: avg(fees),
@@ -140,9 +134,22 @@ const STATUS_LABEL: Record<PriceReviewStatus, string> = {
 
 const nf = (v: number, d = 2) => new Intl.NumberFormat('es-AR', { maximumFractionDigits: d }).format(v)
 
+/** Mismo orden que la pantalla: primero los que más conviene subir (diferencia % mayor), al final los que no se pueden comparar. */
+export function sortForReview(rows: PriceReviewRow[]): PriceReviewRow[] {
+  return [...rows].sort((a, b) => {
+    if (a.diff_retail_pct == null && b.diff_retail_pct == null) return a.name.localeCompare(b.name, 'es')
+    if (a.diff_retail_pct == null) return 1
+    if (b.diff_retail_pct == null) return -1
+    return b.diff_retail_pct - a.diff_retail_pct
+  })
+}
+
+/** El margen solo tiene sentido si el vino tiene precio Y costo (sin costo daría un "94 %" engañoso). */
+const comparable = (price: number, cost: number) => price > 0 && cost > 0
+
 router.get('/calculator/prices/export', async (req, res) => {
   const p = reviewParams(req)
-  const rows = reviewPrices(activeProducts(), p)
+  const rows = sortForReview(reviewPrices(activeProducts(), p))
   const below = rows.filter((r) => r.status === 'debajo').length
   await sendWorkbook(res, excelFilename('revision-de-precios'), [
     {
@@ -153,15 +160,16 @@ router.get('/calculator/prices/export', async (req, res) => {
       columns: [
         { header: 'Vino', key: 'name', width: 34 },
         { header: 'Bodega', key: 'winery', width: 22 },
-        { header: 'Costo por botella', key: 'cost', type: 'money', total: false },
-        { header: 'Precio minorista actual', key: 'price_retail', type: 'money', total: false },
-        { header: 'Margen actual', key: 'margin_retail', type: 'percent', value: (r: PriceReviewRow) => (r.price_retail > 0 ? r.margin_retail : null) },
-        { header: 'Semáforo', key: 'verdict', value: (r: PriceReviewRow) => (r.price_retail > 0 ? r.verdict.label : '—'), width: 16 },
+        { header: 'Cosecha', key: 'vintage', type: 'int', total: false, width: 10 },
+        { header: 'Costo por botella', key: 'cost', type: 'money', total: false, value: (r: PriceReviewRow) => (r.cost > 0 ? r.cost : null) },
+        { header: 'Precio minorista actual', key: 'price_retail', type: 'money', total: false, value: (r: PriceReviewRow) => (r.price_retail > 0 ? r.price_retail : null) },
+        { header: 'Margen actual', key: 'margin_retail', type: 'percent', value: (r: PriceReviewRow) => (comparable(r.price_retail, r.cost) ? r.margin_retail : null) },
+        { header: 'Semáforo', key: 'verdict', value: (r: PriceReviewRow) => (comparable(r.price_retail, r.cost) ? r.verdict.label : '—'), width: 16 },
         { header: 'Precio minorista sugerido', key: 'suggested_retail', type: 'money', total: false },
         { header: 'Diferencia', key: 'diff_retail', type: 'money', total: false },
         { header: 'Diferencia %', key: 'diff_retail_pct', type: 'percent' },
-        { header: 'Precio mayorista actual', key: 'price_wholesale', type: 'money', total: false },
-        { header: 'Margen mayorista', key: 'margin_wholesale', type: 'percent', value: (r: PriceReviewRow) => (r.price_wholesale > 0 ? r.margin_wholesale : null) },
+        { header: 'Precio mayorista actual', key: 'price_wholesale', type: 'money', total: false, value: (r: PriceReviewRow) => (r.price_wholesale > 0 ? r.price_wholesale : null) },
+        { header: 'Margen mayorista', key: 'margin_wholesale', type: 'percent', value: (r: PriceReviewRow) => (comparable(r.price_wholesale, r.cost) ? r.margin_wholesale : null) },
         { header: 'Mayorista sugerido', key: 'suggested_wholesale', type: 'money', total: false },
         { header: 'Estado', key: 'status', value: (r: PriceReviewRow) => STATUS_LABEL[r.status], width: 22 },
       ],
@@ -169,7 +177,9 @@ router.get('/calculator/prices/export', async (req, res) => {
       notes: [
         `Compara el precio de cada vino activo con el que tendría para dejarte un margen del ${nf(p.target_margin_pct)} % después de pagar Ingresos Brutos (${nf(p.iibb_pct)} %) y la comisión del medio de pago (${nf(p.fee_pct)} %).`,
         'Precio sugerido = costo por botella ÷ (1 − margen − IIBB − comisión), redondeado hacia arriba. El costo es el costo promedio actual de cada vino (ya incluye el flete de las compras).',
-        'Margen actual = (precio − costo − IIBB − comisión) ÷ precio. Semáforo: "Margen sano" desde 35 %, "Justo" entre 25 % y 35 %, "Margen bajo" por debajo de 25 %.',
+        'Margen actual = (precio − costo − IIBB − comisión) ÷ precio: lo que de verdad te queda de cada botella. Semáforo: "Margen sano" desde 35 %, "Justo" entre 25 % y 35 %, "Margen bajo" por debajo de 25 %.',
+        'Ojo: en «Vinos y stock» el margen se mide antes de IIBB y comisión (margen bruto = (precio − costo) ÷ precio). Por eso allá un vino puede llegar al objetivo y acá quedar un poco por debajo.',
+        'Los vinos sin costo o sin precio cargado quedan al final, sin margen: cargá el dato que falta en «Vinos y stock» para poder compararlos.',
         `Diferencia positiva = el precio actual está por debajo del sugerido (te conviene subirlo). Hay ${below} ${below === 1 ? 'vino' : 'vinos'} por debajo del margen deseado.`,
         `El mayorista sugerido es el minorista sugerido con ${nf(p.wholesale_discount_pct)} % de descuento (Configuración → Precios).`,
         'Esta planilla es una simulación: no cambia ningún precio. Para cambiarlos usá «Usar este precio» en la Calculadora o «Vinos y stock».',

@@ -12,7 +12,7 @@ import { useApi, useApiMutation, useSettings } from '@/lib/queries'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, HelpBox, InfoTip, Loading, PageHeader, StatusBadge, useConfirm, type Column } from '@/components/ui'
 import { ChartCard, ColumnChart, RankBars } from '@/components/charts'
 import { SettlementModal } from '@/components/forms/SettlementModal'
-import { Kpi, nb, telLink, tileMoney, waLink } from '../caja/parts'
+import { ICON_ONLY, Kpi, nb, telLink, tileMoney, waLink } from '../caja/parts'
 import type { ClientDetail } from '../caja/types'
 import { ClientFormModal } from './ClientFormModal'
 import { BalanceBadge, KIND_SHORT, KIND_TONE } from './ClientesPage'
@@ -96,7 +96,7 @@ export default function ClienteDetailPage() {
   const hasSales = stats.purchases_count > 0
   const pending = sales.filter((s) => s.balance > 0.01).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
   const business = settings?.business.name || 'VINOH!'
-  const hello = `Hola ${greetName(c.name, c.kind)}! `
+  const hello = `¡Hola, ${greetName(c.name, c.kind)}! `
   const wa = waLink(c.phone, hello)
   const waDebt = stats.balance > 0.01 ? waLink(c.phone, `${hello}¿Cómo andás? Te escribo de ${business} por el saldo pendiente de ${money(stats.balance)}. Avisame cuando puedas. ¡Gracias!`) : null
   const accountFor = (method: string) => settings?.payment_methods.find((m) => m.key === method)?.account_id ?? null
@@ -261,7 +261,7 @@ export default function ClienteDetailPage() {
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         {/* Datos de contacto */}
-        <Card title="Datos de contacto" actions={<Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditOpen(true)} aria-label="Editar datos de contacto" />}>
+        <Card title="Datos de contacto" actions={<Button size="sm" variant="ghost" icon={Pencil} className={ICON_ONLY} onClick={() => setEditOpen(true)} aria-label="Editar datos de contacto" title="Editar datos de contacto" />}>
           {c.phone || c.email || c.address || c.city || c.tax_id || c.notes ? (
             <>
               <ul className="space-y-2.5">
